@@ -1,0 +1,44 @@
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-wagglebot_root}
+      MARIADB_DATABASE: wagglebot
+      MARIADB_USER: wagglebot
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-wagglebot}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  crawler:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      CRAWL_INTERVAL_HOURS: ${CRAWL_INTERVAL_HOURS:-1}
+    command: python main.py
+
+  dashboard:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    environment:
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+    command: streamlit run dashboard.py --server.port 8501 --server.headless true --server.address 0.0.0.0
+
+volumes:
+  mariadb_data:

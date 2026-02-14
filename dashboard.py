@@ -1,0 +1,161 @@
+import json
+
+import streamlit as st
+from sqlalchemy import func
+
+from db.models import Post, PostStatus, Comment
+from db.session import SessionLocal
+
+st.set_page_config(page_title="WaggleBot 관리자", layout="wide")
+st.title("WaggleBot 관리자 대시보드")
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _stats_display(stats: dict | None) -> str:
+    if not stats:
+        return ""
+    parts = []
+    if "views" in stats:
+        parts.append(f"조회 {stats['views']:,}")
+    if "likes" in stats:
+        parts.append(f"좋아요 {stats['likes']:,}")
+    if "comment_count" in stats:
+        parts.append(f"댓글 {stats['comment_count']:,}")
+    return " · ".join(parts)
+
+
+def _top_comments(post_id: int, session, limit: int = 2) -> list[Comment]:
+    return (
+        session.query(Comment)
+        .filter(Comment.post_id == post_id)
+        .order_by(Comment.likes.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _update_status(post_id: int, new_status: PostStatus):
+    with SessionLocal() as session:
+        post = session.query(Post).get(post_id)
+        if post:
+            post.status = new_status
+            session.commit()
+
+
+STATUS_COLORS = {
+    PostStatus.COLLECTED: "gray",
+    PostStatus.APPROVED: "blue",
+    PostStatus.PROCESSING: "orange",
+    PostStatus.RENDERED: "green",
+    PostStatus.UPLOADED: "violet",
+    PostStatus.DECLINED: "red",
+}
+
+# ---------------------------------------------------------------------------
+# tabs
+# ---------------------------------------------------------------------------
+
+tab_inbox, tab_progress, tab_gallery = st.tabs(["받은함 (Inbox)", "진행현황 (Progress)", "갤러리 (Gallery)"])
+
+# ── Tab 1: Inbox ──────────────────────────────────────────────────────────
+
+with tab_inbox:
+    with SessionLocal() as session:
+        posts = (
+            session.query(Post)
+            .filter(Post.status == PostStatus.COLLECTED)
+            .order_by(Post.created_at.desc())
+            .all()
+        )
+
+        if not posts:
+            st.info("검토 대기 중인 게시물이 없습니다.")
+        else:
+            st.caption(f"검토 대기: {len(posts)}건")
+
+        for post in posts:
+            stats_text = _stats_display(post.stats)
+            top_comments = _top_comments(post.id, session)
+
+            with st.container(border=True):
+                col_main, col_actions = st.columns([4, 1])
+
+                with col_main:
+                    st.markdown(f"**{post.title}**")
+                    if stats_text:
+                        st.caption(stats_text)
+                    for c in top_comments:
+                        likes_str = f" (+{c.likes})" if c.likes else ""
+                        st.text(f"💬 {c.author}: {c.content[:80]}{'…' if len(c.content) > 80 else ''}{likes_str}")
+
+                with col_actions:
+                    if st.button("승인", key=f"approve_{post.id}", type="primary"):
+                        _update_status(post.id, PostStatus.APPROVED)
+                        st.rerun()
+                    if st.button("거절", key=f"decline_{post.id}"):
+                        _update_status(post.id, PostStatus.DECLINED)
+                        st.rerun()
+
+# ── Tab 2: Progress ──────────────────────────────────────────────────────
+
+with tab_progress:
+    progress_statuses = [
+        PostStatus.APPROVED,
+        PostStatus.PROCESSING,
+        PostStatus.RENDERED,
+        PostStatus.UPLOADED,
+    ]
+
+    with SessionLocal() as session:
+        counts = dict(
+            session.query(Post.status, func.count(Post.id))
+            .filter(Post.status.in_(progress_statuses))
+            .group_by(Post.status)
+            .all()
+        )
+
+        metric_cols = st.columns(len(progress_statuses))
+        for col, s in zip(metric_cols, progress_statuses):
+            col.metric(s.value, counts.get(s, 0))
+
+        st.divider()
+
+        for status in progress_statuses:
+            posts = (
+                session.query(Post)
+                .filter(Post.status == status)
+                .order_by(Post.updated_at.desc())
+                .all()
+            )
+            if not posts:
+                continue
+
+            st.subheader(f":{STATUS_COLORS[status]}[{status.value}] ({len(posts)})")
+            for post in posts:
+                stats_text = _stats_display(post.stats)
+                st.markdown(f"- **{post.title}**  {stats_text}")
+
+# ── Tab 3: Gallery ────────────────────────────────────────────────────────
+
+with tab_gallery:
+    st.caption("렌더링 완료 및 업로드 완료 게시물")
+
+    with SessionLocal() as session:
+        posts = (
+            session.query(Post)
+            .filter(Post.status.in_([PostStatus.RENDERED, PostStatus.UPLOADED]))
+            .order_by(Post.updated_at.desc())
+            .all()
+        )
+
+        if not posts:
+            st.info("아직 렌더링 완료된 게시물이 없습니다.")
+        else:
+            for post in posts:
+                with st.container(border=True):
+                    badge_color = STATUS_COLORS[post.status]
+                    st.markdown(f":{badge_color}[{post.status.value}] **{post.title}**")
+                    st.caption(_stats_display(post.stats))
+                    st.markdown("_영상 플레이어는 Phase 3에서 연결됩니다._")
