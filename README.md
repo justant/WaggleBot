@@ -51,9 +51,11 @@ WaggleBot은 커뮤니티 게시글을 크롤링하고, LLM으로 요약한 뒤,
 ### 필수 소프트웨어
 - **OS**: Windows 10/11
 - **WSL2**: Ubuntu 22.04
-- **Docker**: Docker Desktop for Windows (WSL2 백엔드)
+- **컨테이너**: Podman 4.x + podman-compose (`sudo apt install podman podman-compose`)
 - **GPU 드라이버**: NVIDIA 드라이버 525.xx 이상
-- **기타**: Git, NVIDIA Container Toolkit
+- **기타**: Git, NVIDIA Container Toolkit (CDI 스펙 생성 필수)
+
+> **주의:** Docker Desktop 대신 **Podman**을 사용합니다. docker-compose v1은 GPU CDI 표기법(`nvidia.com/gpu=all`)을 지원하지 않으므로 podman-compose를 사용해야 합니다.
 
 ---
 
@@ -75,12 +77,17 @@ wsl -l -v
 # 출력: Ubuntu-22.04  Running  2
 ```
 
-### 2️⃣ Docker Desktop 설치
+### 2️⃣ Podman + podman-compose 설치
 
-1. [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop) 다운로드
-2. 설치 후 실행
-3. **Settings** → **General** → **Use WSL 2 based engine** 체크
-4. **Settings** → **Resources** → **WSL Integration** → Ubuntu-22.04 활성화
+```bash
+# WSL Ubuntu 터미널에서 실행
+sudo apt-get update
+sudo apt-get install -y podman podman-compose
+
+# 설치 확인
+podman --version   # Podman 4.x 이상
+podman-compose --version
+```
 
 ### 3️⃣ NVIDIA GPU 드라이버 설치
 
@@ -98,8 +105,9 @@ nvidia-smi
 
 ```bash
 # 1. 패키지 저장소 및 GPG 키 설정
-curl -fsSL [https://nvidia.github.io/libnvidia-container/gpgkey](https://nvidia.github.io/libnvidia-container/gpgkey) | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-  && curl -s -L [https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list](https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list) | \
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
@@ -107,36 +115,42 @@ curl -fsSL [https://nvidia.github.io/libnvidia-container/gpgkey](https://nvidia.
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
 
-# 3. (WSL2/Podman 사용자 필수) CDI 스펙 생성
+# 3. (Podman 사용자 필수) CDI 스펙 생성
 # 이 단계가 없으면 "CUDA not available" 또는 "unresolvable CDI devices" 에러 발생
 sudo mkdir -p /etc/cdi
 sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 
-# 4. Ollama 설치 및 설정 (LLM 서버)
-# 압축 해제 도구 설치 (Ollama 설치 시 필요)
-sudo apt-get install -y zstd
-
-# Ollama 설치
-curl -fsSL [https://ollama.com/install.sh](https://ollama.com/install.sh) | sh
-
-# 모델 다운로드 (Qwen 2.5 14B - 한국어 성능 최적)
-ollama pull qwen2.5:14b
-
-# 5. 외부 접속 허용
-~/.bashrc 파일 맨 아래에 다음 줄 추가:
-export OLLAMA_HOST=0.0.0.0
-
-source ~/.bashrc
-ollama serve
-
-# Docker 재시작
-sudo systemctl restart docker
-
-# GPU 접근 테스트
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+# 4. GPU 접근 테스트
+sudo podman run --rm --device nvidia.com/gpu=all \
+  docker.io/nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
 ```
 
-### 5️⃣ 프로젝트 클론 및 설정
+### 5️⃣ Ollama 설치 및 설정 (LLM 서버)
+
+```bash
+# 1. 압축 해제 도구 설치
+sudo apt-get install -y zstd
+
+# 2. Ollama 설치 (systemd 서비스 자동 등록)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 3. 모델 다운로드 (Qwen 2.5 14B - 한국어 성능 최적)
+ollama pull qwen2.5:14b
+
+# 4. 컨테이너에서 접근 가능하도록 외부 접속 허용
+# ~/.bashrc가 아닌 systemd 서비스 환경변수로 설정 (재부팅 후에도 유지)
+sudo systemctl edit ollama --force <<'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0"
+EOF
+
+sudo systemctl restart ollama
+
+# 5. 동작 확인
+curl http://127.0.0.1:11434/api/tags
+```
+
+### 6️⃣ 프로젝트 클론 및 설정
 
 ```bash
 # WSL Ubuntu 터미널에서 실행
@@ -172,7 +186,7 @@ YOUTUBE_CLIENT_SECRET=your_client_secret
 2. Settings → Access Tokens → New token 생성
 3. Token을 `.env` 파일의 `HF_TOKEN`에 입력
 
-### 6️⃣ .gitignore 설정
+### 7️⃣ .gitignore 설정
 
 ```bash
 # 민감한 파일을 Git 추적에서 제외
@@ -195,14 +209,17 @@ models_cache/
 EOF
 ```
 
-### 7️⃣ Docker 컨테이너 실행
+### 8️⃣ 컨테이너 실행
 
 ```bash
-# Docker 컨테이너 빌드 및 시작
-docker-compose up -d
+# 레지스트리 설정 (최초 1회 - short name 해석 필요)
+echo 'unqualified-search-registries = ["docker.io"]' | sudo tee -a /etc/containers/registries.conf
+
+# 컨테이너 빌드 및 시작
+sudo podman-compose up -d
 
 # 서비스 상태 확인
-docker-compose ps
+sudo podman ps
 
 # 출력 예시:
 #        Name                      State           Ports
@@ -213,14 +230,18 @@ docker-compose ps
 # wagglebot_dashboard   Up      0.0.0.0:8501->8501/tcp
 ```
 
-### 8️⃣ 설치 확인
+### 9️⃣ 설치 확인
 
 ```bash
 # 데이터베이스 연결 확인
-docker exec wagglebot_db mysqladmin ping -h localhost
+sudo podman exec wagglebot_db_1 mariadb-admin ping -h localhost
+
+# GPU 주입 확인
+sudo podman exec wagglebot_ai_worker_1 python3 -c \
+  "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A')"
 
 # AI 워커 로그 확인
-docker-compose logs ai_worker | tail -20
+sudo podman logs wagglebot_ai_worker_1 2>&1 | tail -20
 
 # 대시보드 접속
 # 브라우저에서 http://localhost:8501 열기
@@ -287,31 +308,53 @@ docker-compose logs ai_worker | grep ERROR
 
 ## 🔧 문제 해결
 
-### 문제 1: GPU가 Docker에서 인식되지 않음
+### 문제 1: GPU 장치 에러 (`no such file or directory`)
 
 **증상:**
 ```
-RuntimeError: CUDA out of memory
-또는
-nvidia-smi: command not found
+error gathering device information while adding custom device "nvidia.com/gpu=all": no such file or directory
 ```
+
+**원인:** `docker-compose v1`이 CDI 표기법(`nvidia.com/gpu=all`)을 파일 경로로 오해함
 
 **해결:**
 ```bash
-# 1. Windows에서 NVIDIA 드라이버 확인
-# 제어판 → 프로그램 추가/제거 → NVIDIA Graphics Driver
+# 1. podman-compose 사용 (docker-compose v1 대체)
+sudo apt install podman-compose
 
-# 2. WSL에서 nvidia-smi 확인
-nvidia-smi
+# 2. CDI 스펙 생성 (최초 1회)
+sudo mkdir -p /etc/cdi
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 
-# 3. Docker GPU 테스트
-docker run --rm --gpus all nvidia/cuda:12.1.0-base nvidia-smi
+# 3. registries.conf 설정 (최초 1회)
+echo 'unqualified-search-registries = ["docker.io"]' | sudo tee -a /etc/containers/registries.conf
 
-# 4. docker-compose.yml 확인
-cat docker-compose.yml | grep -A 5 "deploy:"
-# deploy.resources.reservations.devices가 있어야 함
+# 4. podman-compose로 실행
+sudo podman-compose up -d
 
-# 5. Docker Desktop 재시작
+# 5. GPU 주입 확인
+sudo podman exec wagglebot_ai_worker_1 python3 -c \
+  "import torch; print('CUDA:', torch.cuda.is_available())"
+```
+
+### 문제 1-1: Ollama 연결 실패 (`Connection refused`)
+
+**증상:**
+```
+ConnectionError: HTTPConnectionPool(host='host.containers.internal', port=11434):
+  Failed to establish a new connection: [Errno 111] Connection refused
+```
+
+**원인:** 브리지 네트워크에서 `host.containers.internal` DNS가 WSL2에서 불안정함
+`ai_worker`는 `network_mode: host`로 설정되어 있어야 `127.0.0.1:11434`로 Ollama에 직접 연결됨
+
+**해결:** `docker-compose.yml` 확인
+```yaml
+ai_worker:
+  network_mode: host   # 이 줄이 있어야 함
+  environment:
+    OLLAMA_HOST: "http://127.0.0.1:11434"   # host.containers.internal 아님
+    DATABASE_URL: "...@127.0.0.1:3306/..."  # db 아님
 ```
 
 ### 문제 2: MariaDB 접속 실패
@@ -713,12 +756,6 @@ gpu_manager.cleanup_memory()
 # 긴급 정리 (모든 모델 언로드)
 gpu_manager.emergency_cleanup()
 ```
-
-# 1. 기존 실행 중인 모든 컨테이너 중지 및 제거
-sudo docker compose --profile gpu down
-
-# 2. 이미지 재빌드 및 서비스 시작
-sudo docker compose --profile gpu up -d --build
 
 #### 테스트
 
