@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 async def poll_once() -> bool:
+    """
+    APPROVED 상태 게시글 1개 처리
+
+    Returns:
+        처리할 게시글이 있었는지 여부
+    """
     with SessionLocal() as session:
         post = (
             session.query(Post)
@@ -19,29 +25,16 @@ async def poll_once() -> bool:
         if post is None:
             return False
 
-        from ai_worker.processor import process
+        from ai_worker.processor import RobustProcessor
 
+        # RobustProcessor가 내부적으로 재시도 및 에러 핸들링 처리
+        processor = RobustProcessor()
         try:
-            await process(post, session)
+            await processor.process_with_retry(post, session)
         except Exception:
-            logger.exception("처리 실패: post_id=%d", post.id)
+            # RobustProcessor 내부에서 이미 에러 처리되었으므로 로그만 남김
+            logger.exception("예상치 못한 에러: post_id=%d", post.id)
             session.rollback()
-            post = session.query(Post).get(post.id)
-            if post and post.status == PostStatus.PROCESSING:
-                post.retry_count = (post.retry_count or 0) + 1
-                if post.retry_count >= MAX_RETRY_COUNT:
-                    post.status = PostStatus.FAILED
-                    logger.error(
-                        "최대 재시도 초과 → FAILED: post_id=%d (retries=%d)",
-                        post.id, post.retry_count,
-                    )
-                else:
-                    post.status = PostStatus.APPROVED
-                    logger.warning(
-                        "재시도 대기: post_id=%d (retry=%d/%d)",
-                        post.id, post.retry_count, MAX_RETRY_COUNT,
-                    )
-                session.commit()
 
     return True
 

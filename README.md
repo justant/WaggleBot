@@ -515,6 +515,114 @@ python test_monitoring.py
 
 ---
 
+## 🛡️ 에러 핸들링 및 복구
+
+### 견고한 에러 처리 시스템
+
+WaggleBot은 AI 워커 처리 중 발생할 수 있는 다양한 에러를 자동으로 분류하고 복구합니다.
+
+#### 에러 타입 분류
+
+- **LLM_ERROR**: LLM 요약 실패 (재시도 불가 - 즉시 FAILED 처리)
+- **TTS_ERROR**: TTS 음성 생성 실패 (재시도 가능)
+- **RENDER_ERROR**: 영상 렌더링 실패 (재시도 가능)
+- **NETWORK_ERROR**: 네트워크 오류 (재시도 가능)
+- **RESOURCE_ERROR**: VRAM/디스크 부족 (재시도 가능)
+- **UNKNOWN_ERROR**: 알 수 없는 오류 (재시도 가능)
+
+#### 재시도 정책 (Exponential Backoff)
+
+```python
+# 기본 설정 (.env)
+MAX_RETRY_COUNT=3          # 최대 3회 재시도
+BACKOFF_FACTOR=2.0         # 2배씩 증가
+INITIAL_DELAY=5.0          # 첫 재시도 5초 후
+
+# 재시도 타임라인 예시
+# 1차 시도 실패 → 5초 대기
+# 2차 시도 실패 → 10초 대기
+# 3차 시도 실패 → 20초 대기
+# → FAILED 상태로 전환
+```
+
+#### 처리 흐름
+
+```
+APPROVED → PROCESSING
+    ↓
+[Step 1] LLM 요약 생성
+    ├─ 성공 → Step 2
+    └─ 실패 → 즉시 FAILED (재시도 불가)
+    ↓
+[Step 2] TTS 음성 생성
+    ├─ 성공 → Step 3
+    └─ 실패 → Backoff 후 재시도
+    ↓
+[Step 3] 영상 렌더링
+    ├─ 성공 → RENDERED
+    └─ 실패 → Backoff 후 재시도
+    ↓
+최대 재시도 초과 → FAILED
+```
+
+#### 에러 로그 확인
+
+**failures.log 파일:**
+```bash
+# 에러 로그 위치
+media/logs/failures.log
+
+# 실시간 모니터링
+tail -f media/logs/failures.log
+
+# 예시
+2025-02-15T12:00:00 | post_id=123 | failure_type=tts_error | attempt=1 | error=TTS synthesis failed
+2025-02-15T12:00:10 | post_id=123 | failure_type=tts_error | attempt=2 | error=TTS synthesis failed
+```
+
+**대시보드에서 확인:**
+- **진행현황 탭**: FAILED 상태 게시글 확인
+- **재시도 버튼**: 실패한 게시글을 APPROVED로 되돌려 재처리
+
+#### 테스트
+
+```bash
+# 에러 핸들링 테스트 실행
+python test_error_handling.py
+
+# 예상 출력
+✓ LLM 에러 분류 성공
+✓ TTS 에러 분류 성공
+✓ Backoff 계산 성공
+✓ LLM 에러 시 즉시 중단 확인
+✓ TTS 에러 재시도 로직 확인
+```
+
+#### 수동 복구
+
+**실패한 게시글 재처리:**
+```python
+# Python 스크립트
+from db.session import SessionLocal
+from db.models import Post, PostStatus
+
+with SessionLocal() as session:
+    # 실패한 게시글 조회
+    failed_post = session.query(Post).filter_by(status=PostStatus.FAILED).first()
+
+    # APPROVED로 변경하여 재시도 큐에 추가
+    failed_post.status = PostStatus.APPROVED
+    failed_post.retry_count = 0  # 재시도 카운트 초기화
+    session.commit()
+```
+
+**또는 대시보드에서:**
+1. 진행현황 탭 이동
+2. FAILED 섹션에서 게시글 확인
+3. "🔄 재시도" 버튼 클릭
+
+---
+
 ## 👨‍💻 개발 가이드
 
 ### 기본 개발 환경
