@@ -94,7 +94,8 @@ with tab_inbox:
                 col_main, col_actions = st.columns([4, 1])
 
                 with col_main:
-                    st.markdown(f"**{post.title}**")
+                    img_badge = " 🖼" if post.images else ""
+                    st.markdown(f"**{post.title}**{img_badge}")
                     st.caption(f"수집: {to_kst(post.created_at)}")
                     if stats_text:
                         st.caption(stats_text)

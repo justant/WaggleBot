@@ -87,6 +87,13 @@ class NatePannCrawler(BaseCrawler):
         content_area = soup.select_one("div#contentArea")
         content = content_area.get_text("\n", strip=True) if content_area else ""
 
+        images = []
+        if content_area:
+            for img in content_area.select("img"):
+                src = img.get("src") or img.get("data-src") or ""
+                if src and src.startswith("http"):
+                    images.append(src)
+
         views = self._parse_stat(soup, "div.post-tit-info div.info span.count", prefix="조회")
         likes = self._parse_int(self._text(soup.select_one("div.btnbox.up span.count span")))
         comment_count = self._parse_int(
@@ -101,6 +108,7 @@ class NatePannCrawler(BaseCrawler):
         return {
             "title": title,
             "content": content,
+            "images": images or None,
             "stats": {
                 "views": views,
                 "likes": likes,

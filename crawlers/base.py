@@ -46,6 +46,8 @@ class BaseCrawler(ABC):
 
         if post:
             post.stats = detail.get("stats")
+            if detail.get("images"):
+                post.images = detail["images"]
             log.debug("Updated stats for %s:%s", self.site_code, origin_id)
         else:
             post = Post(
@@ -53,6 +55,7 @@ class BaseCrawler(ABC):
                 origin_id=origin_id,
                 title=detail["title"],
                 content=detail.get("content"),
+                images=detail.get("images"),
                 stats=detail.get("stats"),
                 status=PostStatus.COLLECTED,
             )

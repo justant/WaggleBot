@@ -34,6 +34,7 @@ class Post(Base):
     origin_id = Column(String(64), nullable=False)
     title = Column(String(512), nullable=False)
     content = Column(Text, nullable=True)
+    images = Column(JSON, nullable=True)
     stats = Column(JSON, nullable=True)
     status = Column(
         Enum(PostStatus), nullable=False, default=PostStatus.COLLECTED,
@@ -64,3 +65,20 @@ class Comment(Base):
 
     def __repr__(self):
         return f"<Comment by {self.author} on post_id={self.post_id}>"
+
+
+class Content(Base):
+    __tablename__ = "contents"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    post_id = Column(
+        BigInteger, ForeignKey("posts.id", ondelete="CASCADE"),
+        nullable=False, unique=True,
+    )
+    summary_text = Column(Text, nullable=True)
+    audio_path = Column(String(255), nullable=True)
+    video_path = Column(String(255), nullable=True)
+    upload_meta = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+
+    post = relationship("Post", backref="content_item")
