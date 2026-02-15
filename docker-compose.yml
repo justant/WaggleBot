@@ -55,14 +55,20 @@ services:
     volumes:
       - ./media:/app/media
     environment:
+      LLM_MODEL: "qwen2.5:14b"
+      DEFAULT_MODEL: "qwen2.5:14b"
       NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
       MEDIA_DIR: /app/media
     depends_on:
       db:
         condition: service_healthy
     command: python -m ai_worker.main
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   monitoring:
     build: .

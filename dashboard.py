@@ -467,7 +467,7 @@ with tab_settings:
 
     # LLM 설정
     st.subheader("🧠 LLM 설정")
-    llm_model = st.text_input("LLM 모델 (Ollama)", value=cfg.get("llm_model", "eeve-korean:10.8b"))
+    llm_model = st.text_input("LLM 모델 (Ollama)", value=cfg.get("llm_model", "qwen2.5:14b"))
 
     st.divider()
 

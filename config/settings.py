@@ -46,7 +46,7 @@ STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
 MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "eeve-korean:10.8b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
 ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
@@ -83,7 +83,7 @@ _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "pipeline.json"
 _PIPELINE_DEFAULTS: dict[str, str] = {
     "tts_engine": "edge-tts",
     "tts_voice": "ko-KR-SunHiNeural",
-    "llm_model": "eeve-korean:10.8b",
+    "llm_model": "qwen2.5:14b",
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
     "bgm_volume": "0.15",

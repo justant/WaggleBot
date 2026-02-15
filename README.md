@@ -85,9 +85,6 @@ wsl -l -v
 ### 3️⃣ NVIDIA GPU 드라이버 설치
 
 ```bash
-# Windows에서 NVIDIA 드라이버 설치
-# https://www.nvidia.com/Download/index.aspx
-
 # WSL에서 확인 (CUDA Toolkit 설치 불필요)
 nvidia-smi
 
@@ -100,18 +97,37 @@ nvidia-smi
 ### 4️⃣ NVIDIA Container Toolkit 설치
 
 ```bash
-# WSL Ubuntu 터미널에서 실행
-
-# Docker GPG 키 및 저장소 추가
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+# 1. 패키지 저장소 및 GPG 키 설정
+curl -fsSL [https://nvidia.github.io/libnvidia-container/gpgkey](https://nvidia.github.io/libnvidia-container/gpgkey) | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+  && curl -s -L [https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list](https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list) | \
     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-# 설치
+# 2. 패키지 업데이트 및 설치
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
+
+# 3. (WSL2/Podman 사용자 필수) CDI 스펙 생성
+# 이 단계가 없으면 "CUDA not available" 또는 "unresolvable CDI devices" 에러 발생
+sudo mkdir -p /etc/cdi
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+
+# 4. Ollama 설치 및 설정 (LLM 서버)
+# 압축 해제 도구 설치 (Ollama 설치 시 필요)
+sudo apt-get install -y zstd
+
+# Ollama 설치
+curl -fsSL [https://ollama.com/install.sh](https://ollama.com/install.sh) | sh
+
+# 모델 다운로드 (Qwen 2.5 14B - 한국어 성능 최적)
+ollama pull qwen2.5:14b
+
+# 5. 외부 접속 허용
+~/.bashrc 파일 맨 아래에 다음 줄 추가:
+export OLLAMA_HOST=0.0.0.0
+
+source ~/.bashrc
+ollama serve
 
 # Docker 재시작
 sudo systemctl restart docker
@@ -698,6 +714,12 @@ gpu_manager.cleanup_memory()
 gpu_manager.emergency_cleanup()
 ```
 
+# 1. 기존 실행 중인 모든 컨테이너 중지 및 제거
+sudo docker compose --profile gpu down
+
+# 2. 이미지 재빌드 및 서비스 시작
+sudo docker compose --profile gpu up -d --build
+
 #### 테스트
 
 ```bash
@@ -802,42 +824,6 @@ ENABLED_CRAWLERS=nate_pann,nate_tok,reddit
 #### 새 크롤러 추가하기
 
 **1. 크롤러 파일 생성 (`crawlers/reddit.py`)**
-
-```python
-from crawlers.base import BaseCrawler
-from crawlers.plugin_manager import CrawlerRegistry
-
-@CrawlerRegistry.register(
-    'reddit',
-    description='Reddit 인기글 크롤러',
-    enabled=True
-)
-class RedditCrawler(BaseCrawler):
-    site_code = 'reddit'
-
-    def fetch_listing(self) -> list[dict]:
-        """게시글 목록 가져오기"""
-        # Reddit API 호출
-        return [
-            {
-                'origin_id': 'abc123',
-                'title': '제목',
-                'url': 'https://reddit.com/r/...'
-            }
-        ]
-
-    def parse_post(self, url: str) -> dict:
-        """개별 게시글 파싱"""
-        return {
-            'title': '제목',
-            'content': '본문',
-            'images': ['url1', 'url2'],
-            'stats': {'views': 1000, 'likes': 50},
-            'comments': [
-                {'author': 'user1', 'content': '댓글', 'likes': 10}
-            ]
-        }
-```
 
 **2. .env에 추가**
 ```bash

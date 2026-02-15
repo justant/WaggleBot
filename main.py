@@ -141,8 +141,8 @@ Examples:
         return
 
     # DB 초기화
-    log.info("Initializing database…")
-    init_db()
+    #log.info("Initializing database…")
+    #init_db()
 
     # 1회 실행 또는 스케줄러 시작
     if args.once:
