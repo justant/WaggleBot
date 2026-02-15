@@ -623,6 +623,136 @@ with SessionLocal() as session:
 
 ---
 
+## 🎮 GPU 메모리 관리
+
+### 자동 메모리 관리 시스템
+
+RTX 3080 Ti (12GB VRAM)의 제한된 메모리를 효율적으로 관리합니다.
+
+#### 메모리 관리 전략
+
+**문제점:**
+- LLM (4.5GB) + TTS (2.5GB) 동시 로드 불가능
+- OOM (Out of Memory) 발생 시 컨테이너 크래시
+
+**해결책:**
+- ✅ 순차 처리: LLM → TTS → 렌더링
+- ✅ 자동 언로드: 다음 모델 로드 전 이전 모델 정리
+- ✅ 컨텍스트 매니저: 자동 메모리 해제
+- ✅ 메모리 모니터링: 실시간 VRAM 추적
+
+#### 사용 방법
+
+**코드에서 사용 (자동):**
+```python
+from ai_worker.gpu_manager import get_gpu_manager, ModelType
+
+gpu_manager = get_gpu_manager()
+
+# 자동 메모리 관리
+with gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
+    summary = llm_model.generate(text)
+    # 블록 종료 시 자동으로 메모리 해제
+
+with gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+    audio = tts_model.synthesize(summary)
+    # LLM 메모리 자동 언로드됨
+```
+
+**메모리 확인:**
+```python
+# 사용 가능한 VRAM 조회
+available_gb = gpu_manager.get_available_vram()
+print(f"Available: {available_gb:.2f} GB")
+
+# 모델 로드 가능 여부
+can_load = gpu_manager.can_load_model(required_vram_gb=4.5)
+
+# 메모리 통계
+stats = gpu_manager.get_memory_stats()
+print(f"Usage: {stats.usage_percent:.1f}%")
+
+# 메모리 상태 로그
+gpu_manager.log_memory_status()
+```
+
+#### 메모리 모니터링
+
+**로그 출력:**
+```bash
+# AI 워커 로그 확인
+docker-compose logs -f ai_worker | grep GPU
+
+# 예시 출력
+[GPU] Memory: 3.45 / 11.91 GB (29.0% used, 8.46 GB free)
+[GPU] Loaded models: 1
+  - summarizer (llm): ~4.5 GB
+```
+
+**수동 메모리 정리:**
+```python
+# 일반 정리
+gpu_manager.cleanup_memory()
+
+# 긴급 정리 (모든 모델 언로드)
+gpu_manager.emergency_cleanup()
+```
+
+#### 테스트
+
+```bash
+# GPU 메모리 관리 테스트
+python test_gpu_manager.py
+
+# 예상 출력
+✓ CUDA 사용 가능
+  디바이스 수: 1
+  디바이스 이름: NVIDIA GeForce RTX 3080 Ti
+✓ 메모리 통계 조회 성공
+✓ 관리된 추론 성공
+✓ 모든 테스트 통과!
+```
+
+#### 메모리 최적화 팁
+
+1. **4-bit 양자화 사용**
+   ```python
+   # LLM 로드 시 반드시 4-bit 양자화
+   model = AutoModelForCausalLM.from_pretrained(
+       model_name,
+       load_in_4bit=True,  # 필수!
+       device_map="auto"
+   )
+   ```
+
+2. **모델 순차 처리**
+   - LLM → 메모리 해제 → TTS → 메모리 해제 → 렌더링
+
+3. **FFmpeg NVENC 사용**
+   ```bash
+   # GPU 가속 (권장)
+   codec='h264_nvenc'
+
+   # CPU 인코딩 (금지 - VRAM 차단)
+   # codec='libx264'  ❌
+   ```
+
+4. **메모리 부족 시 대응**
+   - 자동: GPUMemoryManager가 자동 처리
+   - 수동: `gpu_manager.emergency_cleanup()`
+
+#### 하드웨어별 설정
+
+| GPU 모델 | VRAM | LLM | TTS | 동시 로드 | 권장 설정 |
+|----------|------|-----|-----|-----------|-----------|
+| **RTX 3080 Ti** | 12GB | 4-bit | 가능 | ❌ 불가 | 순차 처리 (현재) |
+| **RTX 3090** | 24GB | 4-bit | 가능 | ✅ 가능 | 동시 로드 가능 |
+| **RTX 4090** | 24GB | 8-bit | 가능 | ✅ 가능 | 고품질 모델 |
+
+현재 설정은 **RTX 3080 Ti 12GB**에 최적화되어 있습니다.
+
+---
+
 ## 👨‍💻 개발 가이드
 
 ### 기본 개발 환경

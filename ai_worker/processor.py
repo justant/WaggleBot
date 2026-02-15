@@ -14,6 +14,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from ai_worker.gpu_manager import get_gpu_manager, ModelType
 from ai_worker.llm import summarize
 from ai_worker.tts import get_tts_engine
 from ai_worker.video import render_video
@@ -55,6 +56,7 @@ class RobustProcessor:
     def __init__(self, retry_policy: Optional[RetryPolicy] = None):
         self.retry_policy = retry_policy or RetryPolicy()
         self.cfg = load_pipeline_config()
+        self.gpu_manager = get_gpu_manager()
 
     async def process_with_retry(self, post: Post, session: Session) -> bool:
         """
@@ -82,14 +84,19 @@ class RobustProcessor:
 
         while attempt < self.retry_policy.max_attempts:
             try:
+                # GPU 메모리 상태 로그
+                self.gpu_manager.log_memory_status()
+
                 # ===== Step 1: LLM 요약 =====
                 logger.info("[Step 1/3] LLM 요약 생성 중...")
-                summary_text = self._safe_generate_summary(post)
+                with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
+                    summary_text = self._safe_generate_summary(post)
                 logger.info("[Step 1/3] ✓ 요약 완료 (%d자)", len(summary_text))
 
                 # ===== Step 2: TTS 생성 =====
                 logger.info("[Step 2/3] TTS 음성 생성 중...")
-                audio_path = await self._safe_generate_tts(summary_text, post.id)
+                with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                    audio_path = await self._safe_generate_tts(summary_text, post.id)
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
                 # ===== Step 3: 영상 렌더링 =====
