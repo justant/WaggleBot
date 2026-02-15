@@ -1,4 +1,5 @@
 import json
+from datetime import timezone, timedelta
 
 import streamlit as st
 from sqlalchemy import func
@@ -12,6 +13,16 @@ st.title("WaggleBot 관리자 대시보드")
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+KST = timezone(timedelta(hours=9))
+
+
+def to_kst(dt):
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST).strftime("%Y-%m-%d %H:%M KST")
 
 def _stats_display(stats: dict | None) -> str:
     if not stats:
@@ -84,6 +95,7 @@ with tab_inbox:
 
                 with col_main:
                     st.markdown(f"**{post.title}**")
+                    st.caption(f"수집: {to_kst(post.created_at)}")
                     if stats_text:
                         st.caption(stats_text)
                     for c in top_comments:
@@ -135,7 +147,7 @@ with tab_progress:
             st.subheader(f":{STATUS_COLORS[status]}[{status.value}] ({len(posts)})")
             for post in posts:
                 stats_text = _stats_display(post.stats)
-                st.markdown(f"- **{post.title}**  {stats_text}")
+                st.markdown(f"- **{post.title}**  {stats_text}  _{to_kst(post.updated_at)}_")
 
 # ── Tab 3: Gallery ────────────────────────────────────────────────────────
 

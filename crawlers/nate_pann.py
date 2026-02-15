@@ -1,11 +1,12 @@
 import logging
+import random
 import re
 import time
 
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import NATE_PANN_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT
+from config.settings import NATE_PANN_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from crawlers.base import BaseCrawler
 
 log = logging.getLogger(__name__)
@@ -20,6 +21,9 @@ class NatePannCrawler(BaseCrawler):
         self._session = requests.Session()
         self._session.headers.update(REQUEST_HEADERS)
 
+    def _rotate_ua(self):
+        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+
     # ------------------------------------------------------------------
     # Listing
     # ------------------------------------------------------------------
@@ -29,6 +33,7 @@ class NatePannCrawler(BaseCrawler):
         seen = set()
 
         for section in NATE_PANN_SECTIONS:
+            self._rotate_ua()
             try:
                 resp = self._session.get(section["url"], timeout=REQUEST_TIMEOUT)
                 resp.raise_for_status()
@@ -73,6 +78,7 @@ class NatePannCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     def parse_post(self, url: str) -> dict:
+        self._rotate_ua()
         resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
