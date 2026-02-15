@@ -53,7 +53,7 @@ def summarize(
     }
 
     logger.info("Ollama 요약 요청: model=%s", model)
-    resp = requests.post(url, json=payload, timeout=120)
+    resp = requests.post(url, json=payload, timeout=180)
     resp.raise_for_status()
 
     result = resp.json().get("response", "").strip()

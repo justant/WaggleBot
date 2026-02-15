@@ -36,6 +36,8 @@ services:
         condition: service_healthy
     ports:
       - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./media:/app/media
     environment:
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
     command: streamlit run dashboard.py --server.port 8501 --server.headless true --server.address 0.0.0.0
@@ -50,6 +52,8 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    volumes:
+      - ./media:/app/media
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
