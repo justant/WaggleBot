@@ -731,16 +731,116 @@ python main.py --once
 ✅ **메타데이터**: 설명, 활성화 상태 등 관리
 ✅ **확장성**: 100개 이상 크롤러 지원 가능
 
+---
+
+### YAML 기반 크롤러 (코드 없이 추가)
+
+**프로그래밍 없이** YAML 설정만으로 새로운 사이트를 추가할 수 있습니다!
+
+#### 설정 파일 구조
+
+**`config/sites.yaml`**
+
+```yaml
+sites:
+  my_site:
+    enabled: true
+    description: "내 사이트 크롤러"
+
+    # 크롤링 설정
+    interval_minutes: 60
+    max_pages: 3
+
+    # URL 패턴
+    listing_url: "https://example.com/popular"
+    post_url_template: "https://example.com/post/{origin_id}"
+
+    # CSS 셀렉터
+    selectors:
+      # 목록 페이지
+      listing_items: "div.post-list li"
+      listing_link: "a.post-link"
+      listing_title: "h3.title"
+
+      # 상세 페이지
+      title: "h1.post-title"
+      content: "div.post-content"
+      images: "div.post-content img"
+
+      # 통계
+      views: "span.view-count"
+      likes: "span.like-count"
+
+      # 댓글
+      comments_section: "div.comments"
+      comment_item: "li.comment"
+      comment_author: "span.author"
+      comment_content: "p.content"
+      comment_likes: "span.likes"
+
+    # 파싱 규칙
+    parsing:
+      origin_id_pattern: "/post/(\\d+)"
+      stats_extract_digits: true
+      image_attrs: ["src", "data-src"]
+
+    # Rate Limiting
+    rate_limit:
+      requests_per_minute: 30
+      delay_between_posts: 0.5
+```
+
+#### YAML 크롤러 추가 단계
+
+**1. `config/sites.yaml`에 사이트 추가**
+
+```yaml
+sites:
+  my_new_site:
+    enabled: true
+    description: "새 사이트 크롤러"
+    listing_url: "https://newsite.com/best"
+    selectors:
+      listing_items: "div.posts li"
+      title: "h1"
+      content: "article"
+    parsing:
+      origin_id_pattern: "/post/(\\w+)"
+```
+
+**2. `.env`에 활성화**
+
+```bash
+ENABLED_CRAWLERS=nate_pann,my_new_site
+```
+
+**3. 즉시 실행**
+
+```bash
+python main.py --once
+```
+
+끝! 별도의 Python 코드 작성 없이 크롤러가 동작합니다.
+
+#### YAML vs 코드 기반 크롤러
+
+| 방식 | 장점 | 단점 | 사용 시기 |
+|------|------|------|-----------|
+| **YAML 기반** | 코드 불필요, 빠른 추가, 비개발자 가능 | 복잡한 로직 불가 | 표준적인 HTML 구조 사이트 |
+| **코드 기반** | 복잡한 로직 가능, 완전한 제어 | 개발 시간 소요 | 특수한 처리 필요 사이트 |
+
+**권장:** 먼저 YAML로 시도하고, 복잡하면 코드 기반으로 전환
+
 #### 테스트
 
 ```bash
-# 플러그인 시스템 테스트
-python test_plugin_system.py
+# YAML 크롤러 테스트
+python test_yaml_crawler.py
 
 # 예상 출력
-✓ 발견된 크롤러 수: 1
-✓ 총 1개 크롤러 등록됨
+✓ 3개 사이트 설정 로드됨
 ✓ nate_pann 크롤러 인스턴스 생성 성공
+✓ ConfigurableCrawler 확인
 ✓ 모든 테스트 통과!
 ```
 

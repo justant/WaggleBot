@@ -1,0 +1,156 @@
+# WaggleBot 사이트 설정
+#
+# YAML 설정만으로 새로운 크롤러를 추가할 수 있습니다.
+# ConfigurableCrawler가 자동으로 이 설정을 읽어서 크롤링을 수행합니다.
+
+sites:
+  # =========================================================================
+  # 네이트판 (Nate Pann)
+  # =========================================================================
+  nate_pann:
+    enabled: true
+    description: "네이트판 인기글 크롤러"
+
+    # 크롤링 설정
+    interval_minutes: 60
+    max_pages: 3
+
+    # URL 패턴
+    listing_url: "https://pann.nate.com/talk/ranking"
+    post_url_template: "https://pann.nate.com/talk/{origin_id}"
+
+    # CSS 셀렉터
+    selectors:
+      # 목록 페이지
+      listing_items: "div.cntList ul.post_wrap li"
+      listing_link: "dl dt h2 a"
+      listing_title: "dl dt h2 a"
+
+      # 상세 페이지
+      title: "div.post-tit-info h1"
+      content: "div#contentArea"
+      images: "div#contentArea img"
+
+      # 통계
+      views: "div.post-tit-info div.info span.count"
+      likes: "div.btnbox.up span.count span"
+
+      # 댓글
+      comments_section: "div#bepleDiv div.cmt_best"
+      comment_item: "dl.cmt_item"
+      comment_author: "span.nameui"
+      comment_content: "dd.usertxt"
+      comment_likes: "dd.n_good"
+
+    # 파싱 규칙
+    parsing:
+      # 정규식으로 origin_id 추출
+      origin_id_pattern: "/talk/(\\d+)"
+
+      # 통계 파싱 (텍스트에서 숫자만 추출)
+      stats_extract_digits: true
+
+      # 이미지 속성 우선순위
+      image_attrs: ["src", "data-src"]
+
+    # Rate Limiting
+    rate_limit:
+      requests_per_minute: 30
+      delay_between_posts: 0.3  # 초
+
+    # User-Agent 로테이션
+    rotate_user_agent: true
+
+  # =========================================================================
+  # 네이트 톡 (Nate Tok) - 예시
+  # =========================================================================
+  nate_tok:
+    enabled: false  # 아직 구현 중
+    description: "네이트 톡 베스트 게시글 크롤러"
+
+    interval_minutes: 60
+    max_pages: 2
+
+    listing_url: "https://tok.nate.com/best"
+    post_url_template: "https://tok.nate.com/post/{origin_id}"
+
+    selectors:
+      listing_items: "div.post-list li.post-item"
+      listing_link: "a.post-link"
+      listing_title: "h3.post-title"
+
+      title: "h1.post-title"
+      content: "div.post-body"
+      images: "div.post-body img"
+
+      views: "span.view-count"
+      likes: "span.like-count"
+
+    parsing:
+      origin_id_pattern: "/post/(\\d+)"
+      stats_extract_digits: true
+      image_attrs: ["src"]
+
+    rate_limit:
+      requests_per_minute: 20
+      delay_between_posts: 0.5
+
+  # =========================================================================
+  # Reddit Popular - API 기반 예시
+  # =========================================================================
+  reddit_popular:
+    enabled: false
+    description: "Reddit Popular 게시글 크롤러 (API)"
+
+    # API 설정
+    type: "api"  # 'html' 또는 'api'
+    api_endpoint: "https://www.reddit.com/r/popular/.json"
+    auth_required: true
+
+    interval_minutes: 30
+    max_items: 25
+
+    # API 응답 파싱 (JSON 경로)
+    api_mapping:
+      origin_id: "data.children[].data.id"
+      title: "data.children[].data.title"
+      content: "data.children[].data.selftext"
+      url: "data.children[].data.url"
+      score: "data.children[].data.score"
+      comments: "data.children[].data.num_comments"
+
+    rate_limit:
+      requests_per_minute: 60
+      delay_between_posts: 1.0
+
+    # 인증 (환경 변수에서 읽음)
+    auth:
+      client_id: "${REDDIT_CLIENT_ID}"
+      client_secret: "${REDDIT_CLIENT_SECRET}"
+
+  # =========================================================================
+  # 추가 사이트 템플릿
+  # =========================================================================
+  # example_site:
+  #   enabled: false
+  #   description: "예시 사이트 크롤러"
+  #
+  #   interval_minutes: 60
+  #   max_pages: 3
+  #
+  #   listing_url: "https://example.com/popular"
+  #   post_url_template: "https://example.com/post/{origin_id}"
+  #
+  #   selectors:
+  #     listing_items: "div.post"
+  #     listing_link: "a.link"
+  #     title: "h1"
+  #     content: "article"
+  #     images: "img"
+  #
+  #   parsing:
+  #     origin_id_pattern: "/post/(\\w+)"
+  #
+  #   rate_limit:
+  #     requests_per_minute: 30
+  #     delay_between_posts: 0.5

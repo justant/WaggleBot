@@ -10,6 +10,7 @@ import sys
 
 from config.settings import ENABLED_CRAWLERS
 from crawlers.plugin_manager import CrawlerRegistry, auto_discover
+from crawlers.site_loader import load_site_configs
 from db.session import init_db, SessionLocal
 from scheduler import start_scheduler
 
@@ -27,9 +28,13 @@ def run_once():
     Returns:
         None
     """
-    # 크롤러 자동 발견
+    # YAML 설정 기반 크롤러 로드
+    yaml_count = load_site_configs()
+    log.info("Loaded %d YAML-based crawlers", yaml_count)
+
+    # 코드 기반 크롤러 자동 발견
     discovered_count = auto_discover('crawlers')
-    log.info("Discovered %d crawlers", discovered_count)
+    log.info("Discovered %d code-based crawlers", discovered_count)
 
     # 등록된 크롤러 목록 출력
     crawlers = CrawlerRegistry.list_crawlers()
@@ -79,6 +84,7 @@ def list_available_crawlers():
     Returns:
         None
     """
+    load_site_configs()
     auto_discover('crawlers')
 
     crawlers = CrawlerRegistry.list_crawlers()
