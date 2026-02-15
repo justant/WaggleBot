@@ -84,7 +84,6 @@ volumes:
   - mariadb_data  # DB 영구 저장
   - ./media       # 영상/오디오 파일 공유
   - ./assets      # 배경 영상, 폰트 (읽기 전용)
-```
 
 ## 3. 데이터베이스 스키마
 

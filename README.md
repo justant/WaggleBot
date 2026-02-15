@@ -641,36 +641,107 @@ python main.py --once
 streamlit run dashboard.py
 ```
 
-### 새 크롤러 추가하기
+### 크롤러 플러그인 시스템
+
+WaggleBot은 **플러그인 아키텍처**를 사용하여 크롤러를 동적으로 등록하고 관리합니다.
+
+#### 사용 가능한 크롤러 확인
+
+```bash
+# 등록된 크롤러 목록 보기
+python main.py --list
+
+# 출력 예시
+[nate_pann] (ENABLED)
+  Class: NatePannCrawler
+  Module: crawlers.nate_pann
+  Description: 네이트판 인기글 크롤러
+```
+
+#### 크롤러 활성화/비활성화
+
+**.env 파일에서 설정:**
+```bash
+# 단일 크롤러
+ENABLED_CRAWLERS=nate_pann
+
+# 복수 크롤러 (콤마로 구분)
+ENABLED_CRAWLERS=nate_pann,nate_tok,reddit
+```
+
+#### 새 크롤러 추가하기
+
+**1. 크롤러 파일 생성 (`crawlers/reddit.py`)**
 
 ```python
-# crawlers/reddit.py
 from crawlers.base import BaseCrawler
+from crawlers.plugin_manager import CrawlerRegistry
 
+@CrawlerRegistry.register(
+    'reddit',
+    description='Reddit 인기글 크롤러',
+    enabled=True
+)
 class RedditCrawler(BaseCrawler):
-    def __init__(self):
-        super().__init__(site_code='reddit')
-    
-    def fetch_listing(self, page: int = 1) -> list[dict]:
+    site_code = 'reddit'
+
+    def fetch_listing(self) -> list[dict]:
         """게시글 목록 가져오기"""
         # Reddit API 호출
-        pass
-    
+        return [
+            {
+                'origin_id': 'abc123',
+                'title': '제목',
+                'url': 'https://reddit.com/r/...'
+            }
+        ]
+
     def parse_post(self, url: str) -> dict:
         """개별 게시글 파싱"""
-        # 제목, 본문, 이미지, 통계 추출
         return {
-            'origin_id': '...',
-            'title': '...',
-            'content': '...',
-            'images': [...],
-            'stats': {'views': 0, 'likes': 0}
+            'title': '제목',
+            'content': '본문',
+            'images': ['url1', 'url2'],
+            'stats': {'views': 1000, 'likes': 50},
+            'comments': [
+                {'author': 'user1', 'content': '댓글', 'likes': 10}
+            ]
         }
+```
 
-# main.py에 등록
-from crawlers.reddit import RedditCrawler
-crawler = RedditCrawler()
-crawler.run(max_pages=3)
+**2. .env에 추가**
+```bash
+ENABLED_CRAWLERS=nate_pann,reddit
+```
+
+**3. 자동 발견 확인**
+```bash
+# 크롤러가 자동으로 발견되고 등록됨
+python main.py --list
+
+# 실행
+python main.py --once
+```
+
+#### 플러그인 시스템 특징
+
+✅ **자동 발견**: `crawlers/` 디렉토리의 모든 크롤러 자동 등록
+✅ **데코레이터 기반**: `@CrawlerRegistry.register()` 사용
+✅ **동적 활성화**: `.env`에서 활성화/비활성화 가능
+✅ **메타데이터**: 설명, 활성화 상태 등 관리
+✅ **확장성**: 100개 이상 크롤러 지원 가능
+
+#### 테스트
+
+```bash
+# 플러그인 시스템 테스트
+python test_plugin_system.py
+
+# 예상 출력
+✓ 발견된 크롤러 수: 1
+✓ 총 1개 크롤러 등록됨
+✓ nate_pann 크롤러 인스턴스 생성 성공
+✓ 모든 테스트 통과!
 ```
 
 자세한 내용은 [arch/dev_spec.md](arch/dev_spec.md) 참조.

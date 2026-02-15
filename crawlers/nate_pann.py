@@ -8,12 +8,18 @@ from bs4 import BeautifulSoup
 
 from config.settings import NATE_PANN_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from crawlers.base import BaseCrawler
+from crawlers.plugin_manager import CrawlerRegistry
 
 log = logging.getLogger(__name__)
 
 POST_BASE = "https://pann.nate.com/talk/"
 
 
+@CrawlerRegistry.register(
+    'nate_pann',
+    description='네이트판 인기글 크롤러',
+    enabled=True
+)
 class NatePannCrawler(BaseCrawler):
     site_code = "nate_pann"
 

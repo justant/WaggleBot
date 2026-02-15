@@ -15,6 +15,9 @@ DATABASE_URL = os.getenv(
 
 CRAWL_INTERVAL_HOURS = int(os.getenv("CRAWL_INTERVAL_HOURS", "1"))
 
+# 크롤러 설정
+ENABLED_CRAWLERS = os.getenv("ENABLED_CRAWLERS", "nate_pann").split(",")
+
 NATE_PANN_SECTIONS = [
     {"name": "톡톡 베스트", "url": "https://pann.nate.com/talk/ranking"},
     {"name": "톡커들의 선택", "url": "https://pann.nate.com/talk/ranking/best"},
