@@ -5,6 +5,7 @@ beautifulsoup4
 apscheduler>=3.10
 python-dotenv
 streamlit
+streamlit-autorefresh
 edge-tts
 Pillow
 google-api-python-client
