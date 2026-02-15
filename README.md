@@ -432,10 +432,86 @@ WaggleBot/
 │   └── fonts/                     # 한글 폰트
 ├── 📁 config/                     # 설정
 │   └── settings.py                # 중앙화된 설정
+├── 📁 monitoring/                 # 모니터링 시스템
+│   ├── alerting.py                # 알림 관리자
+│   └── daemon.py                  # 헬스체크 데몬
 ├── 📄 main.py                     # 크롤러 진입점
 ├── 📄 scheduler.py                # Cron 스케줄러
 └── 📄 dashboard.py                # Streamlit 대시보드
 ```
+
+---
+
+## 📊 운영 및 모니터링
+
+### 모니터링 시스템
+
+WaggleBot은 시스템 헬스를 자동으로 모니터링하고, 문제 발생 시 알림을 전송합니다.
+
+#### 모니터링 항목
+
+- **CPU/메모리 사용률**: 시스템 리소스 모니터링
+- **디스크 공간**: 영상 저장 공간 확인
+- **GPU 온도**: 과열 방지 (경고: 75°C, 위험: 80°C)
+- **DB 연결**: 데이터베이스 상태 체크
+
+#### 알림 설정
+
+**.env 파일 설정:**
+
+```bash
+# 모니터링 활성화
+MONITORING_ENABLED=true
+HEALTH_CHECK_INTERVAL=300  # 5분마다 체크
+
+# 임계값 설정
+GPU_TEMP_WARNING=75
+GPU_TEMP_CRITICAL=80
+DISK_USAGE_WARNING=80
+DISK_USAGE_CRITICAL=90
+
+# 이메일 알림 (Gmail 예시)
+EMAIL_ALERTS_ENABLED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password  # Gmail 앱 비밀번호
+ALERT_EMAIL_TO=admin@example.com,dev@example.com
+
+# 슬랙 알림
+SLACK_ALERTS_ENABLED=true
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+```
+
+**Gmail 앱 비밀번호 생성:**
+1. Google 계정 → 보안 → 2단계 인증 활성화
+2. 앱 비밀번호 생성 → "메일" 선택
+3. 생성된 16자 비밀번호를 `SMTP_PASSWORD`에 입력
+
+#### 모니터링 서비스 시작
+
+```bash
+# Docker Compose로 시작
+docker-compose up -d monitoring
+
+# 로그 확인
+docker-compose logs -f monitoring
+
+# 수동 테스트
+python test_monitoring.py
+```
+
+#### 모니터링 로그 예시
+
+```
+2025-02-15 12:00:00 - monitoring.alerting - INFO - Starting health check...
+2025-02-15 12:00:01 - monitoring.alerting - INFO - CPU: 45.2% | MEM: 62.1% | DISK: 55.3% | GPU: 68°C | DB: OK
+2025-02-15 12:00:01 - monitoring.alerting - INFO - Health check OK
+```
+
+**알림이 전송되는 경우:**
+- ⚠️ **WARNING**: GPU 75°C 이상, 디스크 80% 이상 (로그만)
+- 🚨 **CRITICAL**: GPU 80°C 이상, 디스크 90% 이상, DB 연결 실패 (이메일/슬랙 전송)
 
 ---
 

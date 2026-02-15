@@ -64,5 +64,31 @@ services:
         condition: service_healthy
     command: python -m ai_worker.main
 
+  monitoring:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      MONITORING_ENABLED: ${MONITORING_ENABLED:-true}
+      HEALTH_CHECK_INTERVAL: ${HEALTH_CHECK_INTERVAL:-300}
+      GPU_TEMP_WARNING: ${GPU_TEMP_WARNING:-75}
+      GPU_TEMP_CRITICAL: ${GPU_TEMP_CRITICAL:-80}
+      DISK_USAGE_WARNING: ${DISK_USAGE_WARNING:-80}
+      DISK_USAGE_CRITICAL: ${DISK_USAGE_CRITICAL:-90}
+      MEMORY_USAGE_WARNING: ${MEMORY_USAGE_WARNING:-85}
+      MEMORY_USAGE_CRITICAL: ${MEMORY_USAGE_CRITICAL:-95}
+      EMAIL_ALERTS_ENABLED: ${EMAIL_ALERTS_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      SLACK_ALERTS_ENABLED: ${SLACK_ALERTS_ENABLED:-false}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    command: python -m monitoring.daemon
+
 volumes:
   mariadb_data:

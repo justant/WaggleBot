@@ -102,3 +102,29 @@ def save_pipeline_config(cfg: dict[str, str]) -> None:
     _PIPELINE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_PIPELINE_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+# ---------------------------------------------------------------------------
+# Monitoring & Alerting
+# ---------------------------------------------------------------------------
+MONITORING_ENABLED = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
+HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5분
+
+# 임계값
+GPU_TEMP_WARNING = int(os.getenv("GPU_TEMP_WARNING", "75"))
+GPU_TEMP_CRITICAL = int(os.getenv("GPU_TEMP_CRITICAL", "80"))
+DISK_USAGE_WARNING = int(os.getenv("DISK_USAGE_WARNING", "80"))
+DISK_USAGE_CRITICAL = int(os.getenv("DISK_USAGE_CRITICAL", "90"))
+MEMORY_USAGE_WARNING = int(os.getenv("MEMORY_USAGE_WARNING", "85"))
+MEMORY_USAGE_CRITICAL = int(os.getenv("MEMORY_USAGE_CRITICAL", "95"))
+
+# 이메일 알림 설정
+EMAIL_ALERTS_ENABLED = os.getenv("EMAIL_ALERTS_ENABLED", "false").lower() == "true"
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").split(",") if os.getenv("ALERT_EMAIL_TO") else []
+
+# 슬랙 알림 설정
+SLACK_ALERTS_ENABLED = os.getenv("SLACK_ALERTS_ENABLED", "false").lower() == "true"
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
