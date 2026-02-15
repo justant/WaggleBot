@@ -1,0 +1,361 @@
+"""영상 생성 모듈 – FFmpeg subprocess 직접 호출 방식.
+
+TTS 오디오 + 이미지(또는 배경영상) + 자막 + BGM → 9:16 쇼츠 영상 렌더링.
+"""
+import logging
+import random
+import subprocess
+import tempfile
+import textwrap
+from pathlib import Path
+
+import requests
+from PIL import Image
+
+from config.settings import ASSETS_DIR, MEDIA_DIR
+
+logger = logging.getLogger(__name__)
+
+_VIDEO_DIR = MEDIA_DIR / "video"
+_TEMP_DIR = MEDIA_DIR / "tmp"
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+def render_video(
+    post,
+    audio_path: Path,
+    summary_text: str,
+    cfg: dict[str, str],
+) -> Path:
+    """메인 진입점. 쇼츠 영상을 생성하고 경로를 반환한다."""
+    _VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    _TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    resolution = cfg.get("video_resolution", "1080x1920")
+    width, height = (int(v) for v in resolution.split("x"))
+    codec = cfg.get("video_codec", "h264_nvenc")
+    bgm_vol = float(cfg.get("bgm_volume", "0.15"))
+    font = cfg.get("subtitle_font", "NanumGothic")
+
+    output_path = _VIDEO_DIR / f"post_{post.id}.mp4"
+    audio_path = Path(audio_path)
+    duration = _probe_duration(audio_path)
+
+    images: list[str] = post.images or []
+    if images:
+        video_input = _build_slideshow(images, width, height, duration, post.id)
+    else:
+        video_input = _build_background_loop(width, height, duration)
+
+    _compose_final(
+        video_input=video_input,
+        audio_path=audio_path,
+        output_path=output_path,
+        summary_text=summary_text,
+        duration=duration,
+        width=width,
+        height=height,
+        codec=codec,
+        font=font,
+        bgm_vol=bgm_vol,
+    )
+
+    # 임시 파일 정리
+    if video_input.parent == _TEMP_DIR:
+        video_input.unlink(missing_ok=True)
+
+    logger.info("영상 생성 완료: %s (%.1f초)", output_path.name, duration)
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# 오디오 길이 측정
+# ---------------------------------------------------------------------------
+def _probe_duration(audio_path: Path) -> float:
+    """ffprobe로 오디오 길이(초)를 반환한다."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "quiet",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(audio_path),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return float(result.stdout.strip())
+
+
+# ---------------------------------------------------------------------------
+# 이미지 슬라이드쇼 (Ken Burns)
+# ---------------------------------------------------------------------------
+def _build_slideshow(
+    image_urls: list[str],
+    width: int,
+    height: int,
+    duration: float,
+    post_id: int,
+) -> Path:
+    """이미지를 다운로드 → 리사이즈 → Ken Burns zoompan 슬라이드쇼 생성."""
+    img_dir = _TEMP_DIR / f"imgs_{post_id}"
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    local_imgs: list[Path] = []
+    for idx, url in enumerate(image_urls[:10]):  # 최대 10장
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+        except requests.RequestException:
+            logger.warning("이미지 다운로드 실패: %s", url)
+            continue
+
+        img_path = img_dir / f"{idx:03d}.jpg"
+        img_path.write_bytes(resp.content)
+
+        # 9:16 리사이즈
+        _resize_cover(img_path, width, height)
+        local_imgs.append(img_path)
+
+    if not local_imgs:
+        logger.warning("다운로드 성공 이미지 없음 → 배경영상 폴백")
+        return _build_background_loop(width, height, duration)
+
+    per_img = duration / len(local_imgs)
+    fps = 30
+
+    # concat demuxer 입력 파일
+    concat_file = _TEMP_DIR / f"concat_{post_id}.txt"
+    lines: list[str] = []
+    for img in local_imgs:
+        lines.append(f"file '{img}'")
+        lines.append(f"duration {per_img:.3f}")
+    # 마지막 프레임 유지를 위해 마지막 이미지 다시 추가
+    lines.append(f"file '{local_imgs[-1]}'")
+    concat_file.write_text("\n".join(lines), encoding="utf-8")
+
+    output = _TEMP_DIR / f"slideshow_{post_id}.mp4"
+
+    # zoompan: 약간의 줌인 효과
+    zp_filter = (
+        f"zoompan=z='min(zoom+0.0015,1.3)':d={int(per_img * fps)}"
+        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":s={width}x{height}:fps={fps}"
+    )
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_file),
+            "-vf", zp_filter,
+            "-t", f"{duration:.3f}",
+            "-c:v", "libx264", "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+            str(output),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+
+    # 임시 파일 정리
+    concat_file.unlink(missing_ok=True)
+    for img in local_imgs:
+        img.unlink(missing_ok=True)
+    img_dir.rmdir()
+
+    return output
+
+
+def _resize_cover(img_path: Path, target_w: int, target_h: int) -> None:
+    """이미지를 target 비율로 crop+resize (cover 모드)."""
+    with Image.open(img_path) as img:
+        img_ratio = img.width / img.height
+        target_ratio = target_w / target_h
+
+        if img_ratio > target_ratio:
+            new_w = int(img.height * target_ratio)
+            left = (img.width - new_w) // 2
+            img = img.crop((left, 0, left + new_w, img.height))
+        else:
+            new_h = int(img.width / target_ratio)
+            top = (img.height - new_h) // 2
+            img = img.crop((0, top, img.width, top + new_h))
+
+        img = img.resize((target_w, target_h), Image.LANCZOS)
+        img.save(img_path, "JPEG", quality=90)
+
+
+# ---------------------------------------------------------------------------
+# 배경영상 루프
+# ---------------------------------------------------------------------------
+def _build_background_loop(width: int, height: int, duration: float) -> Path:
+    """assets/backgrounds/에서 랜덤 영상을 골라 duration만큼 loop."""
+    bg_dir = ASSETS_DIR / "backgrounds"
+    candidates = list(bg_dir.glob("*.mp4")) + list(bg_dir.glob("*.webm"))
+
+    if not candidates:
+        # 배경영상 없으면 검은 화면 생성
+        logger.warning("배경영상 없음 → 검은 화면 생성")
+        output = _TEMP_DIR / "black_bg.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", f"color=c=black:s={width}x{height}:r=30:d={duration:.3f}",
+                "-c:v", "libx264", "-preset", "fast",
+                "-pix_fmt", "yuv420p",
+                str(output),
+            ],
+            capture_output=True, text=True, check=True,
+        )
+        return output
+
+    bg = random.choice(candidates)
+    output = _TEMP_DIR / "bg_loop.mp4"
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1", "-i", str(bg),
+            "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                   f"crop={width}:{height}",
+            "-t", f"{duration:.3f}",
+            "-c:v", "libx264", "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+            str(output),
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return output
+
+
+# ---------------------------------------------------------------------------
+# 최종 합성 (영상 + 오디오 + 자막 + BGM)
+# ---------------------------------------------------------------------------
+def _compose_final(
+    *,
+    video_input: Path,
+    audio_path: Path,
+    output_path: Path,
+    summary_text: str,
+    duration: float,
+    width: int,
+    height: int,
+    codec: str,
+    font: str,
+    bgm_vol: float,
+) -> None:
+    """영상 + TTS 오디오 + 자막(drawtext) + BGM을 합성한다."""
+
+    # 자막 텍스트 이스케이프 (FFmpeg drawtext용)
+    escaped = _escape_drawtext(summary_text)
+    # 줄바꿈: 한 줄 ~18자
+    wrapped = _wrap_korean(summary_text, width=18)
+    escaped = _escape_drawtext(wrapped)
+
+    fontsize = int(width * 0.042)  # ~45px @1080w
+    drawtext = (
+        f"drawtext=text='{escaped}'"
+        f":fontfile={font}"
+        f":fontsize={fontsize}"
+        f":fontcolor=white"
+        f":borderw=3:bordercolor=black"
+        f":x=(w-text_w)/2:y=h*0.75"
+        f":line_spacing=12"
+    )
+
+    # BGM 믹싱
+    bgm_files = list((ASSETS_DIR / "bgm").glob("*.mp3")) + \
+                list((ASSETS_DIR / "bgm").glob("*.wav"))
+
+    inputs = ["-i", str(video_input), "-i", str(audio_path)]
+    if bgm_files:
+        bgm = random.choice(bgm_files)
+        inputs += ["-stream_loop", "-1", "-i", str(bgm)]
+        audio_filter = (
+            f"[1:a]apad[tts];"
+            f"[2:a]volume={bgm_vol}[bgm];"
+            f"[tts][bgm]amix=inputs=2:duration=first[aout]"
+        )
+        audio_map = ["-map", "[aout]"]
+    else:
+        audio_filter = "[1:a]apad[aout]"
+        audio_map = ["-map", "[aout]"]
+
+    # NVENC 폴백
+    enc_args = _get_encoder_args(codec)
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", f"{drawtext};{audio_filter}",
+        "-map", "0:v",
+        *audio_map,
+        *enc_args,
+        "-r", "30",
+        "-t", f"{duration:.3f}",
+        "-shortest",
+        str(output_path),
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0 and codec == "h264_nvenc":
+        logger.warning("NVENC 실패 → libx264 폴백: %s", result.stderr[-200:])
+        enc_args = _get_encoder_args("libx264")
+        cmd = [
+            "ffmpeg", "-y",
+            *inputs,
+            "-filter_complex", f"{drawtext};{audio_filter}",
+            "-map", "0:v",
+            *audio_map,
+            *enc_args,
+            "-r", "30",
+            "-t", f"{duration:.3f}",
+            "-shortest",
+            str(output_path),
+        ]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+    elif result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, cmd, result.stdout, result.stderr
+        )
+
+
+def _get_encoder_args(codec: str) -> list[str]:
+    """코덱별 인코딩 인자 반환."""
+    if codec == "h264_nvenc":
+        return [
+            "-c:v", "h264_nvenc",
+            "-preset", "p4",
+            "-rc", "vbr",
+            "-cq", "23",
+            "-pix_fmt", "yuv420p",
+        ]
+    return [
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 유틸리티
+# ---------------------------------------------------------------------------
+def _escape_drawtext(text: str) -> str:
+    """FFmpeg drawtext 필터용 텍스트 이스케이프."""
+    # drawtext 특수문자 이스케이프
+    for ch in ("\\", "'", ":", "%", "{", "}"):
+        text = text.replace(ch, f"\\{ch}")
+    # 개행 → drawtext 줄바꿈
+    text = text.replace("\n", "\\n")
+    return text
+
+
+def _wrap_korean(text: str, width: int = 18) -> str:
+    """한국어 텍스트를 지정 폭으로 줄바꿈."""
+    lines: list[str] = []
+    for paragraph in text.split("\n"):
+        wrapped = textwrap.fill(paragraph, width=width)
+        lines.append(wrapped)
+    return "\n".join(lines)

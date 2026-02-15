@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from ai_worker.llm import summarize
 from ai_worker.tts import get_tts_engine
+from ai_worker.video import render_video
 from config.settings import MEDIA_DIR, load_pipeline_config
 from db.models import Content, Post, PostStatus
 
@@ -36,7 +37,10 @@ def process(post: Post, session: Session) -> None:
     audio_path = audio_dir / f"post_{post.id}.mp3"
     tts_engine.synthesize(summary_text, voice_id, audio_path)
 
-    # 3. Content 레코드 생성
+    # 3. 영상 생성
+    video_path = render_video(post, audio_path, summary_text, cfg)
+
+    # 4. Content 레코드 생성
     content = session.query(Content).filter(Content.post_id == post.id).first()
     if content is None:
         content = Content(post_id=post.id)
@@ -44,6 +48,7 @@ def process(post: Post, session: Session) -> None:
 
     content.summary_text = summary_text
     content.audio_path = str(audio_path)
+    content.video_path = str(video_path)
 
     post.status = PostStatus.RENDERED
     session.commit()

@@ -44,6 +44,7 @@ AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "eeve-korean:10.8b")
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
+ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
 # TTS 엔진별 목소리 프리셋
 TTS_VOICES: dict[str, list[dict[str, str]]] = {
@@ -79,6 +80,10 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     "tts_engine": "edge-tts",
     "tts_voice": "ko-KR-SunHiNeural",
     "llm_model": "eeve-korean:10.8b",
+    "video_resolution": "1080x1920",
+    "video_codec": "h264_nvenc",
+    "bgm_volume": "0.15",
+    "subtitle_font": "NanumGothic",
 }
 
 

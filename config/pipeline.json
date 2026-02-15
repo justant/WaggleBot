@@ -1,5 +1,9 @@
 {
   "tts_engine": "edge-tts",
   "tts_voice": "ko-KR-SunHiNeural",
-  "llm_model": "eeve-korean:10.8b"
+  "llm_model": "eeve-korean:10.8b",
+  "video_resolution": "1080x1920",
+  "video_codec": "h264_nvenc",
+  "bgm_volume": "0.15",
+  "subtitle_font": "NanumGothic"
 }
