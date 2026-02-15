@@ -84,6 +84,9 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     "video_codec": "h264_nvenc",
     "bgm_volume": "0.15",
     "subtitle_font": "NanumGothic",
+    "upload_platforms": '["youtube"]',
+    "upload_privacy": "unlisted",
+    "youtube_credentials_path": "config/youtube_credentials.json",
 }
 
 

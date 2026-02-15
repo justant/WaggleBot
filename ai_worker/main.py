@@ -2,7 +2,7 @@ import logging
 import time
 
 from config.settings import AI_POLL_INTERVAL
-from db.models import Post, PostStatus
+from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,41 @@ def poll_once() -> bool:
     return True
 
 
+def upload_once() -> bool:
+    """RENDERED 상태 포스트를 찾아 업로드 실행."""
+    from uploaders.uploader import upload_post
+
+    with SessionLocal() as session:
+        post = (
+            session.query(Post)
+            .filter(Post.status == PostStatus.RENDERED)
+            .order_by(Post.created_at.asc())
+            .first()
+        )
+        if post is None:
+            return False
+
+        content = session.query(Content).filter_by(post_id=post.id).first()
+        if content is None:
+            logger.error("Content 없음: post_id=%d", post.id)
+            return False
+
+        try:
+            success = upload_post(post, content, session)
+            if success:
+                post.status = PostStatus.UPLOADED
+                session.commit()
+                logger.info("업로드 완료: post_id=%d", post.id)
+            else:
+                session.commit()
+                logger.warning("일부 플랫폼 업로드 실패: post_id=%d", post.id)
+        except Exception:
+            logger.exception("업로드 실패: post_id=%d", post.id)
+            session.rollback()
+
+    return True
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -49,7 +84,13 @@ def main() -> None:
             logger.exception("폴링 루프 예외")
             found = False
 
-        if not found:
+        try:
+            uploaded = upload_once()
+        except Exception:
+            logger.exception("업로드 폴링 예외")
+            uploaded = False
+
+        if not found and not uploaded:
             time.sleep(AI_POLL_INTERVAL)
 
 

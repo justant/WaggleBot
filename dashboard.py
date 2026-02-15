@@ -1,3 +1,4 @@
+import json
 from datetime import timezone, timedelta
 
 import streamlit as st
@@ -195,11 +196,41 @@ with tab_settings:
 
     llm_model = st.text_input("LLM 모델 (Ollama)", value=cfg.get("llm_model", "eeve-korean:10.8b"))
 
+    st.divider()
+    st.subheader("업로드 설정")
+
+    available_platforms = ["youtube"]
+    current_platforms = json.loads(cfg.get("upload_platforms", '["youtube"]'))
+    selected_platforms = st.multiselect(
+        "업로드 플랫폼",
+        available_platforms,
+        default=[p for p in current_platforms if p in available_platforms],
+    )
+
+    privacy_options = ["unlisted", "private", "public"]
+    current_privacy = cfg.get("upload_privacy", "unlisted")
+    privacy_idx = privacy_options.index(current_privacy) if current_privacy in privacy_options else 0
+    selected_privacy = st.selectbox("공개 설정", privacy_options, index=privacy_idx)
+
+    if "youtube" in selected_platforms:
+        st.caption("YouTube 인증 상태")
+        try:
+            from uploaders.youtube import YouTubeUploader
+            yt = YouTubeUploader()
+            if yt.validate_credentials():
+                st.success("YouTube 인증 완료")
+            else:
+                st.warning("YouTube 인증 필요 — OAuth2 토큰을 설정하세요")
+        except Exception as exc:
+            st.warning(f"YouTube 인증 확인 불가: {exc}")
+
     if st.button("저장", type="primary"):
         new_cfg = {
             "tts_engine": selected_engine,
             "tts_voice": selected_voice,
             "llm_model": llm_model,
+            "upload_platforms": json.dumps(selected_platforms),
+            "upload_privacy": selected_privacy,
         }
         save_pipeline_config(new_cfg)
         st.success("설정이 저장되었습니다.")
