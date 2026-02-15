@@ -41,6 +41,7 @@ STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 # AI Worker
 # ---------------------------------------------------------------------------
 AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
+MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "eeve-korean:10.8b")
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))

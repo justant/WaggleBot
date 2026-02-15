@@ -17,6 +17,7 @@ class PostStatus(enum.Enum):
     RENDERED = "RENDERED"
     UPLOADED = "UPLOADED"
     DECLINED = "DECLINED"
+    FAILED = "FAILED"
 
 
 def _utcnow():
@@ -39,6 +40,7 @@ class Post(Base):
     status = Column(
         Enum(PostStatus), nullable=False, default=PostStatus.COLLECTED,
     )
+    retry_count = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 

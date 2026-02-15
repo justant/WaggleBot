@@ -63,6 +63,7 @@ STATUS_COLORS = {
     PostStatus.RENDERED: "green",
     PostStatus.UPLOADED: "violet",
     PostStatus.DECLINED: "red",
+    PostStatus.FAILED: "red",
 }
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,7 @@ with tab_progress:
         PostStatus.PROCESSING,
         PostStatus.RENDERED,
         PostStatus.UPLOADED,
+        PostStatus.FAILED,
     ]
 
     with SessionLocal() as session:

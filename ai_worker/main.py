@@ -1,14 +1,14 @@
+import asyncio
 import logging
-import time
 
-from config.settings import AI_POLL_INTERVAL
+from config.settings import AI_POLL_INTERVAL, MAX_RETRY_COUNT
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
 
 logger = logging.getLogger(__name__)
 
 
-def poll_once() -> bool:
+async def poll_once() -> bool:
     with SessionLocal() as session:
         post = (
             session.query(Post)
@@ -22,19 +22,31 @@ def poll_once() -> bool:
         from ai_worker.processor import process
 
         try:
-            process(post, session)
+            await process(post, session)
         except Exception:
             logger.exception("처리 실패: post_id=%d", post.id)
             session.rollback()
             post = session.query(Post).get(post.id)
             if post and post.status == PostStatus.PROCESSING:
-                post.status = PostStatus.APPROVED
+                post.retry_count = (post.retry_count or 0) + 1
+                if post.retry_count >= MAX_RETRY_COUNT:
+                    post.status = PostStatus.FAILED
+                    logger.error(
+                        "최대 재시도 초과 → FAILED: post_id=%d (retries=%d)",
+                        post.id, post.retry_count,
+                    )
+                else:
+                    post.status = PostStatus.APPROVED
+                    logger.warning(
+                        "재시도 대기: post_id=%d (retry=%d/%d)",
+                        post.id, post.retry_count, MAX_RETRY_COUNT,
+                    )
                 session.commit()
 
     return True
 
 
-def upload_once() -> bool:
+async def upload_once() -> bool:
     """RENDERED 상태 포스트를 찾아 업로드 실행."""
     from uploaders.uploader import upload_post
 
@@ -69,6 +81,24 @@ def upload_once() -> bool:
     return True
 
 
+async def _main_loop() -> None:
+    while True:
+        try:
+            found = await poll_once()
+        except Exception:
+            logger.exception("폴링 루프 예외")
+            found = False
+
+        try:
+            uploaded = await upload_once()
+        except Exception:
+            logger.exception("업로드 폴링 예외")
+            uploaded = False
+
+        if not found and not uploaded:
+            await asyncio.sleep(AI_POLL_INTERVAL)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -76,22 +106,7 @@ def main() -> None:
     )
     init_db()
     logger.info("AI Worker 시작 (poll_interval=%ds)", AI_POLL_INTERVAL)
-
-    while True:
-        try:
-            found = poll_once()
-        except Exception:
-            logger.exception("폴링 루프 예외")
-            found = False
-
-        try:
-            uploaded = upload_once()
-        except Exception:
-            logger.exception("업로드 폴링 예외")
-            uploaded = False
-
-        if not found and not uploaded:
-            time.sleep(AI_POLL_INTERVAL)
+    asyncio.run(_main_loop())
 
 
 if __name__ == "__main__":

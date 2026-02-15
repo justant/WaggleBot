@@ -12,7 +12,7 @@ from db.models import Content, Post, PostStatus
 logger = logging.getLogger(__name__)
 
 
-def process(post: Post, session: Session) -> None:
+async def process(post: Post, session: Session) -> None:
     cfg = load_pipeline_config()
 
     post.status = PostStatus.PROCESSING
@@ -30,12 +30,12 @@ def process(post: Post, session: Session) -> None:
         model=cfg.get("llm_model"),
     )
 
-    # 2. TTS 생성
+    # 2. TTS 생성 (async)
     tts_engine = get_tts_engine(cfg["tts_engine"])
     voice_id = cfg["tts_voice"]
     audio_dir = MEDIA_DIR / "audio"
     audio_path = audio_dir / f"post_{post.id}.mp3"
-    tts_engine.synthesize(summary_text, voice_id, audio_path)
+    await tts_engine.synthesize(summary_text, voice_id, audio_path)
 
     # 3. 영상 생성
     video_path = render_video(post, audio_path, summary_text, cfg)

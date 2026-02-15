@@ -37,7 +37,8 @@ def render_video(
     width, height = (int(v) for v in resolution.split("x"))
     codec = cfg.get("video_codec", "h264_nvenc")
     bgm_vol = float(cfg.get("bgm_volume", "0.15"))
-    font = cfg.get("subtitle_font", "NanumGothic")
+    font_name = cfg.get("subtitle_font", "NanumGothic")
+    font = _resolve_font_path(font_name)
 
     output_path = _VIDEO_DIR / f"post_{post.id}.mp4"
     audio_path = Path(audio_path)
@@ -259,6 +260,7 @@ def _compose_final(
         f":fontsize={fontsize}"
         f":fontcolor=white"
         f":borderw=3:bordercolor=black"
+        f":box=1:boxcolor=black@0.5:boxborderw=10"
         f":x=(w-text_w)/2:y=h*0.75"
         f":line_spacing=12"
     )
@@ -271,10 +273,13 @@ def _compose_final(
     if bgm_files:
         bgm = random.choice(bgm_files)
         inputs += ["-stream_loop", "-1", "-i", str(bgm)]
+        # sidechaincompress: TTS가 나올 때 BGM 볼륨 자동 감소 (auto-ducking)
         audio_filter = (
             f"[1:a]apad[tts];"
             f"[2:a]volume={bgm_vol}[bgm];"
-            f"[tts][bgm]amix=inputs=2:duration=first[aout]"
+            f"[bgm][tts]sidechaincompress="
+            f"threshold=0.02:ratio=6:attack=200:release=1000[ducked];"
+            f"[tts][ducked]amix=inputs=2:duration=first[aout]"
         )
         audio_map = ["-map", "[aout]"]
     else:
@@ -342,6 +347,20 @@ def _get_encoder_args(codec: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # 유틸리티
 # ---------------------------------------------------------------------------
+def _resolve_font_path(font_name: str) -> str:
+    """폰트 이름으로 assets/fonts/ 내 절대 경로를 반환한다.
+
+    .ttf 확장자가 없으면 자동 추가. 파일이 없으면 이름 그대로 반환(시스템 폰트 폴백).
+    """
+    if not font_name.endswith((".ttf", ".otf")):
+        font_name = f"{font_name}.ttf"
+    font_path = ASSETS_DIR / "fonts" / font_name
+    if font_path.exists():
+        return str(font_path)
+    logger.warning("폰트 파일 없음: %s → 시스템 폰트 폴백", font_path)
+    return font_name
+
+
 def _escape_drawtext(text: str) -> str:
     """FFmpeg drawtext 필터용 텍스트 이스케이프."""
     # drawtext 특수문자 이스케이프
