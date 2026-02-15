@@ -1,9 +1,9 @@
-import json
 from datetime import timezone, timedelta
 
 import streamlit as st
 from sqlalchemy import func
 
+from config.settings import TTS_VOICES, load_pipeline_config, save_pipeline_config
 from db.models import Post, PostStatus, Comment
 from db.session import SessionLocal
 
@@ -68,7 +68,9 @@ STATUS_COLORS = {
 # tabs
 # ---------------------------------------------------------------------------
 
-tab_inbox, tab_progress, tab_gallery = st.tabs(["받은함 (Inbox)", "진행현황 (Progress)", "갤러리 (Gallery)"])
+tab_inbox, tab_progress, tab_gallery, tab_settings = st.tabs(
+    ["받은함 (Inbox)", "진행현황 (Progress)", "갤러리 (Gallery)", "설정 (Settings)"]
+)
 
 # ── Tab 1: Inbox ──────────────────────────────────────────────────────────
 
@@ -172,3 +174,36 @@ with tab_gallery:
                     st.markdown(f":{badge_color}[{post.status.value}] **{post.title}**")
                     st.caption(_stats_display(post.stats))
                     st.markdown("_영상 플레이어는 Phase 3에서 연결됩니다._")
+
+# ── Tab 4: Settings ──────────────────────────────────────────────────────
+
+with tab_settings:
+    st.subheader("파이프라인 설정")
+
+    cfg = load_pipeline_config()
+
+    engine_list = list(TTS_VOICES.keys())
+    engine_idx = engine_list.index(cfg["tts_engine"]) if cfg["tts_engine"] in engine_list else 0
+    selected_engine = st.selectbox("TTS 엔진", engine_list, index=engine_idx)
+
+    voices = TTS_VOICES[selected_engine]
+    voice_ids = [v["id"] for v in voices]
+    voice_labels = [f'{v["name"]} ({v["id"]})' for v in voices]
+    voice_idx = voice_ids.index(cfg["tts_voice"]) if cfg["tts_voice"] in voice_ids else 0
+    selected_voice_label = st.selectbox("TTS 목소리", voice_labels, index=voice_idx)
+    selected_voice = voice_ids[voice_labels.index(selected_voice_label)]
+
+    llm_model = st.text_input("LLM 모델 (Ollama)", value=cfg.get("llm_model", "eeve-korean:10.8b"))
+
+    if st.button("저장", type="primary"):
+        new_cfg = {
+            "tts_engine": selected_engine,
+            "tts_voice": selected_voice,
+            "llm_model": llm_model,
+        }
+        save_pipeline_config(new_cfg)
+        st.success("설정이 저장되었습니다.")
+
+    st.divider()
+    st.caption("현재 저장된 설정")
+    st.json(load_pipeline_config())

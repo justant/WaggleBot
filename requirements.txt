@@ -5,3 +5,4 @@ beautifulsoup4
 apscheduler>=3.10
 python-dotenv
 streamlit
+edge-tts

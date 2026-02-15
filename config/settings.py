@@ -1,7 +1,12 @@
+import json
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -31,3 +36,60 @@ REQUEST_HEADERS = {
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
 
 STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
+
+# ---------------------------------------------------------------------------
+# AI Worker
+# ---------------------------------------------------------------------------
+AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "eeve-korean:10.8b")
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
+
+# TTS 엔진별 목소리 프리셋
+TTS_VOICES: dict[str, list[dict[str, str]]] = {
+    "edge-tts": [
+        {"id": "ko-KR-SunHiNeural",   "name": "선히 (여, 밝음)"},
+        {"id": "ko-KR-InJoonNeural",   "name": "인준 (남, 차분)"},
+        {"id": "ko-KR-HyunsuNeural",   "name": "현수 (남, 뉴스)"},
+        {"id": "ko-KR-BongJinNeural",  "name": "봉진 (남, 따뜻)"},
+        {"id": "ko-KR-GookMinNeural",  "name": "국민 (남, 밝음)"},
+    ],
+    "kokoro": [
+        {"id": "af_heart",   "name": "Heart (여, 기본)"},
+        {"id": "af_bella",   "name": "Bella (여, 부드러움)"},
+        {"id": "af_sarah",   "name": "Sarah (여, 명랑)"},
+        {"id": "am_adam",    "name": "Adam (남, 차분)"},
+        {"id": "am_michael", "name": "Michael (남, 깊음)"},
+    ],
+    "gpt-sovits": [
+        {"id": "default_korean_f", "name": "한국어 여성 기본"},
+        {"id": "default_korean_m", "name": "한국어 남성 기본"},
+        {"id": "custom_1",         "name": "커스텀 음성 1"},
+        {"id": "custom_2",         "name": "커스텀 음성 2"},
+        {"id": "custom_3",         "name": "커스텀 음성 3"},
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Pipeline config (JSON 파일)
+# ---------------------------------------------------------------------------
+_PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "pipeline.json"
+
+_PIPELINE_DEFAULTS: dict[str, str] = {
+    "tts_engine": "edge-tts",
+    "tts_voice": "ko-KR-SunHiNeural",
+    "llm_model": "eeve-korean:10.8b",
+}
+
+
+def load_pipeline_config() -> dict[str, str]:
+    if _PIPELINE_CONFIG_PATH.exists():
+        with open(_PIPELINE_CONFIG_PATH, encoding="utf-8") as f:
+            return {**_PIPELINE_DEFAULTS, **json.load(f)}
+    return dict(_PIPELINE_DEFAULTS)
+
+
+def save_pipeline_config(cfg: dict[str, str]) -> None:
+    _PIPELINE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_PIPELINE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)

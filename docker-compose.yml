@@ -51,11 +51,14 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+      NVIDIA_VISIBLE_DEVICES: all
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      MEDIA_DIR: /app/media
     depends_on:
       db:
         condition: service_healthy
-    command: echo "AI worker placeholder – Phase 2"
+    command: python -m ai_worker.main
 
 volumes:
   mariadb_data:

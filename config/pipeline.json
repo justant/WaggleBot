@@ -1,0 +1,5 @@
+{
+  "tts_engine": "edge-tts",
+  "tts_voice": "ko-KR-SunHiNeural",
+  "llm_model": "eeve-korean:10.8b"
+}
