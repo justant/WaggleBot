@@ -195,7 +195,7 @@ with tab_inbox:
         posts = query.all()
 
         if sort_by == "인기도순":
-            posts = sorted(posts, key=lambda p: (p.stats or {}).get("score", 0), reverse=True)
+            posts = sorted(posts, key=lambda p: p.engagement_score or 0, reverse=True)
         elif sort_by == "조회수순":
             posts = sorted(posts, key=lambda p: (p.stats or {}).get("views", 0), reverse=True)
         elif sort_by == "추천수순":
@@ -203,7 +203,7 @@ with tab_inbox:
         else:
             posts = sorted(posts, key=lambda p: p.created_at or 0, reverse=True)
 
-        low_posts = [p for p in posts if (p.stats or {}).get("score", 0) < 30]
+        low_posts = [p for p in posts if (p.engagement_score or 0) < 30]
 
         # 배치 액션 바
         n_selected = len(st.session_state["selected_posts"])
@@ -250,7 +250,7 @@ with tab_inbox:
         else:
             for post in posts:
                 views, likes, comments = stats_display(post.stats)
-                score = (post.stats or {}).get("score", 0)
+                score = post.engagement_score or 0
                 best_comments = top_comments(post.id, session, limit=2)
 
                 # 스코어 배지
@@ -381,7 +381,7 @@ with tab_editor:
                 st.subheader("📄 원본 게시글")
                 st.markdown(f"**{selected_post.title}**")
                 views, likes, comments_cnt = stats_display(selected_post.stats)
-                score = (selected_post.stats or {}).get("score", 0)
+                score = selected_post.engagement_score or 0
                 st.caption(f"🔥 {score} pts | 👁️ {views:,} | 👍 {likes:,}")
 
                 if selected_post.content:
