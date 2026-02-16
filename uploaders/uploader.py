@@ -27,11 +27,14 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
         logger.error("영상 파일 없음: %s (post_id=%d)", content.video_path, post.id)
         return False
 
+    thumbnail_path = upload_meta.get("thumbnail_path", "")
+
     metadata = {
         "title": post.title[:100],
         "description": f"{post.title}\n\n#Shorts #커뮤니티",
         "tags": ["Shorts", "커뮤니티", post.site_code],
         "privacy": privacy,
+        "thumbnail_path": thumbnail_path,
     }
 
     upload_meta: dict = json.loads(content.upload_meta) if content.upload_meta else {}

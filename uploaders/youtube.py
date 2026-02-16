@@ -109,7 +109,28 @@ class YouTubeUploader(BaseUploader):
         url = f"https://youtube.com/shorts/{video_id}"
         logger.info("YouTube 업로드 완료: %s", url)
 
+        # 썸네일 업로드 (upload_meta에 저장된 경로 사용)
+        thumbnail_path = metadata.get("thumbnail_path")
+        if thumbnail_path:
+            try:
+                self._upload_thumbnail(video_id, Path(thumbnail_path))
+            except Exception:
+                logger.warning("썸네일 업로드 실패 (비치명적)", exc_info=True)
+
         return {"platform": self.platform, "platform_id": video_id, "url": url}
+
+    def _upload_thumbnail(self, video_id: str, thumbnail_path: Path) -> None:
+        """업로드된 영상에 썸네일을 설정한다."""
+        from googleapiclient.http import MediaFileUpload
+
+        if not thumbnail_path.exists():
+            logger.warning("썸네일 파일 없음: %s", thumbnail_path)
+            return
+
+        svc = self._get_service()
+        media = MediaFileUpload(str(thumbnail_path), mimetype="image/jpeg")
+        svc.thumbnails().set(videoId=video_id, media_body=media).execute()
+        logger.info("썸네일 업로드 완료: video_id=%s", video_id)
 
     @staticmethod
     def _resumable_upload(request) -> dict:
