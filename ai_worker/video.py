@@ -50,11 +50,33 @@ def render_video(
     else:
         video_input = _build_background_loop(width, height, duration)
 
+    # ASS 자막 파일 생성 (ScriptData JSON이면 동적 자막, 평문이면 drawtext 폴백)
+    ass_path: Path | None = None
+    try:
+        from ai_worker.llm import ScriptData
+        from ai_worker.subtitle import write_ass_file
+        script = ScriptData.from_json(summary_text)
+        ass_path = _TEMP_DIR / f"sub_{post.id}.ass"
+        write_ass_file(
+            hook=script.hook,
+            body=script.body,
+            closer=script.closer,
+            duration=duration,
+            mood=script.mood,
+            fontname=font_name,
+            output_path=ass_path,
+            width=width,
+            height=height,
+        )
+    except Exception:
+        logger.warning("ASS 자막 생성 실패 → drawtext 폴백", exc_info=True)
+
     _compose_final(
         video_input=video_input,
         audio_path=audio_path,
         output_path=output_path,
         summary_text=summary_text,
+        ass_path=ass_path,
         duration=duration,
         width=width,
         height=height,
@@ -66,6 +88,8 @@ def render_video(
     # 임시 파일 정리
     if video_input.parent == _TEMP_DIR:
         video_input.unlink(missing_ok=True)
+    if ass_path:
+        ass_path.unlink(missing_ok=True)
 
     logger.info("영상 생성 완료: %s (%.1f초)", output_path.name, duration)
     return output_path
@@ -240,6 +264,7 @@ def _compose_final(
     audio_path: Path,
     output_path: Path,
     summary_text: str,
+    ass_path: "Path | None",
     duration: float,
     width: int,
     height: int,
@@ -247,25 +272,37 @@ def _compose_final(
     font: str,
     bgm_vol: float,
 ) -> None:
-    """영상 + TTS 오디오 + 자막(drawtext) + BGM을 합성한다."""
+    """영상 + TTS 오디오 + 자막(ASS 우선 / drawtext 폴백) + BGM을 합성한다."""
 
-    # 마크다운 제거 → 줄바꿈 → FFmpeg 이스케이프
-    clean_text = _strip_markdown(summary_text)
-    wrapped = _wrap_korean(clean_text, width=18)
-    escaped = _escape_drawtext(wrapped)
-
-    fontsize = int(width * 0.042)  # ~45px @1080w
-    fontfile_opt = f":fontfile={font}" if font else ""
-    drawtext = (
-        f"[0:v]drawtext=text='{escaped}'"
-        f"{fontfile_opt}"
-        f":fontsize={fontsize}"
-        f":fontcolor=white"
-        f":borderw=3:bordercolor=black"
-        f":box=1:boxcolor=black@0.5:boxborderw=10"
-        f":x=(w-text_w)/2:y=h*0.75"
-        f":line_spacing=12[v]"
-    )
+    if ass_path and ass_path.exists():
+        # ASS 동적 자막 필터
+        # fontsdir: assets/fonts/ 또는 폰트 파일 부모 디렉터리
+        font_dir = str(Path(font).parent) if font else str(Path(__file__).parent.parent / "assets" / "fonts")
+        ass_str      = str(ass_path).replace("\\", "/")
+        font_dir_str = font_dir.replace("\\", "/")
+        video_filter = (
+            f"[0:v]subtitles=filename='{ass_str}'"
+            f":fontsdir='{font_dir_str}'[v]"
+        )
+        logger.debug("ASS 자막 필터 사용: %s", ass_path.name)
+    else:
+        # Legacy drawtext 폴백
+        clean_text = _strip_markdown(summary_text)
+        wrapped    = _wrap_korean(clean_text, width=18)
+        escaped    = _escape_drawtext(wrapped)
+        fontsize   = int(width * 0.042)   # ~45px @1080w
+        fontfile_opt = f":fontfile={font}" if font else ""
+        video_filter = (
+            f"[0:v]drawtext=text='{escaped}'"
+            f"{fontfile_opt}"
+            f":fontsize={fontsize}"
+            f":fontcolor=white"
+            f":borderw=3:bordercolor=black"
+            f":box=1:boxcolor=black@0.5:boxborderw=10"
+            f":x=(w-text_w)/2:y=h*0.75"
+            f":line_spacing=12[v]"
+        )
+        logger.debug("drawtext 폴백 자막 사용")
 
     # BGM 믹싱
     bgm_files = list((ASSETS_DIR / "bgm").glob("*.mp3")) + \
@@ -294,7 +331,7 @@ def _compose_final(
     cmd = [
         "ffmpeg", "-y",
         *inputs,
-        "-filter_complex", f"{drawtext};{audio_filter}",
+        "-filter_complex", f"{video_filter};{audio_filter}",
         "-map", "[v]",
         *audio_map,
         *enc_args,
@@ -312,7 +349,7 @@ def _compose_final(
         cmd = [
             "ffmpeg", "-y",
             *inputs,
-            "-filter_complex", f"{drawtext};{audio_filter}",
+            "-filter_complex", f"{video_filter};{audio_filter}",
             "-map", "[v]",
             *audio_map,
             *enc_args,
