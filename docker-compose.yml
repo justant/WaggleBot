@@ -1,7 +1,7 @@
 services:
   db:
     image: mariadb:11
-    restart: unless-stopped
+    restart: always
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-wagglebot_root}
       MARIADB_DATABASE: wagglebot
