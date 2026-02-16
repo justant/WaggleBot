@@ -20,6 +20,8 @@ try:
 except ImportError:
     GPU_AVAILABLE = False
 
+from sqlalchemy import text
+
 from config import settings
 from db.session import SessionLocal
 
@@ -237,7 +239,7 @@ class AlertManager:
         # DB 연결 체크
         try:
             with SessionLocal() as db:
-                db.execute("SELECT 1")
+                db.execute(text("SELECT 1"))
                 health_status['db_connected'] = True
         except Exception:
             log.exception("DB connection check failed")
@@ -299,7 +301,7 @@ class AlertManager:
         """
         try:
             with SessionLocal() as db:
-                db.execute("SELECT 1")
+                db.execute(text("SELECT 1"))
             return True
         except Exception:
             log.exception("DB connection failed")
