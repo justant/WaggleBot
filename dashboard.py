@@ -41,9 +41,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 자동 새로고침 (30초마다)
-st_autorefresh(interval=30000, key="datarefresh")
-
 st.title("🤖 WaggleBot 관리자 대시보드")
 
 # ---------------------------------------------------------------------------
@@ -94,13 +91,17 @@ def update_status(post_id: int, new_status: PostStatus):
 
 
 def delete_post(post_id: int):
-    """게시글 삭제"""
+    """게시글 삭제 (Content → Post 순서로 삭제해 FK 제약 위반 방지)"""
     with SessionLocal() as session:
+        content = session.query(Content).filter_by(post_id=post_id).first()
+        if content:
+            session.delete(content)
+            session.flush()
         post = session.query(Post).get(post_id)
         if post:
             session.delete(post)
-            session.commit()
-            log.info(f"Post {post_id} deleted")
+        session.commit()
+        log.info("Post %d deleted", post_id)
 
 
 def render_image_slider(images_raw: "str | list | None", key_prefix: str, width: int = 320) -> None:
@@ -225,6 +226,7 @@ STATUS_COLORS = {
     PostStatus.EDITING: "blue",
     PostStatus.APPROVED: "violet",
     PostStatus.PROCESSING: "orange",
+    PostStatus.PREVIEW_RENDERED: "blue",
     PostStatus.RENDERED: "green",
     PostStatus.UPLOADED: "violet",
     PostStatus.DECLINED: "red",
@@ -236,6 +238,7 @@ STATUS_EMOJI = {
     PostStatus.EDITING: "✏️",
     PostStatus.APPROVED: "✅",
     PostStatus.PROCESSING: "⚙️",
+    PostStatus.PREVIEW_RENDERED: "🔍",
     PostStatus.RENDERED: "🎬",
     PostStatus.UPLOADED: "📤",
     PostStatus.DECLINED: "❌",
@@ -307,7 +310,7 @@ with tab_inbox:
         else:
             st.caption("검토 대기 중인 게시글을 승인하거나 거절하세요")
     with ref_col:
-        if st.button("🔄 새로고침", use_container_width=True):
+        if st.button("🔄 새로고침", width="stretch"):
             st.rerun()
 
     filter_col1, filter_col2, filter_col3 = st.columns(3)
@@ -362,7 +365,7 @@ with tab_inbox:
             if st.button(
                 f"✅ 선택 ({n_selected}건) 일괄 승인",
                 disabled=n_selected == 0,
-                use_container_width=True,
+                width="stretch",
                 type="primary",
             ):
                 for pid in list(st.session_state["selected_posts"]):
@@ -373,7 +376,7 @@ with tab_inbox:
             if st.button(
                 f"❌ 선택 ({n_selected}건) 일괄 거절",
                 disabled=n_selected == 0,
-                use_container_width=True,
+                width="stretch",
             ):
                 for pid in list(st.session_state["selected_posts"]):
                     update_status(pid, PostStatus.DECLINED)
@@ -410,7 +413,7 @@ with tab_inbox:
 
                 with col_chk:
                     checked = st.checkbox(
-                        "",
+                        "선택",
                         key=f"chk_{tier_key}_{post.id}",
                         value=post.id in st.session_state["selected_posts"],
                         label_visibility="collapsed",
@@ -468,7 +471,7 @@ with tab_inbox:
                         if issues:
                             st.warning("⚠️ " + " / ".join(issues))
                     else:
-                        if st.button("🔍 AI 적합도 분석", key=ai_key, use_container_width=False):
+                        if st.button("🔍 AI 적합도 분석", key=ai_key, width="content"):
                             with st.spinner("LLM 분석 중..."):
                                 result = run_ai_fit_analysis(
                                     post, inbox_cfg.get("llm_model", OLLAMA_MODEL)
@@ -482,7 +485,7 @@ with tab_inbox:
                         "✅",
                         key=f"approve_{tier_key}_{post.id}",
                         type="primary",
-                        use_container_width=True,
+                        width="stretch",
                         help="승인",
                     ):
                         update_status(post.id, PostStatus.EDITING)
@@ -491,7 +494,7 @@ with tab_inbox:
                     if st.button(
                         "❌",
                         key=f"decline_{tier_key}_{post.id}",
-                        use_container_width=True,
+                        width="stretch",
                         help="거절",
                     ):
                         update_status(post.id, PostStatus.DECLINED)
@@ -511,7 +514,7 @@ with tab_inbox:
                 if st.button(
                     f"✅ 전체 승인 ({len(high_posts)}건)",
                     key="approve_all_high",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary",
                 ):
                     for p in high_posts:
@@ -537,7 +540,7 @@ with tab_inbox:
                     if st.button(
                         f"❌ 전체 거절 ({len(normal_posts)}건)",
                         key="decline_all_normal",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         for p in normal_posts:
                             update_status(p.id, PostStatus.DECLINED)
@@ -559,7 +562,7 @@ with tab_inbox:
                     if st.button(
                         f"❌ 전체 거절 ({len(low_posts)}건)",
                         key="decline_all_low",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         for p in low_posts:
                             update_status(p.id, PostStatus.DECLINED)
@@ -602,7 +605,7 @@ with tab_editor:
 
             nav_col, sel_col, skip_col = st.columns([1, 5, 1])
             with nav_col:
-                if st.button("◀", use_container_width=True, help="이전 게시글",
+                if st.button("◀", width="stretch", help="이전 게시글",
                              disabled=idx == 0):
                     st.session_state["editor_idx"] = max(0, idx - 1)
                     st.rerun()
@@ -619,7 +622,7 @@ with tab_editor:
                     st.session_state["editor_idx"] = new_idx
                     st.rerun()
             with skip_col:
-                if st.button("⏭ 건너뛰기", use_container_width=True,
+                if st.button("⏭ 건너뛰기", width="stretch",
                              help="편집 없이 AI 처리 대기열로 이동"):
                     update_status(approved_posts[idx].id, PostStatus.APPROVED)
                     st.session_state["editor_idx"] = max(0, idx - 1)
@@ -710,7 +713,7 @@ with tab_editor:
 
                     if st.button(
                         "🔄 대본 재생성" if script_data else "🤖 AI 대본 생성",
-                        use_container_width=True,
+                        width="stretch",
                         type="primary",
                         key=f"gen_{selected_post_id}",
                     ):
@@ -771,7 +774,7 @@ with tab_editor:
                 body_df_edited = st.data_editor(
                     pd.DataFrame({"내용": pd.Series(_body_init, dtype="object")}),
                     num_rows="dynamic",
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         "내용": st.column_config.TextColumn(
                             "내용", width="large", max_chars=200
@@ -840,7 +843,7 @@ with tab_editor:
 
                 with info_c2:
                     _has_content = bool(plain_preview.strip())
-                    if st.button("▶ TTS 미리듣기", use_container_width=True,
+                    if st.button("▶ TTS 미리듣기", width="stretch",
                                  key=f"tts_preview_{selected_post_id}",
                                  disabled=not _has_content):
                         with st.spinner("TTS 생성 중..."):
@@ -879,7 +882,7 @@ with tab_editor:
                 with save_c:
                     if st.button(
                         "💾 저장 & 확정",
-                        use_container_width=True,
+                        width="stretch",
                         type="primary",
                         key=f"save_{selected_post_id}",
                     ):
@@ -916,7 +919,7 @@ with tab_editor:
                 with skip_c:
                     if st.button(
                         "⏭ 건너뛰기",
-                        use_container_width=True,
+                        width="stretch",
                         key=f"skip_bottom_{selected_post_id}",
                         help="편집 없이 AI 처리 대기열로 이동",
                     ):
@@ -929,13 +932,15 @@ with tab_editor:
 # ===========================================================================
 
 with tab_progress:
+    st_autorefresh(interval=15000, key="progress_refresh")
     st.header("⚙️ 진행 현황")
-    st.caption("AI 워커 처리 상태 및 실시간 모니터링")
+    st.caption("AI 워커 처리 상태 및 실시간 모니터링 (15초 자동 갱신)")
 
     progress_statuses = [
         PostStatus.EDITING,
         PostStatus.APPROVED,
         PostStatus.PROCESSING,
+        PostStatus.PREVIEW_RENDERED,
         PostStatus.RENDERED,
         PostStatus.UPLOADED,
         PostStatus.FAILED,
@@ -1020,7 +1025,7 @@ with tab_gallery:
         contents = (
             session.query(Content)
             .join(Post)
-            .filter(Post.status.in_([PostStatus.RENDERED, PostStatus.UPLOADED]))
+            .filter(Post.status.in_([PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED]))
             .order_by(Content.created_at.desc())
             .limit(20)  # 최대 20개
             .all()
@@ -1060,7 +1065,7 @@ with tab_gallery:
                         if thumb_path_str:
                             thumb_path = Path(thumb_path_str)
                             if thumb_path.exists():
-                                st.image(str(thumb_path), use_container_width=True)
+                                st.image(str(thumb_path), width="stretch")
 
                         # 영상 플레이어
                         if video_path and video_path.exists():
@@ -1085,11 +1090,70 @@ with tab_gallery:
                         btn_col1, btn_col2 = st.columns(2)
 
                         with btn_col1:
-                            if post.status == PostStatus.RENDERED:
+                            if post.status == PostStatus.PREVIEW_RENDERED:
+                                _hd_key     = f"hd_rendering_{content.id}"
+                                _hd_err_key = f"hd_error_{content.id}"
+                                _is_rendering = st.session_state.get(_hd_key, False)
+
+                                # 이전 렌더링 실패 메시지 표시
+                                if _hd_err_key in st.session_state:
+                                    st.error(f"렌더링 실패: {st.session_state.pop(_hd_err_key)}")
+
+                                _hd_pulsing_html = f"""<style>
+@keyframes hd-pulse-{content.id}{{0%,100%{{opacity:1}}50%{{opacity:0.35}}}}
+.hd-rnd-{content.id}{{animation:hd-pulse-{content.id} 1.1s ease-in-out infinite;
+width:100%;padding:0.4rem 0.8rem;background:#4a4a6a;color:#ccc;
+border:1px solid #666;border-radius:6px;cursor:not-allowed;
+font-size:0.875rem;text-align:center;}}</style>
+<div class="hd-rnd-{content.id}">🎬 렌더링</div>"""
+
+                                _hd_placeholder = st.empty()
+                                _do_render = False
+
+                                if _is_rendering:
+                                    # autorefresh 등 rerun에서도 항상 pulsing 유지
+                                    _hd_placeholder.markdown(_hd_pulsing_html, unsafe_allow_html=True)
+                                    _do_render = True
+                                else:
+                                    if _hd_placeholder.button(
+                                        "🎬 고화질",
+                                        key=f"hd_{content.id}",
+                                        width="stretch",
+                                        help="1080×1920 고화질로 재렌더링",
+                                    ):
+                                        st.session_state[_hd_key] = True
+                                        _hd_placeholder.markdown(_hd_pulsing_html, unsafe_allow_html=True)
+                                        _do_render = True
+
+                                if _do_render:
+                                    try:
+                                        from ai_worker.video import render_video
+                                        from config.settings import load_pipeline_config
+                                        with SessionLocal() as hd_session:
+                                            _post = hd_session.get(Post, post.id)
+                                            _content = hd_session.query(Content).filter_by(post_id=post.id).first()
+                                            _cfg = load_pipeline_config()
+                                            _audio = Path(_content.audio_path)
+                                            _preview_path = MEDIA_DIR / _content.video_path if _content.video_path else None
+                                            _video = render_video(_post, _audio, _content.summary_text, _cfg)
+                                            _content.video_path = str(_video.relative_to(MEDIA_DIR))
+                                            _post.status = PostStatus.RENDERED
+                                            hd_session.commit()
+                                        if _preview_path and _preview_path.exists():
+                                            _preview_path.unlink()
+                                            log.info("프리뷰 파일 삭제: %s", _preview_path)
+                                        st.session_state.pop(_hd_key, None)
+                                        st.rerun()
+                                    except Exception as _e:
+                                        st.session_state.pop(_hd_key, None)
+                                        st.session_state[_hd_err_key] = str(_e)
+                                        st.rerun()
+
+                            elif post.status == PostStatus.RENDERED:
                                 if st.button(
                                     "📤 업로드",
                                     key=f"upload_{content.id}",
-                                    use_container_width=True
+                                    width="stretch"
                                 ):
                                     try:
                                         from uploaders.uploader import upload_post
@@ -1111,7 +1175,7 @@ with tab_gallery:
                             if st.button(
                                 "🗑️ 삭제",
                                 key=f"delete_{content.id}",
-                                use_container_width=True
+                                width="stretch"
                             ):
                                 if st.session_state.get(f"confirm_delete_{content.id}"):
                                     delete_post(post.id)
@@ -1194,7 +1258,7 @@ with tab_settings:
             with col_btn:
                 if not st.session_state[edit_key]:
                     btn_label = "✏️ 수정" if is_configured else "➕ 설정"
-                    if st.button(btn_label, key=f"edit_btn_{platform}", use_container_width=True):
+                    if st.button(btn_label, key=f"edit_btn_{platform}", width="stretch"):
                         st.session_state[edit_key] = True
                         st.rerun()
 
@@ -1217,7 +1281,7 @@ with tab_settings:
 
                 save_col, cancel_col = st.columns(2)
                 with save_col:
-                    if st.button("💾 저장", key=f"save_{platform}", type="primary", use_container_width=True):
+                    if st.button("💾 저장", key=f"save_{platform}", type="primary", width="stretch"):
                         # 입력된 값만 병합 (빈칸은 기존 값 유지)
                         merged = dict(platform_creds)
                         updated_keys = [k for k, v in new_values.items() if v.strip()]
@@ -1242,7 +1306,7 @@ with tab_settings:
                             st.rerun()
 
                 with cancel_col:
-                    if st.button("취소", key=f"cancel_{platform}", use_container_width=True):
+                    if st.button("취소", key=f"cancel_{platform}", width="stretch"):
                         st.session_state[edit_key] = False
                         st.rerun()
 
