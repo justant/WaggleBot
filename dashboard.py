@@ -16,7 +16,12 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from sqlalchemy import func, or_
 
-from config.settings import TTS_VOICES, load_pipeline_config, save_pipeline_config, MEDIA_DIR
+from config.settings import (
+    TTS_VOICES, MEDIA_DIR,
+    PLATFORM_CREDENTIAL_FIELDS,
+    load_pipeline_config, save_pipeline_config,
+    load_credentials_config, save_credentials_config,
+)
 from db.models import Post, PostStatus, Comment, Content
 from db.session import SessionLocal
 
@@ -93,6 +98,19 @@ def delete_post(post_id: int):
             session.delete(post)
             session.commit()
             log.info(f"Post {post_id} deleted")
+
+
+def _write_youtube_token(token_json_str: str) -> bool:
+    """credentials.json의 token_json을 youtube_token.json 파일로 동기화."""
+    from config.settings import _PROJECT_ROOT
+    token_path = _PROJECT_ROOT / "config" / "youtube_token.json"
+    try:
+        json.loads(token_json_str)  # JSON 유효성 검사
+        token_path.write_text(token_json_str, encoding="utf-8")
+        log.info("youtube_token.json 갱신 완료")
+        return True
+    except json.JSONDecodeError:
+        return False
 
 
 STATUS_COLORS = {
@@ -487,22 +505,98 @@ with tab_settings:
     privacy_idx = privacy_options.index(current_privacy) if current_privacy in privacy_options else 0
     selected_privacy = st.selectbox("공개 설정", privacy_options, index=privacy_idx)
 
-    if "youtube" in selected_platforms:
-        st.caption("YouTube 인증 상태")
-        try:
-            from uploaders.youtube import YouTubeUploader
-            yt = YouTubeUploader()
-            if yt.validate_credentials():
-                st.success("✅ YouTube 인증 완료")
+    st.divider()
+
+    # ---------------------------------------------------------------------------
+    # 플랫폼 인증
+    # ---------------------------------------------------------------------------
+    st.subheader("🔑 플랫폼 인증")
+    st.caption("저장 후 인증 정보는 마스킹되며 수정만 가능합니다.")
+
+    all_creds = load_credentials_config()
+
+    for platform, fields in PLATFORM_CREDENTIAL_FIELDS.items():
+        platform_creds: dict = all_creds.get(platform, {})
+        is_configured = bool(platform_creds)
+        edit_key = f"editing_{platform}"
+
+        if edit_key not in st.session_state:
+            st.session_state[edit_key] = False
+
+        with st.container(border=True):
+            col_title, col_btn = st.columns([4, 1])
+            with col_title:
+                status_badge = "✅ 설정됨" if is_configured else "⚠️ 미설정"
+                st.markdown(f"**{platform.upper()}** — {status_badge}")
+            with col_btn:
+                if not st.session_state[edit_key]:
+                    btn_label = "✏️ 수정" if is_configured else "➕ 설정"
+                    if st.button(btn_label, key=f"edit_btn_{platform}", use_container_width=True):
+                        st.session_state[edit_key] = True
+                        st.rerun()
+
+            if st.session_state[edit_key]:
+                # 수정 모드 — 입력 필드 표시 (기존 값 미노출)
+                new_values: dict[str, str] = {}
+                for field in fields:
+                    kwargs = {
+                        "label": field["label"],
+                        "key": f"cred_{platform}_{field['key']}",
+                        "placeholder": "값을 입력하세요 (빈칸이면 기존 값 유지)",
+                        "help": field.get("help", ""),
+                    }
+                    if field["type"] == "textarea":
+                        new_values[field["key"]] = st.text_area(**kwargs, height=120)
+                    elif field["type"] == "password":
+                        new_values[field["key"]] = st.text_input(**kwargs, type="password")
+                    else:
+                        new_values[field["key"]] = st.text_input(**kwargs)
+
+                save_col, cancel_col = st.columns(2)
+                with save_col:
+                    if st.button("💾 저장", key=f"save_{platform}", type="primary", use_container_width=True):
+                        # 입력된 값만 병합 (빈칸은 기존 값 유지)
+                        merged = dict(platform_creds)
+                        updated_keys = [k for k, v in new_values.items() if v.strip()]
+
+                        if not updated_keys:
+                            st.warning("변경된 값이 없습니다.")
+                        else:
+                            for k in updated_keys:
+                                merged[k] = new_values[k].strip()
+
+                            all_creds[platform] = merged
+                            save_credentials_config(all_creds)
+
+                            # YouTube: token_json → youtube_token.json 동기화
+                            if platform == "youtube" and "token_json" in updated_keys:
+                                if not _write_youtube_token(merged["token_json"]):
+                                    st.error("token_json이 유효한 JSON 형식이 아닙니다.")
+                                    st.stop()
+
+                            st.session_state[edit_key] = False
+                            st.success(f"{platform.upper()} 인증 정보가 저장되었습니다.")
+                            st.rerun()
+
+                with cancel_col:
+                    if st.button("취소", key=f"cancel_{platform}", use_container_width=True):
+                        st.session_state[edit_key] = False
+                        st.rerun()
+
             else:
-                st.warning("⚠️ YouTube 인증 필요 — OAuth2 토큰을 설정하세요")
-        except Exception as exc:
-            st.warning(f"⚠️ YouTube 인증 확인 불가: {exc}")
+                # 뷰 모드 — 마스킹된 값 표시
+                if platform_creds:
+                    for field in fields:
+                        has_value = bool(platform_creds.get(field["key"], ""))
+                        masked = "●●●●●●●●" if has_value else "미설정"
+                        st.text(f"{field['label']}: {masked}")
+                else:
+                    st.caption("인증 정보가 설정되지 않았습니다.")
 
     st.divider()
 
-    # 저장 버튼
-    if st.button("💾 설정 저장", type="primary"):
+    # 저장 버튼 (파이프라인 설정만)
+    if st.button("💾 파이프라인 설정 저장", type="primary"):
         new_cfg = {
             "tts_engine": selected_engine,
             "tts_voice": selected_voice,

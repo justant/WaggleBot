@@ -107,6 +107,44 @@ def save_pipeline_config(cfg: dict[str, str]) -> None:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 # ---------------------------------------------------------------------------
+# Platform credentials (API keys / OAuth tokens)
+# ---------------------------------------------------------------------------
+_CREDENTIALS_PATH = _PROJECT_ROOT / "config" / "credentials.json"
+
+# 플랫폼별 인증 필드 정의 — 새 플랫폼 추가 시 여기에 항목 추가
+PLATFORM_CREDENTIAL_FIELDS: dict[str, list[dict]] = {
+    "youtube": [
+        {"key": "client_id",     "label": "Client ID",        "type": "text"},
+        {"key": "client_secret", "label": "Client Secret",     "type": "password"},
+        {"key": "token_json",    "label": "OAuth2 Token JSON", "type": "textarea",
+         "help": "Google OAuth2 인증 후 발급된 token.json 파일 내용 전체를 붙여넣으세요"},
+    ],
+    "tiktok": [
+        {"key": "client_key",    "label": "Client Key",    "type": "text"},
+        {"key": "client_secret", "label": "Client Secret", "type": "password"},
+        {"key": "access_token",  "label": "Access Token",  "type": "password"},
+    ],
+    "instagram": [
+        {"key": "app_id",       "label": "App ID",        "type": "text"},
+        {"key": "app_secret",   "label": "App Secret",    "type": "password"},
+        {"key": "access_token", "label": "Access Token",  "type": "password"},
+    ],
+}
+
+
+def load_credentials_config() -> dict[str, dict]:
+    if _CREDENTIALS_PATH.exists():
+        with open(_CREDENTIALS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_credentials_config(creds: dict[str, dict]) -> None:
+    _CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_CREDENTIALS_PATH, "w", encoding="utf-8") as f:
+        json.dump(creds, f, ensure_ascii=False, indent=2)
+
+# ---------------------------------------------------------------------------
 # Monitoring & Alerting
 # ---------------------------------------------------------------------------
 MONITORING_ENABLED = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
