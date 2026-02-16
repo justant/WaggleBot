@@ -9,9 +9,11 @@ Streamlit 기반 웹 UI
 
 import json
 import logging
+import re
 from datetime import timezone, timedelta
 from pathlib import Path
 
+import requests as _http
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from sqlalchemy import func, or_
@@ -19,6 +21,7 @@ from sqlalchemy import func, or_
 from config.settings import (
     TTS_VOICES, MEDIA_DIR,
     PLATFORM_CREDENTIAL_FIELDS,
+    OLLAMA_HOST, OLLAMA_MODEL,
     load_pipeline_config, save_pipeline_config,
     load_credentials_config, save_credentials_config,
 )
@@ -100,6 +103,43 @@ def delete_post(post_id: int):
             log.info(f"Post {post_id} deleted")
 
 
+def run_ai_fit_analysis(post: Post, model: str) -> dict:
+    """Ollama LLM으로 쇼츠 적합도 분석 (1~10점) 요청.
+
+    Returns:
+        {"score": int, "reason": str, "issues": list[str]}
+    """
+    prompt = (
+        "다음 게시글의 YouTube 쇼츠 영상 적합도를 분석하세요.\n\n"
+        f"제목: {post.title}\n"
+        f"내용: {(post.content or '')[:300]}\n\n"
+        "반드시 아래 JSON 형식으로만 응답하세요 (다른 텍스트 금지):\n"
+        '{"score": 7, "reason": "판단 근거 요약 2~3문장", "issues": ["문제점1"]}\n\n'
+        "평가 기준:\n"
+        "- 논쟁적·공감적 주제: +3점\n"
+        "- 강한 감정 반응 유발(분노·감동·웃음): +3점\n"
+        "- 댓글 활성화 가능성: +2점\n"
+        "- 이미지 있음: +1점\n"
+        "- 민감·저작권·광고 문제: -3점\n"
+        'issues 예시: ["광고성 게시글", "저작권 이미지", "민감 주제", "정치적 내용"]\n'
+        "문제 없으면 issues는 [] 로 작성"
+    )
+    try:
+        resp = _http.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=40,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("response", "")
+        m = re.search(r"\{.*?\}", raw, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+    except Exception as exc:
+        log.warning("AI 적합도 분석 실패: %s", exc)
+    return {"score": 0, "reason": "분석 실패 또는 LLM 응답 오류", "issues": []}
+
+
 def _write_youtube_token(token_json_str: str) -> bool:
     """credentials.json의 token_json을 youtube_token.json 파일로 동기화."""
     from config.settings import _PROJECT_ROOT
@@ -142,56 +182,92 @@ tab_inbox, tab_editor, tab_progress, tab_gallery, tab_settings = st.tabs(
 )
 
 # ===========================================================================
-# Tab 1: 수신함 (Inbox)
+# Tab 1: 수신함 (Inbox) — 스마트 수신함
 # ===========================================================================
 
 with tab_inbox:
-    st.header("📥 수신함 (Collected)")
-    st.caption("검토 대기 중인 게시글을 승인하거나 거절하세요")
-
+    # ---------------------------------------------------------------------------
     # session_state 초기화
+    # ---------------------------------------------------------------------------
     if "selected_posts" not in st.session_state:
         st.session_state["selected_posts"] = set()
+    if "auto_approved_ids" not in st.session_state:
+        st.session_state["auto_approved_ids"] = set()
+    if "ai_analysis" not in st.session_state:
+        st.session_state["ai_analysis"] = {}
 
-    # 필터링 옵션
+    inbox_cfg = load_pipeline_config()
+    auto_approve_enabled = inbox_cfg.get("auto_approve_enabled") == "true"
+    auto_threshold = int(inbox_cfg.get("auto_approve_threshold", "80"))
+
+    # ---------------------------------------------------------------------------
+    # 자동 승인: COLLECTED + score >= threshold → APPROVED
+    # ---------------------------------------------------------------------------
+    if auto_approve_enabled:
+        with SessionLocal() as _asess:
+            _qualify = (
+                _asess.query(Post)
+                .filter(
+                    Post.status == PostStatus.COLLECTED,
+                    Post.engagement_score >= auto_threshold,
+                )
+                .all()
+            )
+            _new_auto = [
+                p for p in _qualify
+                if p.id not in st.session_state["auto_approved_ids"]
+            ]
+            if _new_auto:
+                for _p in _new_auto:
+                    _p.status = PostStatus.APPROVED
+                    st.session_state["auto_approved_ids"].add(_p.id)
+                _asess.commit()
+                st.toast(
+                    f"🤖 {len(_new_auto)}건 자동 승인됨 (Score ≥ {auto_threshold})",
+                    icon="✅",
+                )
+
+    # ---------------------------------------------------------------------------
+    # 헤더 & 필터
+    # ---------------------------------------------------------------------------
+    hdr_col, ref_col = st.columns([5, 1])
+    with hdr_col:
+        st.header("📥 수신함 (Collected)")
+        if auto_approve_enabled:
+            st.caption(f"🤖 자동 승인 활성화 중 — Score ≥ {auto_threshold} 자동 처리")
+        else:
+            st.caption("검토 대기 중인 게시글을 승인하거나 거절하세요")
+    with ref_col:
+        if st.button("🔄 새로고침", use_container_width=True):
+            st.rerun()
+
     filter_col1, filter_col2, filter_col3 = st.columns(3)
-
     with filter_col1:
         site_filter = st.multiselect(
-            "사이트 필터",
-            ["nate_pann", "nate_tok"],
-            default=[],
-            placeholder="전체"
+            "사이트 필터", ["nate_pann", "nate_tok"], default=[], placeholder="전체"
         )
-
     with filter_col2:
         image_filter = st.selectbox(
-            "이미지 필터",
-            ["전체", "이미지 있음", "이미지 없음"],
-            index=0
+            "이미지 필터", ["전체", "이미지 있음", "이미지 없음"], index=0
         )
-
     with filter_col3:
         sort_by = st.selectbox(
-            "정렬",
-            ["인기도순", "최신순", "조회수순", "추천수순"],
-            index=0
+            "정렬", ["인기도순", "최신순", "조회수순", "추천수순"], index=0
         )
 
     st.divider()
 
+    # ---------------------------------------------------------------------------
     # 데이터 조회
+    # ---------------------------------------------------------------------------
     with SessionLocal() as session:
         query = session.query(Post).filter(Post.status == PostStatus.COLLECTED)
-
         if site_filter:
             query = query.filter(Post.site_code.in_(site_filter))
-
         if image_filter == "이미지 있음":
             query = query.filter(Post.images.isnot(None), Post.images != "[]")
         elif image_filter == "이미지 없음":
             query = query.filter(or_(Post.images.is_(None), Post.images == "[]"))
-
         posts = query.all()
 
         if sort_by == "인기도순":
@@ -203,15 +279,19 @@ with tab_inbox:
         else:
             posts = sorted(posts, key=lambda p: p.created_at or 0, reverse=True)
 
-        low_posts = [p for p in posts if (p.engagement_score or 0) < 30]
+        # 3단계 티어 분류
+        high_posts   = [p for p in posts if (p.engagement_score or 0) >= 80]
+        normal_posts = [p for p in posts if 30 <= (p.engagement_score or 0) < 80]
+        low_posts    = [p for p in posts if (p.engagement_score or 0) < 30]
 
-        # 배치 액션 바
+        # ---------------------------------------------------------------------------
+        # 글로벌 배치 액션 바
+        # ---------------------------------------------------------------------------
         n_selected = len(st.session_state["selected_posts"])
-        batch_col1, batch_col2, batch_col3 = st.columns([2, 2, 2])
-
-        with batch_col1:
+        bc1, bc2 = st.columns(2)
+        with bc1:
             if st.button(
-                f"✅ 선택 ({n_selected}건) 승인",
+                f"✅ 선택 ({n_selected}건) 일괄 승인",
                 disabled=n_selected == 0,
                 use_container_width=True,
                 type="primary",
@@ -220,10 +300,9 @@ with tab_inbox:
                     update_status(pid, PostStatus.APPROVED)
                 st.session_state["selected_posts"] = set()
                 st.rerun()
-
-        with batch_col2:
+        with bc2:
             if st.button(
-                f"❌ 선택 ({n_selected}건) 거절",
+                f"❌ 선택 ({n_selected}건) 일괄 거절",
                 disabled=n_selected == 0,
                 use_container_width=True,
             ):
@@ -232,117 +311,204 @@ with tab_inbox:
                 st.session_state["selected_posts"] = set()
                 st.rerun()
 
-        with batch_col3:
-            if st.button(
-                f"낮은 점수 모두 거절 (Low: {len(low_posts)}건)",
-                disabled=len(low_posts) == 0,
-                use_container_width=True,
-            ):
-                for p in low_posts:
-                    update_status(p.id, PostStatus.DECLINED)
-                st.session_state["selected_posts"] -= {p.id for p in low_posts}
-                st.rerun()
-
-        st.caption(f"총 {len(posts)}건")
+        st.caption(
+            f"총 {len(posts)}건 | 🏆 추천 {len(high_posts)}건 "
+            f"| 📋 일반 {len(normal_posts)}건 | 📉 낮음 {len(low_posts)}건"
+        )
 
         if not posts:
             st.info("✨ 검토 대기 중인 게시글이 없습니다.")
-        else:
-            for post in posts:
-                views, likes, comments = stats_display(post.stats)
-                score = post.engagement_score or 0
-                best_comments = top_comments(post.id, session, limit=2)
 
-                # 스코어 배지
-                if score >= 80:
-                    score_badge = f"🔥 {score} pts"
-                    score_color = "red"
-                elif score >= 30:
-                    score_badge = f"📊 {score} pts"
-                    score_color = "orange"
-                else:
-                    score_badge = f"📉 {score} pts"
-                    score_color = "gray"
+        # ---------------------------------------------------------------------------
+        # 게시글 카드 렌더링 헬퍼 (인라인 함수)
+        # ---------------------------------------------------------------------------
+        def _render_post_card(post: Post, tier_key: str) -> None:
+            """게시글 카드 1개를 렌더링한다."""
+            views, likes, n_comments = stats_display(post.stats)
+            score = post.engagement_score or 0
+            best_coms = top_comments(post.id, session, limit=2)
+            has_img = bool(post.images and post.images != "[]")
 
-                with st.container(border=True):
-                    col_check, col_main, col_actions = st.columns([0.5, 5, 1])
+            if score >= 80:
+                score_badge, score_color = f"🔥 {score:.0f}", "red"
+            elif score >= 30:
+                score_badge, score_color = f"📊 {score:.0f}", "orange"
+            else:
+                score_badge, score_color = f"📉 {score:.0f}", "gray"
 
-                    with col_check:
-                        checked = st.checkbox(
-                            "",
-                            key=f"chk_{post.id}",
-                            value=post.id in st.session_state["selected_posts"],
-                            label_visibility="collapsed",
-                        )
-                        if checked:
-                            st.session_state["selected_posts"].add(post.id)
+            with st.container(border=True):
+                col_chk, col_main, col_act = st.columns([0.5, 5, 1.2])
+
+                with col_chk:
+                    checked = st.checkbox(
+                        "",
+                        key=f"chk_{tier_key}_{post.id}",
+                        value=post.id in st.session_state["selected_posts"],
+                        label_visibility="collapsed",
+                    )
+                    if checked:
+                        st.session_state["selected_posts"].add(post.id)
+                    else:
+                        st.session_state["selected_posts"].discard(post.id)
+
+                with col_main:
+                    img_icon = " 🖼" if has_img else ""
+                    st.markdown(f"**{post.title}{img_icon}**")
+
+                    meta = [
+                        f":{score_color}[{score_badge} pts]",
+                        f"🌐 {post.site_code}",
+                        f"👁️ {views:,}",
+                        f"👍 {likes:,}",
+                    ]
+                    if n_comments:
+                        meta.append(f"💬 {n_comments:,}")
+                    meta.append(f"🕐 {to_kst(post.created_at)}")
+                    st.caption(" | ".join(meta))
+
+                    # 예상 조회수 (score 기반 rough estimate)
+                    low_est  = max(100, int(score * 40))
+                    high_est = max(500, int(score * 120))
+                    st.caption(f"📊 예상 조회수: {low_est:,}~{high_est:,}")
+
+                    with st.expander("📄 내용 미리보기"):
+                        if post.content:
+                            st.write(post.content[:500] + ("..." if len(post.content) > 500 else ""))
                         else:
-                            st.session_state["selected_posts"].discard(post.id)
+                            st.caption("내용 없음")
+                        if has_img:
+                            try:
+                                imgs = (
+                                    json.loads(post.images)
+                                    if isinstance(post.images, str)
+                                    else post.images
+                                )
+                                if imgs:
+                                    st.image(imgs[0], width=280, caption="대표 이미지")
+                            except Exception:
+                                pass
 
-                    with col_main:
-                        img_badge = " 🖼" if (post.images and post.images != "[]") else ""
-                        st.markdown(f"### {post.title}{img_badge}")
+                    if best_coms:
+                        st.markdown("**💬 베스트 댓글**")
+                        for c in best_coms:
+                            lk = f" (+{c.likes})" if c.likes else ""
+                            st.text(f"{c.author}: {c.content[:100]}{lk}")
 
-                        meta_parts = [
-                            f":{score_color}[{score_badge}]",
-                            f"🌐 {post.site_code}",
-                            f"👁️ {views:,}",
-                            f"👍 {likes:,}",
-                        ]
-                        if comments > 0:
-                            meta_parts.append(f"💬 {comments:,}")
-                        meta_parts.append(f"🕐 {to_kst(post.created_at)}")
-                        st.caption(" | ".join(meta_parts))
+                    # AI 적합도 분석
+                    ai_key = f"ai_btn_{tier_key}_{post.id}"
+                    cached = st.session_state["ai_analysis"].get(post.id)
+                    if cached:
+                        ai_score = cached.get("score", 0)
+                        ai_color = "green" if ai_score >= 7 else ("orange" if ai_score >= 4 else "red")
+                        st.markdown(
+                            f"**🤖 AI 적합도:** :{ai_color}[{ai_score}/10]  "
+                            f"{cached.get('reason', '')}"
+                        )
+                        issues = cached.get("issues", [])
+                        if issues:
+                            st.warning("⚠️ " + " / ".join(issues))
+                    else:
+                        if st.button("🔍 AI 적합도 분석", key=ai_key, use_container_width=False):
+                            with st.spinner("LLM 분석 중..."):
+                                result = run_ai_fit_analysis(
+                                    post, inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                                )
+                                st.session_state["ai_analysis"][post.id] = result
+                                st.rerun()
 
-                        with st.expander("📄 내용 미리보기"):
-                            if post.content:
-                                preview_text = post.content[:500]
-                                if len(post.content) > 500:
-                                    preview_text += "..."
-                                st.write(preview_text)
-                            else:
-                                st.caption("내용 없음")
+                with col_act:
+                    st.write("")
+                    if st.button(
+                        "✅",
+                        key=f"approve_{tier_key}_{post.id}",
+                        type="primary",
+                        use_container_width=True,
+                        help="승인",
+                    ):
+                        update_status(post.id, PostStatus.APPROVED)
+                        st.session_state["selected_posts"].discard(post.id)
+                        st.rerun()
+                    if st.button(
+                        "❌",
+                        key=f"decline_{tier_key}_{post.id}",
+                        use_container_width=True,
+                        help="거절",
+                    ):
+                        update_status(post.id, PostStatus.DECLINED)
+                        st.session_state["selected_posts"].discard(post.id)
+                        st.rerun()
 
-                            if post.images and post.images != "[]":
-                                try:
-                                    images = json.loads(post.images) if isinstance(post.images, str) else post.images
-                                    if images and len(images) > 0:
-                                        st.image(images[0], width=300, caption="첫 번째 이미지")
-                                except Exception as e:
-                                    st.caption(f"이미지 로드 실패: {e}")
+        # ---------------------------------------------------------------------------
+        # 🏆 추천 티어 (Score 80+) — 기본 펼침
+        # ---------------------------------------------------------------------------
+        tier_h_label = f"🏆 추천 (Score 80+) — {len(high_posts)}건"
+        if high_posts:
+            # 티어별 일괄 승인 버튼
+            th_c1, th_c2 = st.columns([4, 1])
+            with th_c1:
+                st.subheader(tier_h_label)
+            with th_c2:
+                if st.button(
+                    f"✅ 전체 승인 ({len(high_posts)}건)",
+                    key="approve_all_high",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    for p in high_posts:
+                        update_status(p.id, PostStatus.APPROVED)
+                    st.session_state["selected_posts"] -= {p.id for p in high_posts}
+                    st.rerun()
+            for post in high_posts:
+                _render_post_card(post, "high")
+        else:
+            st.subheader(tier_h_label)
+            st.caption("해당 게시글 없음")
 
-                        if best_comments:
-                            st.markdown("**💬 베스트 댓글**")
-                            for comment in best_comments:
-                                likes_str = f" (+{comment.likes})" if comment.likes else ""
-                                comment_text = comment.content[:100]
-                                if len(comment.content) > 100:
-                                    comment_text += "..."
-                                st.text(f"{comment.author}: {comment_text}{likes_str}")
+        st.divider()
 
-                    with col_actions:
-                        st.write("")
-                        st.write("")
-                        if st.button(
-                            "✅ 승인",
-                            key=f"approve_{post.id}",
-                            type="primary",
-                            use_container_width=True
-                        ):
-                            update_status(post.id, PostStatus.APPROVED)
-                            st.session_state["selected_posts"].discard(post.id)
-                            st.success("승인됨")
-                            st.rerun()
+        # ---------------------------------------------------------------------------
+        # 📋 일반 티어 (Score 30~79) — 기본 접힘
+        # ---------------------------------------------------------------------------
+        tier_n_label = f"📋 일반 (Score 30~79) — {len(normal_posts)}건"
+        with st.expander(tier_n_label, expanded=False):
+            if normal_posts:
+                tn_c1, tn_c2 = st.columns([4, 1])
+                with tn_c2:
+                    if st.button(
+                        f"❌ 전체 거절 ({len(normal_posts)}건)",
+                        key="decline_all_normal",
+                        use_container_width=True,
+                    ):
+                        for p in normal_posts:
+                            update_status(p.id, PostStatus.DECLINED)
+                        st.session_state["selected_posts"] -= {p.id for p in normal_posts}
+                        st.rerun()
+                for post in normal_posts:
+                    _render_post_card(post, "normal")
+            else:
+                st.caption("해당 게시글 없음")
 
-                        if st.button(
-                            "❌ 거절",
-                            key=f"decline_{post.id}",
-                            use_container_width=True
-                        ):
-                            update_status(post.id, PostStatus.DECLINED)
-                            st.session_state["selected_posts"].discard(post.id)
-                            st.warning("거절됨")
-                            st.rerun()
+        # ---------------------------------------------------------------------------
+        # 📉 낮음 티어 (Score 0~29) — 기본 접힘 + 전체 거절
+        # ---------------------------------------------------------------------------
+        tier_l_label = f"📉 낮음 (Score 0~29) — {len(low_posts)}건"
+        with st.expander(tier_l_label, expanded=False):
+            if low_posts:
+                tl_c1, tl_c2 = st.columns([4, 1])
+                with tl_c2:
+                    if st.button(
+                        f"❌ 전체 거절 ({len(low_posts)}건)",
+                        key="decline_all_low",
+                        use_container_width=True,
+                    ):
+                        for p in low_posts:
+                            update_status(p.id, PostStatus.DECLINED)
+                        st.session_state["selected_posts"] -= {p.id for p in low_posts}
+                        st.rerun()
+                for post in low_posts:
+                    _render_post_card(post, "low")
+            else:
+                st.caption("해당 게시글 없음")
 
 # ===========================================================================
 # Tab 2: 편집실 (Editor)
@@ -825,6 +991,28 @@ with tab_settings:
 
     st.divider()
 
+    st.divider()
+
+    # 자동 승인 설정
+    st.subheader("🤖 자동 승인")
+    st.caption("점수 임계값 이상의 게시글을 수신함 진입 즉시 자동으로 승인합니다.")
+
+    auto_approve_on = st.checkbox(
+        "자동 승인 활성화",
+        value=cfg.get("auto_approve_enabled") == "true",
+        help="활성화 시 수신함 로드마다 임계값 이상 게시글이 자동 승인됩니다.",
+    )
+    auto_approve_thresh = st.number_input(
+        "자동 승인 임계값 (Engagement Score)",
+        min_value=0,
+        max_value=100,
+        value=int(cfg.get("auto_approve_threshold", "80")),
+        step=5,
+        help="이 점수 이상인 게시글이 자동 승인됩니다. 80점 권장.",
+    )
+
+    st.divider()
+
     # 저장 버튼 (파이프라인 설정만)
     if st.button("💾 파이프라인 설정 저장", type="primary"):
         new_cfg = {
@@ -833,6 +1021,8 @@ with tab_settings:
             "llm_model": llm_model,
             "upload_platforms": json.dumps(selected_platforms),
             "upload_privacy": selected_privacy,
+            "auto_approve_enabled": "true" if auto_approve_on else "false",
+            "auto_approve_threshold": str(auto_approve_thresh),
         }
         save_pipeline_config(new_cfg)
         st.success("✅ 설정이 저장되었습니다.")
