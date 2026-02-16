@@ -91,6 +91,9 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     "upload_platforms": '["youtube"]',
     "upload_privacy": "unlisted",
     "youtube_credentials_path": "config/youtube_credentials.json",
+    # 수신함 자동 승인
+    "auto_approve_enabled": "false",
+    "auto_approve_threshold": "80",
 }
 
 
