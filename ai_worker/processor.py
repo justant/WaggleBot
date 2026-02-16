@@ -112,7 +112,14 @@ class RobustProcessor:
                 try:
                     images = post.images if isinstance(post.images, list) else []
                     thumb_path = get_thumbnail_path(post.id)
-                    generate_thumbnail(script.hook, images, thumb_path)
+                    _MOOD_TO_STYLE = {
+                        "funny": "funny",
+                        "shocking": "dramatic",
+                        "serious": "news",
+                        "heartwarming": "question",
+                    }
+                    thumb_style = _MOOD_TO_STYLE.get(script.mood, "dramatic")
+                    generate_thumbnail(script.hook, images, thumb_path, style=thumb_style)
                     content = session.query(Content).filter(Content.post_id == post.id).first()
                     if content is not None:
                         upload_meta = dict(content.upload_meta or {})
