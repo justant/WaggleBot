@@ -137,8 +137,8 @@ STATUS_EMOJI = {
 # 탭 구성
 # ---------------------------------------------------------------------------
 
-tab_inbox, tab_progress, tab_gallery, tab_settings = st.tabs(
-    ["📥 수신함", "⚙️ 진행현황", "🎬 갤러리", "⚙️ 설정"]
+tab_inbox, tab_editor, tab_progress, tab_gallery, tab_settings = st.tabs(
+    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "⚙️ 설정"]
 )
 
 # ===========================================================================
@@ -148,6 +148,10 @@ tab_inbox, tab_progress, tab_gallery, tab_settings = st.tabs(
 with tab_inbox:
     st.header("📥 수신함 (Collected)")
     st.caption("검토 대기 중인 게시글을 승인하거나 거절하세요")
+
+    # session_state 초기화
+    if "selected_posts" not in st.session_state:
+        st.session_state["selected_posts"] = set()
 
     # 필터링 옵션
     filter_col1, filter_col2, filter_col3 = st.columns(3)
@@ -170,7 +174,7 @@ with tab_inbox:
     with filter_col3:
         sort_by = st.selectbox(
             "정렬",
-            ["최신순", "조회수순", "추천수순"],
+            ["인기도순", "최신순", "조회수순", "추천수순"],
             index=0
         )
 
@@ -180,56 +184,107 @@ with tab_inbox:
     with SessionLocal() as session:
         query = session.query(Post).filter(Post.status == PostStatus.COLLECTED)
 
-        # 사이트 필터 적용
         if site_filter:
             query = query.filter(Post.site_code.in_(site_filter))
 
-        # 이미지 필터 적용
         if image_filter == "이미지 있음":
             query = query.filter(Post.images.isnot(None), Post.images != "[]")
         elif image_filter == "이미지 없음":
             query = query.filter(or_(Post.images.is_(None), Post.images == "[]"))
 
-        # 정렬
-        if sort_by == "조회수순":
-            # JSON 필드 정렬은 복잡하므로 Python에서 처리
-            posts = query.all()
-            posts = sorted(
-                posts,
-                key=lambda p: (p.stats or {}).get("views", 0),
-                reverse=True
-            )
-        elif sort_by == "추천수순":
-            posts = query.all()
-            posts = sorted(
-                posts,
-                key=lambda p: (p.stats or {}).get("likes", 0),
-                reverse=True
-            )
-        else:  # 최신순
-            posts = query.order_by(Post.created_at.desc()).all()
+        posts = query.all()
 
-        # 게시글 카운트
+        if sort_by == "인기도순":
+            posts = sorted(posts, key=lambda p: (p.stats or {}).get("score", 0), reverse=True)
+        elif sort_by == "조회수순":
+            posts = sorted(posts, key=lambda p: (p.stats or {}).get("views", 0), reverse=True)
+        elif sort_by == "추천수순":
+            posts = sorted(posts, key=lambda p: (p.stats or {}).get("likes", 0), reverse=True)
+        else:
+            posts = sorted(posts, key=lambda p: p.created_at or 0, reverse=True)
+
+        low_posts = [p for p in posts if (p.stats or {}).get("score", 0) < 30]
+
+        # 배치 액션 바
+        n_selected = len(st.session_state["selected_posts"])
+        batch_col1, batch_col2, batch_col3 = st.columns([2, 2, 2])
+
+        with batch_col1:
+            if st.button(
+                f"✅ 선택 ({n_selected}건) 승인",
+                disabled=n_selected == 0,
+                use_container_width=True,
+                type="primary",
+            ):
+                for pid in list(st.session_state["selected_posts"]):
+                    update_status(pid, PostStatus.APPROVED)
+                st.session_state["selected_posts"] = set()
+                st.rerun()
+
+        with batch_col2:
+            if st.button(
+                f"❌ 선택 ({n_selected}건) 거절",
+                disabled=n_selected == 0,
+                use_container_width=True,
+            ):
+                for pid in list(st.session_state["selected_posts"]):
+                    update_status(pid, PostStatus.DECLINED)
+                st.session_state["selected_posts"] = set()
+                st.rerun()
+
+        with batch_col3:
+            if st.button(
+                f"낮은 점수 모두 거절 (Low: {len(low_posts)}건)",
+                disabled=len(low_posts) == 0,
+                use_container_width=True,
+            ):
+                for p in low_posts:
+                    update_status(p.id, PostStatus.DECLINED)
+                st.session_state["selected_posts"] -= {p.id for p in low_posts}
+                st.rerun()
+
         st.caption(f"총 {len(posts)}건")
 
         if not posts:
             st.info("✨ 검토 대기 중인 게시글이 없습니다.")
         else:
-            # 게시글 카드 렌더링
             for post in posts:
                 views, likes, comments = stats_display(post.stats)
+                score = (post.stats or {}).get("score", 0)
                 best_comments = top_comments(post.id, session, limit=2)
 
+                # 스코어 배지
+                if score >= 80:
+                    score_badge = f"🔥 {score} pts"
+                    score_color = "red"
+                elif score >= 30:
+                    score_badge = f"📊 {score} pts"
+                    score_color = "orange"
+                else:
+                    score_badge = f"📉 {score} pts"
+                    score_color = "gray"
+
                 with st.container(border=True):
-                    col_main, col_actions = st.columns([5, 1])
+                    col_check, col_main, col_actions = st.columns([0.5, 5, 1])
+
+                    with col_check:
+                        checked = st.checkbox(
+                            "",
+                            key=f"chk_{post.id}",
+                            value=post.id in st.session_state["selected_posts"],
+                            label_visibility="collapsed",
+                        )
+                        if checked:
+                            st.session_state["selected_posts"].add(post.id)
+                        else:
+                            st.session_state["selected_posts"].discard(post.id)
 
                     with col_main:
-                        # 제목
                         img_badge = " 🖼" if (post.images and post.images != "[]") else ""
                         st.markdown(f"### {post.title}{img_badge}")
 
-                        # 메타 정보
                         meta_parts = [
+                            f":{score_color}[{score_badge}]",
                             f"🌐 {post.site_code}",
                             f"👁️ {views:,}",
                             f"👍 {likes:,}",
@@ -239,7 +294,6 @@ with tab_inbox:
                         meta_parts.append(f"🕐 {to_kst(post.created_at)}")
                         st.caption(" | ".join(meta_parts))
 
-                        # 내용 미리보기
                         with st.expander("📄 내용 미리보기"):
                             if post.content:
                                 preview_text = post.content[:500]
@@ -249,7 +303,6 @@ with tab_inbox:
                             else:
                                 st.caption("내용 없음")
 
-                            # 이미지 미리보기
                             if post.images and post.images != "[]":
                                 try:
                                     images = json.loads(post.images) if isinstance(post.images, str) else post.images
@@ -258,7 +311,6 @@ with tab_inbox:
                                 except Exception as e:
                                     st.caption(f"이미지 로드 실패: {e}")
 
-                        # 베스트 댓글
                         if best_comments:
                             st.markdown("**💬 베스트 댓글**")
                             for comment in best_comments:
@@ -269,7 +321,7 @@ with tab_inbox:
                                 st.text(f"{comment.author}: {comment_text}{likes_str}")
 
                     with col_actions:
-                        st.write("")  # 간격
+                        st.write("")
                         st.write("")
                         if st.button(
                             "✅ 승인",
@@ -278,6 +330,7 @@ with tab_inbox:
                             use_container_width=True
                         ):
                             update_status(post.id, PostStatus.APPROVED)
+                            st.session_state["selected_posts"].discard(post.id)
                             st.success("승인됨")
                             st.rerun()
 
@@ -287,11 +340,173 @@ with tab_inbox:
                             use_container_width=True
                         ):
                             update_status(post.id, PostStatus.DECLINED)
+                            st.session_state["selected_posts"].discard(post.id)
                             st.warning("거절됨")
                             st.rerun()
 
 # ===========================================================================
-# Tab 2: 진행현황 (Progress)
+# Tab 2: 편집실 (Editor)
+# ===========================================================================
+
+with tab_editor:
+    st.header("✏️ 편집실")
+    st.caption("AI 대본을 생성하고 편집한 후 확정하세요")
+
+    with SessionLocal() as session:
+        approved_posts = (
+            session.query(Post)
+            .filter(Post.status == PostStatus.APPROVED)
+            .order_by(Post.created_at.desc())
+            .all()
+        )
+
+        if not approved_posts:
+            st.info("✅ 승인된 게시글이 없습니다. 수신함에서 먼저 승인하세요.")
+        else:
+            post_options = {f"[{p.id}] {p.title[:50]}": p.id for p in approved_posts}
+            selected_label = st.selectbox("게시글 선택", list(post_options.keys()))
+            selected_post_id = post_options[selected_label]
+            selected_post = next(p for p in approved_posts if p.id == selected_post_id)
+
+            # 기존 Content 조회
+            existing_content = (
+                session.query(Content)
+                .filter(Content.post_id == selected_post_id)
+                .first()
+            )
+
+            col_orig, col_edit = st.columns([5, 5])
+
+            with col_orig:
+                st.subheader("📄 원본 게시글")
+                st.markdown(f"**{selected_post.title}**")
+                views, likes, comments_cnt = stats_display(selected_post.stats)
+                score = (selected_post.stats or {}).get("score", 0)
+                st.caption(f"🔥 {score} pts | 👁️ {views:,} | 👍 {likes:,}")
+
+                if selected_post.content:
+                    st.write(selected_post.content[:500] + ("..." if len(selected_post.content) > 500 else ""))
+
+                if selected_post.images and selected_post.images != "[]":
+                    try:
+                        imgs = json.loads(selected_post.images) if isinstance(selected_post.images, str) else selected_post.images
+                        if imgs:
+                            st.image(imgs[0], width=300)
+                    except Exception:
+                        pass
+
+                best_coms = top_comments(selected_post_id, session, limit=3)
+                if best_coms:
+                    st.markdown("**💬 베스트 댓글**")
+                    for c in best_coms:
+                        lk = f" (+{c.likes})" if c.likes else ""
+                        st.text(f"{c.author}: {c.content[:100]}{lk}")
+
+            with col_edit:
+                st.subheader("🤖 AI 대본 편집기")
+
+                # 기존 대본 로드 시도
+                script_data = None
+                if existing_content and existing_content.summary_text:
+                    try:
+                        from ai_worker.llm import ScriptData
+                        script_data = ScriptData.from_json(existing_content.summary_text)
+                    except Exception:
+                        pass
+
+                if st.button("🤖 AI 대본 생성", use_container_width=True, type="primary"):
+                    with st.spinner("LLM 대본 생성 중..."):
+                        try:
+                            from ai_worker.llm import generate_script
+                            best_comments_list = sorted(
+                                selected_post.comments, key=lambda c: c.likes, reverse=True
+                            )[:5]
+                            comment_texts = [f"{c.author}: {c.content[:100]}" for c in best_comments_list]
+                            cfg = load_pipeline_config()
+                            script_data = generate_script(
+                                title=selected_post.title,
+                                body=selected_post.content or "",
+                                comments=comment_texts,
+                                model=cfg.get("llm_model"),
+                            )
+                            st.success("대본 생성 완료!")
+                        except Exception as e:
+                            st.error(f"대본 생성 실패: {e}")
+
+                # 편집 필드
+                hook_val = script_data.hook if script_data else ""
+                body_val = "\n".join(script_data.body) if script_data else ""
+                closer_val = script_data.closer if script_data else ""
+                title_val = script_data.title_suggestion if script_data else ""
+                tags_val = ", ".join(script_data.tags) if script_data else ""
+                mood_val = script_data.mood if script_data else "funny"
+                mood_options = ["funny", "serious", "shocking", "heartwarming"]
+
+                hook = st.text_area("🎣 후킹", value=hook_val, max_chars=50, height=80)
+                body_text = st.text_area("📝 본문", value=body_val, height=200)
+                closer = st.text_area("🔚 마무리", value=closer_val, max_chars=80, height=80)
+                title_sug = st.text_input("🎬 제목", value=title_val)
+                tags_input = st.text_input("🏷️ 태그", value=tags_val)
+                mood_idx = mood_options.index(mood_val) if mood_val in mood_options else 0
+                mood = st.selectbox("🎭 분위기", mood_options, index=mood_idx)
+
+                # 예상 길이
+                body_lines = [ln for ln in body_text.splitlines() if ln.strip()]
+                plain = " ".join([hook] + body_lines + [closer])
+                char_count = len(plain)
+                est_seconds = round(char_count / 5.5)  # 한국어 평균 낭독 속도 ~5.5자/초
+                st.caption(f"예상 TTS 길이: {char_count}자 ≈ {est_seconds}초")
+
+                # TTS 미리듣기
+                if st.button("🔊 TTS 미리듣기", use_container_width=True):
+                    if plain.strip():
+                        with st.spinner("TTS 생성 중..."):
+                            try:
+                                import asyncio
+                                from ai_worker.tts import get_tts_engine
+                                cfg = load_pipeline_config()
+                                tts_engine = get_tts_engine(cfg["tts_engine"])
+                                preview_dir = MEDIA_DIR / "tmp"
+                                preview_dir.mkdir(parents=True, exist_ok=True)
+                                preview_path = preview_dir / f"preview_{selected_post_id}.mp3"
+                                asyncio.run(tts_engine.synthesize(plain, cfg["tts_voice"], preview_path))
+                                st.audio(str(preview_path))
+                            except Exception as e:
+                                st.error(f"TTS 미리듣기 실패: {e}")
+                    else:
+                        st.warning("대본 내용이 없습니다.")
+
+                # 대본 확정 저장
+                if st.button("💾 대본 확정", use_container_width=True):
+                    try:
+                        from ai_worker.llm import ScriptData
+                        tags_list = [t.strip() for t in tags_input.split(",") if t.strip()]
+                        confirmed_script = ScriptData(
+                            hook=hook,
+                            body=body_lines,
+                            closer=closer,
+                            title_suggestion=title_sug,
+                            tags=tags_list,
+                            mood=mood,
+                        )
+
+                        # DB 저장
+                        content_rec = (
+                            session.query(Content)
+                            .filter(Content.post_id == selected_post_id)
+                            .first()
+                        )
+                        if content_rec is None:
+                            content_rec = Content(post_id=selected_post_id)
+                            session.add(content_rec)
+                        content_rec.summary_text = confirmed_script.to_json()
+                        session.commit()
+                        st.success("대본이 저장되었습니다. AI Worker가 이 대본을 재사용합니다.")
+                    except Exception as e:
+                        st.error(f"저장 실패: {e}")
+
+# ===========================================================================
+# Tab 3: 진행현황 (Progress)
 # ===========================================================================
 
 with tab_progress:
@@ -378,7 +593,7 @@ with tab_progress:
 
 with tab_gallery:
     st.header("🎬 갤러리")
-    st.caption("렌더링 완료 및 업로드된 영상")
+    st.caption("렌더링 완료 및 업로드된 영상 (썸네일 있는 경우 표시)")
 
     with SessionLocal() as session:
         # 영상이 있는 게시글 조회
@@ -420,6 +635,13 @@ with tab_gallery:
                         views, likes, _ = stats_display(post.stats)
                         st.caption(f"👁️ {views:,} | 👍 {likes:,}")
 
+                        # 썸네일
+                        thumb_path_str = (content.upload_meta or {}).get("thumbnail_path")
+                        if thumb_path_str:
+                            thumb_path = Path(thumb_path_str)
+                            if thumb_path.exists():
+                                st.image(str(thumb_path), use_container_width=True)
+
                         # 영상 플레이어
                         if video_path and video_path.exists():
                             st.video(str(video_path))
@@ -428,8 +650,16 @@ with tab_gallery:
 
                         # 요약 텍스트
                         if content.summary_text:
-                            with st.expander("📝 요약"):
-                                st.write(content.summary_text)
+                            with st.expander("📝 대본"):
+                                try:
+                                    from ai_worker.llm import ScriptData
+                                    script = ScriptData.from_json(content.summary_text)
+                                    st.write(f"**후킹:** {script.hook}")
+                                    for line in script.body:
+                                        st.write(f"- {line}")
+                                    st.write(f"**마무리:** {script.closer}")
+                                except Exception:
+                                    st.write(content.summary_text)
 
                         # 액션 버튼
                         btn_col1, btn_col2 = st.columns(2)

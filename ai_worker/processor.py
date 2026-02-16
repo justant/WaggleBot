@@ -15,7 +15,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ai_worker.gpu_manager import get_gpu_manager, ModelType
-from ai_worker.llm import summarize
+from ai_worker.llm import ScriptData, generate_script, summarize
+from ai_worker.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts import get_tts_engine
 from ai_worker.video import render_video
 from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
@@ -87,25 +88,40 @@ class RobustProcessor:
                 # GPU 메모리 상태 로그
                 self.gpu_manager.log_memory_status()
 
-                # ===== Step 1: LLM 요약 =====
-                logger.info("[Step 1/3] LLM 요약 생성 중...")
+                # ===== Step 1: LLM 대본 생성 =====
+                logger.info("[Step 1/3] LLM 대본 생성 중...")
                 with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
-                    summary_text = self._safe_generate_summary(post)
-                logger.info("[Step 1/3] ✓ 요약 완료 (%d자)", len(summary_text))
+                    script = self._safe_generate_summary(post, session)
+                logger.info("[Step 1/3] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
                 # ===== Step 2: TTS 생성 =====
                 logger.info("[Step 2/3] TTS 음성 생성 중...")
                 with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                    audio_path = await self._safe_generate_tts(summary_text, post.id)
+                    audio_path = await self._safe_generate_tts(script.to_plain_text(), post.id)
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
                 # ===== Step 3: 영상 렌더링 =====
                 logger.info("[Step 3/3] 영상 렌더링 중...")
-                video_path = self._safe_render_video(post, audio_path, summary_text)
+                video_path = self._safe_render_video(post, audio_path, script.to_plain_text())
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 =====
-                self._save_content(post, session, summary_text, audio_path, video_path)
+                self._save_content(post, session, script, audio_path, video_path)
+
+                # ===== 썸네일 생성 =====
+                try:
+                    images = post.images if isinstance(post.images, list) else []
+                    thumb_path = get_thumbnail_path(post.id)
+                    generate_thumbnail(script.hook, images, thumb_path)
+                    content = session.query(Content).filter(Content.post_id == post.id).first()
+                    if content is not None:
+                        upload_meta = dict(content.upload_meta or {})
+                        upload_meta["thumbnail_path"] = str(thumb_path)
+                        content.upload_meta = upload_meta
+                        session.flush()
+                        logger.info("썸네일 생성 완료: %s", thumb_path)
+                except Exception:
+                    logger.warning("썸네일 생성 실패 (비치명적)", exc_info=True)
 
                 # ===== 성공 처리 =====
                 post.status = PostStatus.RENDERED
@@ -159,26 +175,38 @@ class RobustProcessor:
         self._mark_as_failed(post, session, failure_type, last_error, attempt)
         return False
 
-    def _safe_generate_summary(self, post: Post) -> str:
+    def _safe_generate_summary(self, post: Post, session: Session) -> ScriptData:
         """
-        안전하게 LLM 요약 생성
+        LLM 대본 생성. DB에 기존 JSON 대본이 있으면 재사용한다.
 
         Args:
             post: 게시글
+            session: DB 세션
 
         Returns:
-            요약 텍스트
+            ScriptData
 
         Raises:
             Exception: LLM 에러
         """
         try:
+            # 기존 대본 확인 (편집실에서 저장된 JSON)
+            existing = session.query(Content).filter(Content.post_id == post.id).first()
+            if existing and existing.summary_text:
+                try:
+                    script = ScriptData.from_json(existing.summary_text)
+                    if script.hook and len(script.hook) >= 5:
+                        logger.info("[Step 1/3] 기존 대본 재사용 (LLM 스킵): post_id=%d", post.id)
+                        return script
+                except Exception:
+                    logger.debug("기존 summary_text JSON 파싱 실패 — 새로 생성")
+
             # 베스트 댓글 추출
             best_comments = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
             comment_texts = [f"{c.author}: {c.content[:100]}" for c in best_comments]
 
-            # LLM 요약
-            summary_text = summarize(
+            # LLM 대본 생성
+            script = generate_script(
                 title=post.title,
                 body=post.content or "",
                 comments=comment_texts,
@@ -186,13 +214,14 @@ class RobustProcessor:
             )
 
             # 유효성 검사
-            if not summary_text or len(summary_text) < 10:
-                raise ValueError("요약 텍스트가 너무 짧습니다")
+            plain = script.to_plain_text()
+            if not plain or len(plain) < 10:
+                raise ValueError("대본 텍스트가 너무 짧습니다")
 
-            return summary_text
+            return script
 
-        except Exception as e:
-            logger.exception("LLM 요약 실패")
+        except Exception:
+            logger.exception("LLM 대본 생성 실패")
             raise
 
     async def _safe_generate_tts(self, text: str, post_id: int) -> Path:
@@ -342,7 +371,7 @@ class RobustProcessor:
         self,
         post: Post,
         session: Session,
-        summary_text: str,
+        script: ScriptData,
         audio_path: Path,
         video_path: Path
     ):
@@ -352,7 +381,7 @@ class RobustProcessor:
         Args:
             post: 게시글
             session: DB 세션
-            summary_text: 요약 텍스트
+            script: 구조화 대본
             audio_path: 음성 파일 경로
             video_path: 영상 파일 경로
         """
@@ -361,7 +390,7 @@ class RobustProcessor:
             content = Content(post_id=post.id)
             session.add(content)
 
-        content.summary_text = summary_text
+        content.summary_text = script.to_json()
         content.audio_path = str(audio_path)
         content.video_path = str(video_path)
         session.flush()
