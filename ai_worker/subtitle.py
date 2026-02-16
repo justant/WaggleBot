@@ -26,6 +26,7 @@ _YELLOW      = "&H0000FFFF"
 _CYAN        = "&H00FFFF00"
 _TRANSPARENT = "&HFF000000"
 _SEMI_BLACK  = "&H80000000"   # 50% 투명 검은 배경
+_YELLOW_SEMI = "&H6000FFFF"   # 62% 불투명 노란 배경 (CommentBubble 전용)
 
 # 인라인 오버라이드 태그: &HBBGGRR&  (알파 없음)
 _OVR_YELLOW = "&H00FFFF&"
@@ -43,14 +44,20 @@ def _style_line(
     bold: int, italic: int,
     outline_w: int, shadow: int,
     alignment: int, margin_v: int,
+    border_style: int = 1,
 ) -> str:
-    """ASS [V4+ Styles] 한 줄 생성."""
+    """ASS [V4+ Styles] 한 줄 생성.
+
+    border_style:
+      1 = 아웃라인+그림자 (기본)
+      3 = 불투명 배경 박스 (CommentBubble)
+    """
     return (
         f"Style: {name},{fontname},{fontsize},"
         f"{primary},&H000000FF,{outline},{back},"
         f"{bold},{italic},0,0,"
         f"100,100,0,0,"
-        f"1,{outline_w},{shadow},"
+        f"{border_style},{outline_w},{shadow},"
         f"{alignment},20,20,{margin_v},1"
     )
 
@@ -88,7 +95,17 @@ def _build_styles(mood: str, fontname: str, base_size: int) -> str:
     }
 
     rows = presets.get(mood, presets["funny"])
-    return "\n".join(_style_line(*r) for r in rows)
+    base_styles = "\n".join(_style_line(*r) for r in rows)
+
+    # CommentBubble: 모든 mood 공통 — 상단 노란 배경 말풍선
+    # alignment=8 (top center), BorderStyle=3 (opaque box), 검은 텍스트
+    bubble_style = _style_line(
+        "CommentBubble", fontname, base_size - 2,
+        _BLACK, _BLACK, _YELLOW_SEMI,
+        1, 0, 0, 0,
+        alignment=8, margin_v=80, border_style=3,
+    )
+    return base_styles + "\n" + bubble_style
 
 
 # ---------------------------------------------------------------------------
@@ -225,14 +242,39 @@ def build_ass(
 
         else:
             # 2막: Body — 댓글 인용 여부로 스타일 분기
-            style = "Comment" if _is_comment_sentence(sentence) else "Default"
+            # CommentBubble: 상단 노란 말풍선 / Default: 하단 일반 자막
+            is_comment = _is_comment_sentence(sentence)
+            style = "CommentBubble" if is_comment else "Default"
             highlighted = _highlight_quotes(raw)
-            text = f"{{\\fad(250,200)}}{highlighted}"
+            # CommentBubble은 페이드인만 (말풍선이 튀어나오는 느낌)
+            fade = "{\\fad(150,100)}" if is_comment else "{\\fad(250,200)}"
+            text = f"{fade}{highlighted}"
             dialogues.append(
                 f"Dialogue: 0,{_time_str(start)},{_time_str(end)},{style},,0,0,0,,{text}"
             )
 
     return "\n".join(header_lines) + "\n" + "\n".join(dialogues) + "\n"
+
+
+def get_comment_timings(
+    hook: str,
+    body: list[str],
+    closer: str,
+    duration: float,
+) -> list[tuple[float, float]]:
+    """댓글 인용 문장의 (start, end) 타이밍 목록을 반환한다.
+
+    video.py에서 shake 효과 및 효과음 타이밍 계산에 사용된다.
+    """
+    sentences = [hook] + list(body) + [closer]
+    timings = _proportional_timings(sentences, duration)
+
+    result: list[tuple[float, float]] = []
+    for i, (sentence, timing) in enumerate(zip(sentences, timings)):
+        # hook(0)과 closer(last)는 제외, body만 검사
+        if 0 < i < len(sentences) - 1 and _is_comment_sentence(sentence):
+            result.append(timing)
+    return result
 
 
 def write_ass_file(

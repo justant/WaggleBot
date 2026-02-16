@@ -52,9 +52,10 @@ def render_video(
 
     # ASS 자막 파일 생성 (ScriptData JSON이면 동적 자막, 평문이면 drawtext 폴백)
     ass_path: Path | None = None
+    comment_timings: list[tuple[float, float]] = []
     try:
         from ai_worker.llm import ScriptData
-        from ai_worker.subtitle import write_ass_file
+        from ai_worker.subtitle import get_comment_timings, write_ass_file
         script = ScriptData.from_json(summary_text)
         ass_path = _TEMP_DIR / f"sub_{post.id}.ass"
         write_ass_file(
@@ -68,6 +69,14 @@ def render_video(
             width=width,
             height=height,
         )
+        comment_timings = get_comment_timings(
+            hook=script.hook,
+            body=script.body,
+            closer=script.closer,
+            duration=duration,
+        )
+        if comment_timings:
+            logger.debug("댓글 인용 구간 %d개: %s", len(comment_timings), comment_timings)
     except Exception:
         logger.warning("ASS 자막 생성 실패 → drawtext 폴백", exc_info=True)
 
@@ -83,6 +92,7 @@ def render_video(
         codec=codec,
         font=font,
         bgm_vol=bgm_vol,
+        comment_timings=comment_timings,
     )
 
     # 임시 파일 정리
@@ -327,20 +337,26 @@ def _compose_final(
     codec: str,
     font: str,
     bgm_vol: float,
+    comment_timings: "list[tuple[float, float]] | None" = None,
 ) -> None:
-    """영상 + TTS 오디오 + 자막(ASS 우선 / drawtext 폴백) + BGM을 합성한다."""
+    """영상 + TTS 오디오 + 자막(ASS 우선 / drawtext 폴백) + BGM + 댓글 효과를 합성한다."""
+
+    timings = comment_timings or []
+    shake_vf = _build_shake_filter(timings)
 
     if ass_path and ass_path.exists():
         # ASS 동적 자막 필터
-        # fontsdir: assets/fonts/ 또는 폰트 파일 부모 디렉터리
         font_dir = str(Path(font).parent) if font else str(Path(__file__).parent.parent / "assets" / "fonts")
         ass_str      = str(ass_path).replace("\\", "/")
         font_dir_str = font_dir.replace("\\", "/")
-        video_filter = (
-            f"[0:v]subtitles=filename='{ass_str}'"
-            f":fontsdir='{font_dir_str}'[v]"
+        sub_filter = (
+            f"[0:v]subtitles=filename='{ass_str}':fontsdir='{font_dir_str}'"
         )
-        logger.debug("ASS 자막 필터 사용: %s", ass_path.name)
+        if shake_vf:
+            video_filter = f"{sub_filter}[sub];[sub]{shake_vf}[v]"
+        else:
+            video_filter = f"{sub_filter}[v]"
+        logger.debug("ASS 자막 필터 사용: %s (shake=%s)", ass_path.name, bool(shake_vf))
     else:
         # Legacy drawtext 폴백
         clean_text = _strip_markdown(summary_text)
@@ -348,7 +364,7 @@ def _compose_final(
         escaped    = _escape_drawtext(wrapped)
         fontsize   = int(width * 0.042)   # ~45px @1080w
         fontfile_opt = f":fontfile={font}" if font else ""
-        video_filter = (
+        dt_filter = (
             f"[0:v]drawtext=text='{escaped}'"
             f"{fontfile_opt}"
             f":fontsize={fontsize}"
@@ -356,8 +372,12 @@ def _compose_final(
             f":borderw=3:bordercolor=black"
             f":box=1:boxcolor=black@0.5:boxborderw=10"
             f":x=(w-text_w)/2:y=h*0.75"
-            f":line_spacing=12[v]"
+            f":line_spacing=12"
         )
+        if shake_vf:
+            video_filter = f"{dt_filter}[sub];[sub]{shake_vf}[v]"
+        else:
+            video_filter = f"{dt_filter}[v]"
         logger.debug("drawtext 폴백 자막 사용")
 
     # BGM 믹싱
@@ -374,12 +394,28 @@ def _compose_final(
             f"[2:a]volume={bgm_vol}[bgm];"
             f"[bgm][tts]sidechaincompress="
             f"threshold=0.02:ratio=6:attack=200:release=1000[ducked];"
-            f"[tts][ducked]amix=inputs=2:duration=first[aout]"
+            f"[tts][ducked]amix=inputs=2:duration=first[premix]"
         )
-        audio_map = ["-map", "[aout]"]
+        n_base_inputs = 3  # video + tts + bgm
     else:
-        audio_filter = "[1:a]apad[aout]"
-        audio_map = ["-map", "[aout]"]
+        audio_filter = "[1:a]apad[premix]"
+        n_base_inputs = 2  # video + tts
+
+    # 댓글 효과음 믹싱 (assets/sfx/comment_ding.mp3 존재 시)
+    sfx_extra_inputs, sfx_filter_parts = _build_sfx_parts(timings, n_base_inputs)
+    if sfx_filter_parts:
+        n_sfx = len(sfx_filter_parts)
+        sfx_labels = "".join(f"[sfx{i}]" for i in range(n_sfx))
+        audio_filter += (
+            ";" + ";".join(sfx_filter_parts)
+            + f";[premix]{sfx_labels}amix=inputs={1 + n_sfx}:duration=first[aout]"
+        )
+        inputs += sfx_extra_inputs
+        logger.debug("댓글 효과음 %d회 믹싱", n_sfx)
+    else:
+        audio_filter = audio_filter.replace("[premix]", "[aout]")
+
+    audio_map = ["-map", "[aout]"]
 
     # NVENC 폴백
     enc_args = _get_encoder_args(codec)
@@ -419,6 +455,56 @@ def _compose_final(
         raise subprocess.CalledProcessError(
             result.returncode, cmd, result.stdout, result.stderr
         )
+
+
+def _build_shake_filter(comment_timings: list[tuple[float, float]]) -> str:
+    """댓글 인용 구간 시작 0.3초 동안 1~2px 수평 흔들림 geq 필터를 반환한다.
+
+    댓글이 없으면 빈 문자열을 반환한다.
+    """
+    if not comment_timings:
+        return ""
+
+    shake_dur = 0.3
+    # between(T, t1, t2) → 1 if t1 ≤ T ≤ t2, else 0
+    # geq eval에서 공백 없이 작성 (파싱 안정성)
+    intervals = "+".join(
+        f"gte(T,{t1:.3f})*lte(T,{min(t1 + shake_dur, t2):.3f})"
+        for t1, t2 in comment_timings
+    )
+    # 2px 사인파 흔들림 — 댓글 구간에서만 활성
+    dx = f"(({intervals})*(2*sin(T*30*PI)))"
+    return (
+        f"geq=lum='lum(X-{dx},Y)'"
+        f":cb='cb(X-{dx},Y)'"
+        f":cr='cr(X-{dx},Y)'"
+    )
+
+
+def _build_sfx_parts(
+    comment_timings: list[tuple[float, float]],
+    n_base_inputs: int,
+) -> tuple[list[str], list[str]]:
+    """댓글 시작 시점 각각에 효과음을 재생하는 FFmpeg 입력 목록과 필터 파트를 반환한다.
+
+    assets/sfx/comment_ding.mp3 가 없으면 ([], []) 반환한다.
+    """
+    sfx_path = ASSETS_DIR / "sfx" / "comment_ding.mp3"
+    if not sfx_path.exists() or not comment_timings:
+        return [], []
+
+    extra_inputs: list[str] = []
+    filter_parts: list[str] = []
+
+    for i, (t_start, _) in enumerate(comment_timings):
+        delay_ms = int(t_start * 1000)
+        idx = n_base_inputs + i
+        extra_inputs += ["-i", str(sfx_path)]
+        filter_parts.append(
+            f"[{idx}:a]adelay={delay_ms}|{delay_ms},volume=0.4[sfx{i}]"
+        )
+
+    return extra_inputs, filter_parts
 
 
 def _get_encoder_args(codec: str) -> list[str]:
