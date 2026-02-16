@@ -86,3 +86,30 @@ class Content(Base):
     created_at = Column(DateTime, nullable=False, default=_utcnow)
 
     post = relationship("Post", backref="content_item")
+
+    def get_script(self) -> "ScriptData | None":
+        """
+        summary_text에서 ScriptData 반환.
+
+        - JSON 형식(v2): ScriptData 파싱 반환
+        - 평문(레거시 v1): ScriptData(hook=전체텍스트, body=[], ...) 로 래핑 반환
+        - None/빈값: None 반환
+        """
+        if not self.summary_text:
+            return None
+
+        import json as _json
+        from ai_worker.llm import ScriptData
+
+        try:
+            return ScriptData.from_json(self.summary_text)
+        except (_json.JSONDecodeError, KeyError, TypeError):
+            # 레거시 평문 대본 — hook에 전체 텍스트 담아 반환
+            return ScriptData(
+                hook=self.summary_text[:15],
+                body=[self.summary_text],
+                closer="",
+                title_suggestion="",
+                tags=[],
+                mood="funny",
+            )
