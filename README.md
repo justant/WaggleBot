@@ -152,7 +152,6 @@ curl http://localhost:11434/api/tags
 git clone https://github.com/justant/WaggleBot.git
 cd WaggleBot
 
-cp .env.example .env
 nano .env
 ```
 

@@ -82,13 +82,7 @@ async def _main_loop() -> None:
             logger.exception("폴링 루프 예외")
             found = False
 
-        try:
-            uploaded = await upload_once()
-        except Exception:
-            logger.exception("업로드 폴링 예외")
-            uploaded = False
-
-        if not found and not uploaded:
+        if not found:
             await asyncio.sleep(AI_POLL_INTERVAL)
 
 

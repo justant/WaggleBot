@@ -8,7 +8,7 @@
 | GPU | NVIDIA RTX 3080 Ti (12GB VRAM) |
 | Compose 파일 | `docker-compose.yml` |
 | Dockerfile | `Dockerfile.gpu` |
-| LLM 모델 | `qwen2.5:14b` |
+| LLM 모델 | `.env`의 `OLLAMA_MODEL` (기본값: `qwen2.5:14b`) |
 | 영상 인코딩 | `h264_nvenc` (GPU 가속) |
 
 ---
@@ -18,7 +18,7 @@
 - NVIDIA 드라이버 설치 (`nvidia-smi` 정상 출력)
 - Docker 설치
 - NVIDIA Container Toolkit 설치
-- Ollama 설치 및 `qwen2.5:14b` 모델 다운로드
+- Ollama 설치 및 `.env`의 `OLLAMA_MODEL`에 지정한 모델 다운로드 (기본값: `qwen2.5:14b`)
 
 ---
 
@@ -109,10 +109,20 @@ Environment="OLLAMA_HOST=0.0.0.0"
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 ```
 
-### 4. 모델 다운로드
+### 4. `.env` 설정 및 모델 다운로드
+
+`.env`에서 사용할 모델을 지정합니다 (기본값: `qwen2.5:14b`):
+
+```bash
+# .env
+OLLAMA_MODEL=qwen2.5:14b
+```
+
+이후 해당 모델을 다운로드합니다:
 
 ```bash
 ollama pull qwen2.5:14b
+# 다른 모델을 .env에 지정한 경우 해당 모델명으로 변경
 ```
 
 ---
