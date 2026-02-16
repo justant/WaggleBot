@@ -113,7 +113,7 @@ def _probe_duration(audio_path: Path) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 이미지 슬라이드쇼 (Ken Burns)
+# 이미지 슬라이드쇼 (Ken Burns + xfade 장면 전환)
 # ---------------------------------------------------------------------------
 def _build_slideshow(
     image_urls: list[str],
@@ -121,8 +121,9 @@ def _build_slideshow(
     height: int,
     duration: float,
     post_id: int,
+    transitions: list[str] | None = None,
 ) -> Path:
-    """이미지를 다운로드 → 리사이즈 → Ken Burns zoompan 슬라이드쇼 생성."""
+    """이미지 다운로드 → 리사이즈 → Ken Burns zoompan + xfade 장면 전환 슬라이드쇼 생성."""
     img_dir = _TEMP_DIR / f"imgs_{post_id}"
     img_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,8 +138,6 @@ def _build_slideshow(
 
         img_path = img_dir / f"{idx:03d}.jpg"
         img_path.write_bytes(resp.content)
-
-        # 9:16 리사이즈
         _resize_cover(img_path, width, height)
         local_imgs.append(img_path)
 
@@ -146,48 +145,105 @@ def _build_slideshow(
         logger.warning("다운로드 성공 이미지 없음 → 배경영상 폴백")
         return _build_background_loop(width, height, duration)
 
-    per_img = duration / len(local_imgs)
+    n = len(local_imgs)
     fps = 30
+    trans_dur = 0.5  # 장면 전환 지속 시간 (초)
 
-    # concat demuxer 입력 파일
-    concat_file = _TEMP_DIR / f"concat_{post_id}.txt"
-    lines: list[str] = []
-    for img in local_imgs:
-        lines.append(f"file '{img}'")
-        lines.append(f"duration {per_img:.3f}")
-    # 마지막 프레임 유지를 위해 마지막 이미지 다시 추가
-    lines.append(f"file '{local_imgs[-1]}'")
-    concat_file.write_text("\n".join(lines), encoding="utf-8")
+    # 전환 중첩 시간을 보정해 총 출력 길이 = duration 유지
+    # 총길이 = n * seg_dur - (n-1) * trans_dur → seg_dur = (duration + (n-1)*trans_dur) / n
+    seg_dur = (duration + (n - 1) * trans_dur) / n if n > 1 else duration
+    assigned = _assign_transitions(n, transitions)
 
     output = _TEMP_DIR / f"slideshow_{post_id}.mp4"
 
-    # zoompan: 약간의 줌인 효과
-    zp_filter = (
-        f"zoompan=z='min(zoom+0.0015,1.3)':d={int(per_img * fps)}"
-        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":s={width}x{height}:fps={fps}"
-    )
+    # 이미지별 -loop 1 -t {seg_dur} 입력
+    cmd: list[str] = ["ffmpeg", "-y"]
+    for img in local_imgs:
+        cmd += ["-loop", "1", "-t", f"{seg_dur:.3f}", "-i", str(img)]
 
-    subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_file),
-            "-vf", zp_filter,
-            "-t", f"{duration:.3f}",
-            "-c:v", "libx264", "-preset", "fast",
-            "-pix_fmt", "yuv420p",
-            str(output),
-        ],
-        capture_output=True, text=True, check=True,
-    )
+    # filter_complex 구성
+    filter_parts: list[str] = []
+
+    # 각 이미지에 zoompan 적용 (짝수: 줌인, 홀수: 줌아웃으로 시각 변화)
+    for i in range(n):
+        d_frames = max(1, int(seg_dur * fps))
+        if i % 2 == 0:
+            zp = (
+                f"zoompan=z='min(zoom+0.0015,1.3)'"
+                f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                f":d={d_frames}:s={width}x{height}:fps={fps}"
+            )
+        else:
+            zp = (
+                f"zoompan=z='if(lte(zoom,1.0),1.3,max(zoom-0.0015,1.0))'"
+                f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                f":d={d_frames}:s={width}x{height}:fps={fps}"
+            )
+        filter_parts.append(f"[{i}:v]{zp},setpts=PTS-STARTPTS[v{i}]")
+
+    # xfade 체이닝: offset = (i+1) * (seg_dur - trans_dur)
+    if n > 1:
+        prev_label = "v0"
+        for i in range(n - 1):
+            offset = (i + 1) * (seg_dur - trans_dur)
+            t = assigned[i]
+            out_label = "vout" if i == n - 2 else f"x{i}"
+            filter_parts.append(
+                f"[{prev_label}][v{i + 1}]xfade=transition={t}"
+                f":duration={trans_dur:.3f}:offset={offset:.3f}[{out_label}]"
+            )
+            prev_label = out_label
+        final_label = "vout"
+    else:
+        final_label = "v0"
+
+    cmd += [
+        "-filter_complex", ";".join(filter_parts),
+        "-map", f"[{final_label}]",
+        "-t", f"{duration:.3f}",
+        "-c:v", "libx264", "-preset", "fast",
+        "-pix_fmt", "yuv420p",
+        str(output),
+    ]
+
+    subprocess.run(cmd, capture_output=True, text=True, check=True)
 
     # 임시 파일 정리
-    concat_file.unlink(missing_ok=True)
     for img in local_imgs:
         img.unlink(missing_ok=True)
     img_dir.rmdir()
 
     return output
+
+
+def _assign_transitions(n: int, custom: list[str] | None) -> list[str]:
+    """N개 이미지에 대한 N-1개 장면 전환 효과를 결정한다.
+
+    전환 전략:
+    - 첫 전환 (hook → body): circleopen — 주의 집중
+    - 마지막 전환 (body → closer): fadeblack — 마무리
+    - 중간 전환: slideleft / dissolve / fade 순환
+    """
+    n_trans = n - 1
+    if n_trans <= 0:
+        return []
+    if custom and len(custom) == n_trans:
+        return custom
+
+    _MID_CYCLE = ("slideleft", "dissolve", "fade")
+    result: list[str] = []
+    mid_idx = 0
+    for i in range(n_trans):
+        if n_trans == 1:
+            result.append("circleopen")
+        elif i == 0:
+            result.append("circleopen")
+        elif i == n_trans - 1:
+            result.append("fadeblack")
+        else:
+            result.append(_MID_CYCLE[mid_idx % len(_MID_CYCLE)])
+            mid_idx += 1
+    return result
 
 
 def _resize_cover(img_path: Path, target_w: int, target_h: int) -> None:
