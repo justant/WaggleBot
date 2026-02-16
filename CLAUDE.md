@@ -1,158 +1,149 @@
-# WaggleBot — 커뮤니티 쇼츠 팩토리
+# WaggleBot — CLAUDE.md
 
-**AI 기반 쇼츠 영상 자동 생성 파이프라인**  
-커뮤니티 게시글 → LLM 요약 → TTS → 영상 렌더링 → 업로드
-
----
-
-## 프로젝트 구조
-
-```
-WaggleBot/
-├── crawlers/          # 웹 스크래핑 (BaseCrawler 패턴)
-├── db/                # DB 모델 & 세션 관리
-├── ai_worker/         # LLM, TTS, 영상 렌더링
-├── assets/            # 배경 영상, 폰트 등
-├── config/            # 중앙화된 설정 (settings.py)
-├── main.py            # 크롤러 진입점
-├── scheduler.py       # Cron 트리거
-└── dashboard.py       # Streamlit 관리 UI
-```
-
-**세부 사항:** @arch/dev_spec.md 참조
+커뮤니티 게시글 → LLM 요약 → TTS → FFmpeg 렌더링 → YouTube 업로드 자동화 파이프라인.
+상세 명세: @arch/dev_spec.md
 
 ---
 
-## 코딩 표준 (필수 준수)
+## 현재 개발 상태
 
-### 데이터베이스
+### 완료된 모듈 ✅
+| 모듈 | 주요 파일 |
+|------|-----------|
+| 크롤러 | `crawlers/base.py`, `nate_pann.py`, `nate_tok.py`, `plugin_manager.py` |
+| DB | `db/models.py` (Post/Comment/Content + PostStatus), `db/session.py` |
+| AI 워커 | `ai_worker/processor.py`, `llm.py`, `video.py`, `gpu_manager.py` |
+| TTS | `ai_worker/tts/` (edge_tts, kokoro, gptsovits) |
+| 업로더 | `uploaders/base.py`, `youtube.py`, `uploader.py` |
+| 대시보드 | `dashboard.py` (수신함/진행상태/갤러리 탭) |
+| 모니터링 | `monitoring/alerting.py`, `monitoring/daemon.py` |
+| 인프라 | `docker-compose.yml` (GPU), `docker-compose.galaxybook.yml` (No-GPU) |
+
+### Phase 3 개발 예정
+- **멀티 플랫폼 업로더**: TikTok, Instagram (`BaseUploader` 상속으로 추가)
+- **고급 영상 효과**: Ken Burns, 단어 단위 자막 페이드인
+- **분석 대시보드**: YouTube Analytics API 연동
+
+---
+
+## 상태 전이
+
+```
+COLLECTED → (대시보드 승인) → APPROVED → (AI워커) → PROCESSING → RENDERED → UPLOADED
+                                                                              ↕
+                                                                    DECLINED / FAILED
+```
+
+---
+
+## 코딩 규칙 (필수)
+
 ```python
-# ✅ 올바름 - 항상 with 블록 사용
+# DB — 항상 with 블록
 with SessionLocal() as db:
-    post = db.query(Post).filter_by(status='APPROVED').first()
+    post = db.query(Post).filter_by(status=PostStatus.APPROVED).first()
 
-# ❌ 틀림 - 커넥션 누수 위험
-db = SessionLocal()
-post = db.query(Post).first()
-db.close()
+# GPU — 반드시 컨텍스트 매니저 사용
+with gpu_manager.managed_inference(ModelType.LLM, "name"):
+    result = model.generate(text)  # 블록 종료 시 자동 해제
 ```
 
-### 타입 힌트 (필수)
-```python
-from typing import Optional
-from pathlib import Path
+- **로깅**: `logging.getLogger(__name__)` — `print()` 금지
+- **임포트**: 절대경로 (`from db.models import Post`)
+- **경로**: `pathlib.Path` 필수 — `os.path` 금지
+- **설정**: `config/settings.py` 경유 — 로직 파일 내 `os.getenv()` 금지
+- **타입힌트**: 모든 함수 필수
+- **가드절**: 조기 반환으로 중첩 최소화
 
-def process_image(image_path: str) -> Optional[Path]:
-    """모든 함수에 타입 힌트 필수"""
-    if not image_path:
-        return None
-    return Path(f"/app/media/images/{hash(image_path)}.jpg")
+---
+
+## 하드 제약사항 (절대 위반 금지)
+
+### VRAM (RTX 3080 Ti 12GB)
+- 순차 처리 필수: LLM → TTS → 렌더링
+- 각 단계 후 `torch.cuda.empty_cache()` + `gc.collect()`
+- 동시 모델 로드 금지 / 4-bit 양자화 필수
+
+### FFmpeg
+- GPU 환경: `h264_nvenc` 필수
+- `libx264` 수동 지정 금지 (VRAM 차단)
+- No-GPU 환경(galaxybook): `libx264` 자동 폴백 허용
+
+---
+
+## 승인 없이 수정 금지
+
+| 대상 | 이유 |
+|------|------|
+| `db/models.py` | 스키마 변경 시 DB 마이그레이션 필요 |
+| `.env` | 시크릿 포함, 커밋 절대 금지 |
+| `docker-compose.yml` | GPU 매핑 민감 |
+| `requirements.txt` | 의존성 충돌 위험 |
+| `h264_nvenc` → `libx264` 변경 | VRAM 차단 |
+| `git push --force` to main | 이력 파괴 |
+| `DROP TABLE` | 데이터 손실 |
+| `/app/media/` 삭제 | 업로드 영상 손실 |
+
+---
+
+## Docker 우선 명령어
+
+모든 서비스는 Docker 컨테이너에서 실행됨. 호스트에서 직접 실행 시 DB 연결 등 환경 차이 발생.
+
+```bash
+# 전체 서비스 시작/중지
+docker compose up -d
+docker compose down
+
+# 서비스별 로그
+docker compose logs -f ai_worker
+docker compose logs -f crawler
+
+# 크롤러 1회 실행 (테스트)
+docker exec wagglebot-crawler-1 python main.py --once
+
+# 테스트
+docker exec wagglebot-crawler-1 pytest
+docker exec wagglebot-crawler-1 pytest -k test_crawler
+
+# DB 초기화
+docker exec wagglebot-crawler-1 python -c "from db.session import init_db; init_db()"
+
+# 코드 수정 후 재시작 (재빌드 불필요 — 볼륨 마운트됨)
+docker restart wagglebot-ai_worker-1
+
+# requirements.txt 변경 시에만 재빌드 필요
+docker compose build ai_worker && docker compose up -d ai_worker
+
+# GPU/Ollama 확인
+nvidia-smi
+docker compose exec ai_worker curl http://host.docker.internal:11434/api/tags
 ```
 
-### 기타 규칙
-- **로깅:** `logging.getLogger(__name__)` 사용, `print()` 금지
-- **임포트:** 절대 경로 (`from db.models import Post`)
-- **경로:** `pathlib.Path` 사용 (WSL/Windows 호환)
-- **설정:** `config/settings.py`에 중앙화, 로직 파일 내 `os.getenv()` 금지
-- **가드 클로즈:** 조기 반환으로 중첩 최소화
+---
+
+## 새 크롤러 추가
+
+`crawlers/ADDING_CRAWLER.md` 참조. `BaseCrawler` 상속 후 `plugin_manager.py`에 자동 등록.
+
+## 새 업로더 추가
+
+`BaseUploader` 상속 → `platform` 클래스 변수 지정 → `config/pipeline.json`의 `upload_platforms`에 추가.
 
 ---
 
 ## Git 워크플로우
 
-### Commit 규칙
-- **자동 커밋:** 명시적 요청 시에만
-- **자동 Push 금지:** 반드시 사용자 승인 필요
-- **메시지 형식:** Conventional Commits (feat:/fix:/docs:/refactor:)
-
-### 브랜치 전략
-- `main` — 프로덕션
-- `feature/*` — 새 기능
-- `fix/*` — 버그 수정
-
-**Push 방법:**  
-명시적으로 *"origin에 푸시해줘"* 또는 *"PR 만들어줘"* 요청 필요
+- **커밋**: 명시적 요청 시에만 / Conventional Commits (`feat:` `fix:` `docs:` `refactor:`)
+- **브랜치**: `main`(프로덕션), `feature/*`, `fix/*`
+- **Push**: 반드시 명시적 승인 필요
 
 ---
 
-## 토큰 절약 규칙 (엄수)
+## 응답 스타일
 
-1. **간결하게:** 코드/핵심만, 대화 추임새 금지
-2. **변경만 출력:** 전체 파일 말고 Diff만
-3. **반복 금지:** `@arch/dev_spec.md` 내용 반복 안 함
-4. **계획 생략:** 단순 작업은 즉시 실행
-5. **예고 금지:** "실행하겠습니다" 말고 바로 실행
-6. **체이닝:** 쉘 명령어 `&&`로 묶기
-7. **성공 침묵:** 완료 보고 없이 다음 단계 진행
-
----
-
-## 자주 사용하는 명령어
-
-```bash
-# 데이터베이스 초기화
-python -c "from db.session import init_db; init_db()"
-
-# 크롤링
-python main.py --once              # 1회 실행 (테스트)
-python main.py                      # 스케줄 실행
-
-# AI 워커
-python ai_worker/main.py
-
-# 대시보드
-streamlit run dashboard.py
-
-# 테스트
-pytest                              # 전체
-pytest -k test_crawler              # 특정 테스트
-pytest --cov=crawlers               # 커버리지
-
-# Docker
-docker-compose up -d
-docker-compose logs -f ai_worker
-docker-compose down
-```
-
----
-
-## 중요 제약사항
-
-### VRAM 관리 (RTX 3080 Ti 12GB)
-- LLM/TTS는 **4-bit 양자화 필수**
-- **순차 처리:** LLM → TTS → 렌더링
-- 각 단계 후 `torch.cuda.empty_cache()` + `gc.collect()` 필수
-- 동시 모델 로드 절대 금지
-
-### FFmpeg 인코딩
-- **필수 코덱:** `h264_nvenc` (GPU 가속)
-- **금지 코덱:** `libx264` (CPU 사용, VRAM 차단)
-
-### 경로 처리
-- **필수:** `pathlib.Path` (WSL/Windows 호환)
-- **금지:** `os.path` (크로스 플랫폼 문제)
-
----
-
-## 절대 수정 금지 (명시적 승인 필수)
-
-**파일:**
-- `db/models.py` — 스키마 변경 시 마이그레이션 필요
-- `.env` — 시크릿 포함 (커밋 금지)
-- `docker-compose.yml` — GPU 매핑 민감
-- `requirements.txt` — 의존성 충돌 위험
-
-**작업:**
-- `git push --force` to main
-- `DROP TABLE` 쿼리
-- `/app/media/` 삭제 (업로드 영상)
-- `h264_nvenc` → `libx264` 변경
-
----
-
-## 참조 문서
-
-- **프로젝트 명세:** @arch/dev_spec.md (필독)
-- **크롤러 패턴:** @crawlers/base.py
-- **DB 모델:** @db/models.py
-- **설정:** @config/settings.py
+- 추임새·예고 없이 바로 실행
+- 변경된 부분만 출력 (전체 파일 반복 금지)
+- 단순 작업은 계획 없이 즉시 실행
+- 성공 시 불필요한 완료 보고 생략
+- 쉘 명령어는 `&&`로 체이닝
