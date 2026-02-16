@@ -139,8 +139,13 @@ def generate_script(
     comments: list[str],
     *,
     model: str | None = None,
+    extra_instructions: str | None = None,
 ) -> ScriptData:
-    """구조화 대본(ScriptData) 생성."""
+    """구조화 대본(ScriptData) 생성.
+
+    Args:
+        extra_instructions: 프롬프트 끝에 추가할 보조 지시사항 (스타일, 톤 등).
+    """
     model = model or OLLAMA_MODEL
     prompt = _SCRIPT_PROMPT_V2.format(
         title=title,
@@ -148,7 +153,10 @@ def generate_script(
         comments="\n".join(f"- {c}" for c in comments[:5]),
     )
 
-    logger.info("Ollama 대본 생성 요청: model=%s", model)
+    if extra_instructions and extra_instructions.strip():
+        prompt += f"\n\n## 추가 지시사항\n{extra_instructions.strip()}"
+
+    logger.info("Ollama 대본 생성 요청: model=%s (extra=%s)", model, bool(extra_instructions))
     raw = _call_ollama(prompt, model, num_predict=512)
     logger.info("Ollama 응답 수신: %d자", len(raw))
 
