@@ -1,0 +1,114 @@
+# 갤럭시북5 프로 (Intel Arc 130V) 테스트 환경
+# 사용법: docker compose -f docker-compose.galaxybook.yml up -d
+#
+# 3080 Ti PC: docker compose up -d  (docker-compose.yml 기본 사용)
+
+services:
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-wagglebot_root}
+      MARIADB_DATABASE: wagglebot
+      MARIADB_USER: wagglebot
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-wagglebot}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -u root -p${MARIADB_ROOT_PASSWORD} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  crawler:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./:/app
+      - /app/venv
+      - /app/__pycache__
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      CRAWL_INTERVAL_HOURS: ${CRAWL_INTERVAL_HOURS:-1}
+    command: python main.py
+
+  dashboard:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./:/app
+      - ./media:/app/media
+      - /app/venv
+      - /app/__pycache__
+    environment:
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+    command: streamlit run dashboard.py --server.port 8501 --server.headless true --server.address 0.0.0.0
+
+  ai_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile          # CPU 전용 (Dockerfile.gpu 아님)
+    restart: unless-stopped
+    volumes:
+      - ./:/app
+      - ./media:/app/media
+      - /app/venv
+      - /app/__pycache__
+    environment:
+      LLM_MODEL: "qwen2.5:1.5b"
+      DEFAULT_MODEL: "qwen2.5:1.5b"
+      OLLAMA_MODEL: "qwen2.5:1.5b"
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      MEDIA_DIR: /app/media
+    # deploy.resources 없음 → NVIDIA 드라이버 요건 없음
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: python -m ai_worker.main
+
+  monitoring:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./:/app
+      - /app/venv
+      - /app/__pycache__
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      MONITORING_ENABLED: ${MONITORING_ENABLED:-true}
+      HEALTH_CHECK_INTERVAL: ${HEALTH_CHECK_INTERVAL:-300}
+      GPU_TEMP_WARNING: ${GPU_TEMP_WARNING:-75}
+      GPU_TEMP_CRITICAL: ${GPU_TEMP_CRITICAL:-80}
+      DISK_USAGE_WARNING: ${DISK_USAGE_WARNING:-80}
+      DISK_USAGE_CRITICAL: ${DISK_USAGE_CRITICAL:-90}
+      MEMORY_USAGE_WARNING: ${MEMORY_USAGE_WARNING:-85}
+      MEMORY_USAGE_CRITICAL: ${MEMORY_USAGE_CRITICAL:-95}
+      EMAIL_ALERTS_ENABLED: ${EMAIL_ALERTS_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      SLACK_ALERTS_ENABLED: ${SLACK_ALERTS_ENABLED:-false}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    command: python -m monitoring.daemon
+
+volumes:
+  mariadb_data:

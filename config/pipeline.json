@@ -1,7 +1,7 @@
 {
   "tts_engine": "edge-tts",
   "tts_voice": "ko-KR-SunHiNeural",
-  "llm_model": "qwen2.5:14b",
+  "llm_model": "qwen2.5:1.5b",
   "video_resolution": "1080x1920",
   "video_codec": "h264_nvenc",
   "bgm_volume": "0.15",

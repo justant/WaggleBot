@@ -182,6 +182,8 @@ def _resize_cover(img_path: Path, target_w: int, target_h: int) -> None:
             img = img.crop((0, top, img.width, top + new_h))
 
         img = img.resize((target_w, target_h), Image.LANCZOS)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
         img.save(img_path, "JPEG", quality=90)
 
 
@@ -247,22 +249,22 @@ def _compose_final(
 ) -> None:
     """영상 + TTS 오디오 + 자막(drawtext) + BGM을 합성한다."""
 
-    # 자막 텍스트 이스케이프 (FFmpeg drawtext용)
-    escaped = _escape_drawtext(summary_text)
-    # 줄바꿈: 한 줄 ~18자
-    wrapped = _wrap_korean(summary_text, width=18)
+    # 마크다운 제거 → 줄바꿈 → FFmpeg 이스케이프
+    clean_text = _strip_markdown(summary_text)
+    wrapped = _wrap_korean(clean_text, width=18)
     escaped = _escape_drawtext(wrapped)
 
     fontsize = int(width * 0.042)  # ~45px @1080w
+    fontfile_opt = f":fontfile={font}" if font else ""
     drawtext = (
-        f"drawtext=text='{escaped}'"
-        f":fontfile={font}"
+        f"[0:v]drawtext=text='{escaped}'"
+        f"{fontfile_opt}"
         f":fontsize={fontsize}"
         f":fontcolor=white"
         f":borderw=3:bordercolor=black"
         f":box=1:boxcolor=black@0.5:boxborderw=10"
         f":x=(w-text_w)/2:y=h*0.75"
-        f":line_spacing=12"
+        f":line_spacing=12[v]"
     )
 
     # BGM 믹싱
@@ -293,7 +295,7 @@ def _compose_final(
         "ffmpeg", "-y",
         *inputs,
         "-filter_complex", f"{drawtext};{audio_filter}",
-        "-map", "0:v",
+        "-map", "[v]",
         *audio_map,
         *enc_args,
         "-r", "30",
@@ -311,7 +313,7 @@ def _compose_final(
             "ffmpeg", "-y",
             *inputs,
             "-filter_complex", f"{drawtext};{audio_filter}",
-            "-map", "0:v",
+            "-map", "[v]",
             *audio_map,
             *enc_args,
             "-r", "30",
@@ -348,23 +350,48 @@ def _get_encoder_args(codec: str) -> list[str]:
 # 유틸리티
 # ---------------------------------------------------------------------------
 def _resolve_font_path(font_name: str) -> str:
-    """폰트 이름으로 assets/fonts/ 내 절대 경로를 반환한다.
+    """폰트 이름으로 절대 경로를 반환한다.
 
-    .ttf 확장자가 없으면 자동 추가. 파일이 없으면 이름 그대로 반환(시스템 폰트 폴백).
+    탐색 순서:
+    1. assets/fonts/
+    2. /usr/share/fonts/ 하위 재귀 탐색 (시스템 폰트)
     """
     if not font_name.endswith((".ttf", ".otf")):
         font_name = f"{font_name}.ttf"
+
+    # 1. assets/fonts/
     font_path = ASSETS_DIR / "fonts" / font_name
     if font_path.exists():
         return str(font_path)
-    logger.warning("폰트 파일 없음: %s → 시스템 폰트 폴백", font_path)
-    return font_name
+
+    # 2. 시스템 폰트 경로 탐색
+    system_font_dirs = [Path("/usr/share/fonts"), Path("/usr/local/share/fonts")]
+    for font_dir in system_font_dirs:
+        for found in font_dir.rglob(font_name):
+            logger.info("시스템 폰트 사용: %s", found)
+            return str(found)
+
+    logger.warning("폰트 파일 없음: %s → FFmpeg 기본 폰트 사용", font_name)
+    return ""
+
+
+def _strip_markdown(text: str) -> str:
+    """LLM이 출력한 마크다운 서식 제거."""
+    import re
+    text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text, flags=re.DOTALL)  # **bold**, *italic*
+    text = re.sub(r"#{1,6}\s*", "", text)                   # # 헤딩
+    text = re.sub(r"^-{3,}\s*$", "", text, flags=re.MULTILINE)  # --- 수평선
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)   # [link](url)
+    text = re.sub(r"\[([^\]]*)\]", r"\1", text)             # [label]
+    text = re.sub(r"`{1,3}(.+?)`{1,3}", r"\1", text)       # `code`
+    text = re.sub(r"^\s*[-*>]\s+", "", text, flags=re.MULTILINE)  # 목록/인용
+    text = re.sub(r"\n{3,}", "\n\n", text)                  # 연속 공백 줄 정리
+    return text.strip()
 
 
 def _escape_drawtext(text: str) -> str:
     """FFmpeg drawtext 필터용 텍스트 이스케이프."""
-    # drawtext 특수문자 이스케이프
-    for ch in ("\\", "'", ":", "%", "{", "}"):
+    for ch in ("\\", "'", ":", ";", "%", "{", "}", '"'):
         text = text.replace(ch, f"\\{ch}")
     # 개행 → drawtext 줄바꿈
     text = text.replace("\n", "\\n")
