@@ -21,7 +21,7 @@ class ScriptData:
     closer: str
     title_suggestion: str
     tags: list[str]
-    mood: str  # funny | serious | shocking | heartwarming
+    mood: str = "funny"  # funny | serious | shocking | heartwarming (레거시 호환용)
 
     def to_plain_text(self) -> str:
         return " ".join([self.hook] + self.body + [self.closer])
@@ -32,7 +32,15 @@ class ScriptData:
     @classmethod
     def from_json(cls, s: str) -> "ScriptData":
         d = json.loads(s)
-        return cls(**d)
+        # 레거시 JSON에 mood 없을 수 있으므로 기본값 처리
+        return cls(
+            hook=d["hook"],
+            body=d["body"],
+            closer=d["closer"],
+            title_suggestion=d["title_suggestion"],
+            tags=d["tags"],
+            mood=d.get("mood", "funny"),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -40,56 +48,34 @@ class ScriptData:
 # ---------------------------------------------------------------------------
 
 _SCRIPT_PROMPT_V2 = """\
-당신은 한국어 숏츠 영상 대본 전문가입니다.
-아래 게시글과 베스트 댓글을 읽고, 반드시 아래 JSON 형식으로만 응답하세요.
-다른 텍스트(설명, 마크다운 코드블록 제외)는 절대 포함하지 마세요.
+당신은 유튜브 쇼츠 대본 작가입니다.
+아래 입력을 읽고, 반드시 JSON 형식으로만 응답하세요. 다른 텍스트는 절대 포함하지 마세요.
 
-JSON 형식:
+## 입력
+- 제목: {title}
+- 본문: {body}
+- 베스트 댓글: {comments}
+
+## 출력 형식 (JSON)
 {{
-  "hook": "시청자를 즉시 사로잡는 첫 문장 (30자 내외, 반말)",
-  "body": ["본문 문장1", "본문 문장2", "본문 문장3"],
-  "closer": "마무리 한 줄 (30자 내외, 반말)",
-  "title_suggestion": "유튜브 제목 제안 (30자 내외)",
-  "tags": ["태그1", "태그2", "태그3", "태그4", "태그5"],
-  "mood": "funny"
+  "hook": "시청자가 스크롤을 멈출 한 줄 (15자 이내, 의문형 또는 감탄형)",
+  "body": [
+    "핵심 내용 문장 1",
+    "핵심 내용 문장 2",
+    "핵심 내용 문장 3",
+    "베스트 댓글 인용: 'OOO'"
+  ],
+  "closer": "공감 유도 마무리 + 구독/좋아요 CTA",
+  "title_suggestion": "YouTube 쇼츠 제목 (50자 이내, 이모지 포함)",
+  "tags": ["태그1", "태그2", "태그3"]
 }}
 
-mood 값은 funny / serious / shocking / heartwarming 중 하나만 사용.
-body는 2~4개 문장으로 구성. 전체 글자 수 200자 내외.
-
----
-[제목]
-{title}
-
-[본문]
-{body}
-
-[베스트 댓글]
-{comments}
----"""
-
-_SUMMARY_PROMPT_TEMPLATE = """\
-당신은 한국어 쇼츠 영상 대본 작가입니다.
-아래 커뮤니티 게시글과 베스트 댓글을 읽고, 200자 내외의 재미있는 쇼츠 대본을 작성하세요.
-
-규칙:
-- 반말 사용, 친근한 톤
-- 핵심만 간결하게 전달
-- 시청자의 흥미를 유발하는 도입부
-- 200자 내외 (최대 250자)
-
----
-[제목]
-{title}
-
-[본문]
-{body}
-
-[베스트 댓글]
-{comments}
----
-
-대본:"""
+## 규칙
+- 총 분량: TTS로 읽었을 때 40~55초 분량
+- 말투: 반말, ~했다/~인데/~ㅋㅋ 구어체
+- 베스트 댓글 최소 1개 인용 필수 (따옴표로 표시)
+- body는 정확히 4개 항목
+- 자극적이되 사실 왜곡 금지"""
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +149,7 @@ def generate_script(
     )
 
     logger.info("Ollama 대본 생성 요청: model=%s", model)
-    raw = _call_ollama(prompt, model, num_predict=400)
+    raw = _call_ollama(prompt, model, num_predict=512)
     logger.info("Ollama 응답 수신: %d자", len(raw))
 
     script = _parse_script_json(raw, fallback_text=raw)
