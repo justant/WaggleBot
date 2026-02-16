@@ -72,9 +72,9 @@ def render_video(
 
     images: list[str] = post.images or []
     if images:
-        video_input = _build_slideshow(images, width, height, duration, post.id)
+        video_input = _build_slideshow(images, width, height, duration, post.id, codec=codec)
     else:
-        video_input = _build_background_loop(width, height, duration)
+        video_input = _build_background_loop(width, height, duration, codec=codec)
 
     # ASS 자막 파일 생성 (ScriptData JSON이면 동적 자막, 평문이면 drawtext 폴백)
     ass_path: Path | None = None
@@ -134,6 +134,89 @@ def render_video(
     return output_path
 
 
+def render_preview(
+    post,
+    audio_path: Path,
+    summary_text: str,
+    cfg: dict[str, str],
+) -> Path:
+    """프리뷰 전용 렌더링 — 항상 480×854 libx264(CPU), GPU 점유 없음.
+
+    고화질 렌더링(`render_video`) 전 운영자 확인용 저화질 영상 생성.
+    출력 파일: media/video/preview_{post.id}.mp4
+    """
+    _VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    _TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    width, height = 480, 854
+    codec = "libx264"
+    bgm_vol = float(cfg.get("bgm_volume", "0.15"))
+    font_name = cfg.get("subtitle_font", "NanumGothic")
+    font = _resolve_font_path(font_name)
+
+    output_path = _VIDEO_DIR / f"preview_{post.id}.mp4"
+    audio_path = Path(audio_path)
+    duration = _probe_duration(audio_path)
+
+    images: list[str] = post.images or []
+    if images:
+        video_input = _build_slideshow(images, width, height, duration, post.id, codec=codec)
+    else:
+        video_input = _build_background_loop(width, height, duration, codec=codec)
+
+    ass_path: Path | None = None
+    comment_timings: list[tuple[float, float]] = []
+    try:
+        from ai_worker.llm import ScriptData
+        from ai_worker.subtitle import get_comment_timings, write_ass_file
+        script = ScriptData.from_json(summary_text)
+        ass_path = _TEMP_DIR / f"sub_preview_{post.id}.ass"
+        write_ass_file(
+            hook=script.hook,
+            body=script.body,
+            closer=script.closer,
+            duration=duration,
+            mood=script.mood,
+            fontname=font_name,
+            output_path=ass_path,
+            width=width,
+            height=height,
+        )
+        comment_timings = get_comment_timings(
+            hook=script.hook,
+            body=script.body,
+            closer=script.closer,
+            duration=duration,
+        )
+    except Exception:
+        logger.warning("프리뷰 ASS 자막 생성 실패 → drawtext 폴백", exc_info=True)
+
+    _compose_final(
+        video_input=video_input,
+        audio_path=audio_path,
+        output_path=output_path,
+        summary_text=summary_text,
+        ass_path=ass_path,
+        duration=duration,
+        width=width,
+        height=height,
+        codec=codec,
+        font=font,
+        bgm_vol=bgm_vol,
+        comment_timings=comment_timings,
+    )
+
+    if video_input.parent == _TEMP_DIR:
+        video_input.unlink(missing_ok=True)
+    if ass_path:
+        ass_path.unlink(missing_ok=True)
+    dt_text_file = _TEMP_DIR / f"drawtext_{output_path.stem}.txt"
+    dt_text_file.unlink(missing_ok=True)
+
+    logger.info("프리뷰 생성 완료: %s (%.1f초)", output_path.name, duration)
+    return output_path
+
+
 # ---------------------------------------------------------------------------
 # 오디오 길이 측정
 # ---------------------------------------------------------------------------
@@ -161,6 +244,7 @@ def _build_slideshow(
     duration: float,
     post_id: int,
     transitions: list[str] | None = None,
+    codec: str = "libx264",
 ) -> Path:
     """이미지 다운로드 → 리사이즈 → Ken Burns zoompan + xfade 장면 전환 슬라이드쇼 생성."""
     img_dir = _TEMP_DIR / f"imgs_{post_id}"
@@ -187,7 +271,7 @@ def _build_slideshow(
 
     if not local_imgs:
         logger.warning("다운로드 성공 이미지 없음 → 배경영상 폴백")
-        return _build_background_loop(width, height, duration)
+        return _build_background_loop(width, height, duration, codec=codec)
 
     n = len(local_imgs)
     fps = 30
@@ -223,7 +307,7 @@ def _build_slideshow(
                 f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
                 f":d={d_frames}:s={width}x{height}:fps={fps}"
             )
-        filter_parts.append(f"[{i}:v]{zp},setpts=PTS-STARTPTS[v{i}]")
+        filter_parts.append(f"[{i}:v]{zp},setpts=PTS-STARTPTS,fps={fps}[v{i}]")
 
     # xfade 체이닝: offset = (i+1) * (seg_dur - trans_dur)
     if n > 1:
@@ -245,12 +329,14 @@ def _build_slideshow(
         "-filter_complex", ";".join(filter_parts),
         "-map", f"[{final_label}]",
         "-t", f"{duration:.3f}",
-        "-c:v", "libx264", "-preset", "fast",
-        "-pix_fmt", "yuv420p",
+        *_get_encoder_args(codec),
         str(output),
     ]
 
-    subprocess.run(cmd, capture_output=True, text=True, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.error("슬라이드쇼 렌더링 실패:\n%s", result.stderr[-2000:])
+        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
 
     # 임시 파일 정리
     for img in local_imgs:
@@ -314,7 +400,7 @@ def _resize_cover(img_path: Path, target_w: int, target_h: int) -> None:
 # ---------------------------------------------------------------------------
 # 배경영상 루프
 # ---------------------------------------------------------------------------
-def _build_background_loop(width: int, height: int, duration: float) -> Path:
+def _build_background_loop(width: int, height: int, duration: float, codec: str = "libx264") -> Path:
     """assets/backgrounds/에서 랜덤 영상을 골라 duration만큼 loop."""
     bg_dir = ASSETS_DIR / "backgrounds"
     candidates = list(bg_dir.glob("*.mp4")) + list(bg_dir.glob("*.webm"))
@@ -328,8 +414,7 @@ def _build_background_loop(width: int, height: int, duration: float) -> Path:
                 "ffmpeg", "-y",
                 "-f", "lavfi",
                 "-i", f"color=c=black:s={width}x{height}:r=30:d={duration:.3f}",
-                "-c:v", "libx264", "-preset", "fast",
-                "-pix_fmt", "yuv420p",
+                *_get_encoder_args(codec),
                 str(output),
             ],
             capture_output=True, text=True, check=True,
@@ -346,8 +431,7 @@ def _build_background_loop(width: int, height: int, duration: float) -> Path:
             "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,"
                    f"crop={width}:{height}",
             "-t", f"{duration:.3f}",
-            "-c:v", "libx264", "-preset", "fast",
-            "-pix_fmt", "yuv420p",
+            *_get_encoder_args(codec),
             str(output),
         ],
         capture_output=True, text=True, check=True,
@@ -377,6 +461,9 @@ def _compose_final(
 
     timings = comment_timings or []
     shake_vf = _build_shake_filter(timings)
+
+    sub_filter: str = ""
+    dt_filter: str = ""
 
     if ass_path and ass_path.exists():
         # ASS 동적 자막 필터
@@ -471,6 +558,29 @@ def _compose_final(
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
+        # geq 흔들림 필터가 포함된 경우 → 제거 후 재시도
+        if shake_vf:
+            logger.warning(
+                "geq 흔들림 필터 실패 (코드=%d) → 흔들림 없이 재시도", result.returncode
+            )
+            fc_orig = f"{video_filter};{audio_filter}"
+            # video_filter에서 shake 체인 제거: "[sub]{shake}[v]" → "[v]"
+            # shake가 없는 video_filter를 재구성
+            if ass_path and ass_path.exists():
+                vf_no_shake = f"{sub_filter}[v]"
+            else:
+                vf_no_shake = f"{dt_filter}[v]"
+            fc_no_shake = f"{vf_no_shake};{audio_filter}"
+            cmd_no_shake = [fc_no_shake if c == fc_orig else c for c in cmd]
+            result2 = subprocess.run(cmd_no_shake, capture_output=True, text=True)
+            if result2.returncode == 0:
+                logger.info("흔들림 없는 재시도 성공")
+                return
+            logger.error("흔들림 없는 재시도도 실패:\n%s", result2.stderr[-2000:])
+            raise subprocess.CalledProcessError(
+                result2.returncode, cmd_no_shake, result2.stdout, result2.stderr
+            )
+        logger.error("_compose_final 실패:\n%s", result.stderr[-2000:])
         raise subprocess.CalledProcessError(
             result.returncode, cmd, result.stdout, result.stderr
         )

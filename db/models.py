@@ -12,10 +12,11 @@ Base = declarative_base()
 
 class PostStatus(enum.Enum):
     COLLECTED = "COLLECTED"
-    EDITING = "EDITING"      # 수신함 승인 후 편집실 대기
-    APPROVED = "APPROVED"    # 편집실 확정 후 AI 워커 대기
+    EDITING = "EDITING"               # 수신함 승인 후 편집실 대기
+    APPROVED = "APPROVED"             # 편집실 확정 후 AI 워커 대기
     PROCESSING = "PROCESSING"
-    RENDERED = "RENDERED"
+    PREVIEW_RENDERED = "PREVIEW_RENDERED"  # 저화질 프리뷰 완료 (고화질 렌더링 대기)
+    RENDERED = "RENDERED"             # 고화질 렌더링 완료 (업로드 가능)
     UPLOADED = "UPLOADED"
     DECLINED = "DECLINED"
     FAILED = "FAILED"

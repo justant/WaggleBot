@@ -18,7 +18,7 @@ from ai_worker.gpu_manager import get_gpu_manager, ModelType
 from ai_worker.llm import ScriptData, generate_script, summarize
 from ai_worker.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts import get_tts_engine
-from ai_worker.video import render_video
+from ai_worker.video import render_preview
 from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
 from db.models import Content, Post, PostStatus
 
@@ -100,10 +100,10 @@ class RobustProcessor:
                     audio_path = await self._safe_generate_tts(script.to_plain_text(), post.id)
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
-                # ===== Step 3: 영상 렌더링 =====
-                logger.info("[Step 3/3] 영상 렌더링 중...")
+                # ===== Step 3: 프리뷰 렌더링 (480×854 CPU libx264) =====
+                logger.info("[Step 3/3] 프리뷰 렌더링 중 (480×854 CPU)...")
                 video_path = self._safe_render_video(post, audio_path, script.to_json())
-                logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
+                logger.info("[Step 3/3] ✓ 프리뷰 완료: %s", video_path)
 
                 # ===== Content 저장 =====
                 self._save_content(post, session, script, audio_path, video_path)
@@ -131,10 +131,10 @@ class RobustProcessor:
                     logger.warning("썸네일 생성 실패 (비치명적)", exc_info=True)
 
                 # ===== 성공 처리 =====
-                post.status = PostStatus.RENDERED
+                post.status = PostStatus.PREVIEW_RENDERED
                 session.commit()
                 logger.info(
-                    "✅ 처리 성공: post_id=%d → RENDERED (attempts=%d)",
+                    "✅ 처리 성공: post_id=%d → PREVIEW_RENDERED (attempts=%d)",
                     post.id, attempt + 1
                 )
                 return True
@@ -270,23 +270,25 @@ class RobustProcessor:
             logger.exception("TTS 생성 실패")
             raise
 
-    def _safe_render_video(self, post: Post, audio_path: Path, summary_text: str) -> Path:
+    def _safe_render_video(
+        self, post: Post, audio_path: Path, summary_text: str
+    ) -> Path:
         """
-        안전하게 영상 렌더링
+        안전하게 프리뷰 영상 렌더링 (480×854, libx264 CPU)
 
         Args:
             post: 게시글
             audio_path: 음성 파일 경로
-            summary_text: 요약 텍스트
+            summary_text: 요약 텍스트 JSON
 
         Returns:
-            영상 파일 경로
+            프리뷰 영상 파일 경로
 
         Raises:
             Exception: 렌더링 에러
         """
         try:
-            video_path = render_video(post, audio_path, summary_text, self.cfg)
+            video_path = render_preview(post, audio_path, summary_text, self.cfg)
 
             # 파일 존재 확인
             if not video_path.exists():
