@@ -19,6 +19,30 @@ logger = logging.getLogger(__name__)
 _VIDEO_DIR = MEDIA_DIR / "video"
 _TEMP_DIR = MEDIA_DIR / "tmp"
 
+# NVENC 가용 여부 캐시 (None = 미확인)
+_nvenc_available: bool | None = None
+
+
+def _check_nvenc() -> bool:
+    """h264_nvenc 인코더 실제 동작 여부를 한 번만 확인하고 캐시."""
+    global _nvenc_available
+    if _nvenc_available is not None:
+        return _nvenc_available
+    probe = subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
+            "-c:v", "h264_nvenc", "-f", "null", "-",
+        ],
+        capture_output=True,
+    )
+    _nvenc_available = probe.returncode == 0
+    if _nvenc_available:
+        logger.info("NVENC 사용 가능 — h264_nvenc 인코딩 활성화")
+    else:
+        logger.info("NVENC 사용 불가 — libx264 로 폴백 (이후 경고 없음)")
+    return _nvenc_available
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -36,6 +60,8 @@ def render_video(
     resolution = cfg.get("video_resolution", "1080x1920")
     width, height = (int(v) for v in resolution.split("x"))
     codec = cfg.get("video_codec", "h264_nvenc")
+    if codec == "h264_nvenc" and not _check_nvenc():
+        codec = "libx264"
     bgm_vol = float(cfg.get("bgm_volume", "0.15"))
     font_name = cfg.get("subtitle_font", "NanumGothic")
     font = _resolve_font_path(font_name)
@@ -100,6 +126,9 @@ def render_video(
         video_input.unlink(missing_ok=True)
     if ass_path:
         ass_path.unlink(missing_ok=True)
+    # drawtext 폴백용 텍스트 파일 정리
+    dt_text_file = _TEMP_DIR / f"drawtext_{output_path.stem}.txt"
+    dt_text_file.unlink(missing_ok=True)
 
     logger.info("영상 생성 완료: %s (%.1f초)", output_path.name, duration)
     return output_path
@@ -148,7 +177,12 @@ def _build_slideshow(
 
         img_path = img_dir / f"{idx:03d}.jpg"
         img_path.write_bytes(resp.content)
-        _resize_cover(img_path, width, height)
+        try:
+            _resize_cover(img_path, width, height)
+        except Exception:
+            logger.warning("이미지 처리 실패 (손상/비이미지 응답), 건너뜀: %s", url)
+            img_path.unlink(missing_ok=True)
+            continue
         local_imgs.append(img_path)
 
     if not local_imgs:
@@ -358,14 +392,15 @@ def _compose_final(
             video_filter = f"{sub_filter}[v]"
         logger.debug("ASS 자막 필터 사용: %s (shake=%s)", ass_path.name, bool(shake_vf))
     else:
-        # Legacy drawtext 폴백
+        # Legacy drawtext 폴백 — textfile= 옵션으로 이스케이프 문제 우회
         clean_text = _strip_markdown(summary_text)
         wrapped    = _wrap_korean(clean_text, width=18)
-        escaped    = _escape_drawtext(wrapped)
+        text_file  = _TEMP_DIR / f"drawtext_{output_path.stem}.txt"
+        text_file.write_text(wrapped, encoding="utf-8")
         fontsize   = int(width * 0.042)   # ~45px @1080w
         fontfile_opt = f":fontfile={font}" if font else ""
         dt_filter = (
-            f"[0:v]drawtext=text='{escaped}'"
+            f"[0:v]drawtext=textfile='{text_file}'"
             f"{fontfile_opt}"
             f":fontsize={fontsize}"
             f":fontcolor=white"
@@ -378,7 +413,7 @@ def _compose_final(
             video_filter = f"{dt_filter}[sub];[sub]{shake_vf}[v]"
         else:
             video_filter = f"{dt_filter}[v]"
-        logger.debug("drawtext 폴백 자막 사용")
+        logger.debug("drawtext 폴백 자막 사용 (textfile=%s)", text_file.name)
 
     # BGM 믹싱
     bgm_files = list((ASSETS_DIR / "bgm").glob("*.mp3")) + \
@@ -435,23 +470,7 @@ def _compose_final(
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
-    if result.returncode != 0 and codec == "h264_nvenc":
-        logger.warning("NVENC 실패 → libx264 폴백: %s", result.stderr[-200:])
-        enc_args = _get_encoder_args("libx264")
-        cmd = [
-            "ffmpeg", "-y",
-            *inputs,
-            "-filter_complex", f"{video_filter};{audio_filter}",
-            "-map", "[v]",
-            *audio_map,
-            *enc_args,
-            "-r", "30",
-            "-t", f"{duration:.3f}",
-            "-shortest",
-            str(output_path),
-        ]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    elif result.returncode != 0:
+    if result.returncode != 0:
         raise subprocess.CalledProcessError(
             result.returncode, cmd, result.stdout, result.stderr
         )
@@ -512,8 +531,7 @@ def _get_encoder_args(codec: str) -> list[str]:
     if codec == "h264_nvenc":
         return [
             "-c:v", "h264_nvenc",
-            "-preset", "p4",
-            "-rc", "vbr",
+            "-preset", "medium",
             "-cq", "23",
             "-pix_fmt", "yuv420p",
         ]

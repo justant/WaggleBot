@@ -8,7 +8,7 @@
 | GPU | 없음 (CPU 추론) |
 | Compose 파일 | `docker-compose.galaxybook.yml` |
 | Dockerfile | `Dockerfile` |
-| LLM 모델 | `qwen2.5:1.5b` (경량) |
+| LLM 모델 | `.env`의 `OLLAMA_MODEL` (기본값: `qwen2.5:1.5b`, 경량) |
 | 영상 인코딩 | `libx264` (자동 폴백) |
 
 ### 고사양 환경과의 차이
@@ -17,7 +17,7 @@
 |------|-----------|--------------|
 | Compose 파일 | `docker-compose.yml` | `docker-compose.galaxybook.yml` |
 | Dockerfile | `Dockerfile.gpu` | `Dockerfile` |
-| LLM 모델 | `qwen2.5:14b` | `qwen2.5:1.5b` |
+| LLM 모델 | `.env`: `OLLAMA_MODEL=qwen2.5:14b` | `.env`: `OLLAMA_MODEL=qwen2.5:1.5b` |
 | GPU 요건 | NVIDIA 필수 | 없음 (CPU 추론) |
 | 영상 인코딩 | `h264_nvenc` | `libx264` 자동 폴백 |
 | NVIDIA Container Toolkit | 필요 | 불필요 |
@@ -27,7 +27,7 @@
 ## 전제 조건
 
 - Docker 설치 (NVIDIA Container Toolkit **불필요**)
-- Ollama 설치 및 `qwen2.5:1.5b` 모델 다운로드
+- Ollama 설치 및 `.env`의 `OLLAMA_MODEL`에 지정한 모델 다운로드 (기본값: `qwen2.5:1.5b`)
 
 ---
 
@@ -83,10 +83,20 @@ Environment="OLLAMA_HOST=0.0.0.0"
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 ```
 
-### 3. 모델 다운로드
+### 3. `.env` 설정 및 모델 다운로드
+
+`.env`에서 사용할 모델을 지정합니다 (기본값: `qwen2.5:1.5b`):
+
+```bash
+# .env
+OLLAMA_MODEL=qwen2.5:1.5b
+```
+
+이후 해당 모델을 다운로드합니다:
 
 ```bash
 ollama pull qwen2.5:1.5b
+# 다른 모델을 .env에 지정한 경우 해당 모델명으로 변경
 
 # 정상 동작 확인
 curl http://localhost:11434/api/tags

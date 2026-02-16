@@ -27,6 +27,7 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
         logger.error("영상 파일 없음: %s (post_id=%d)", content.video_path, post.id)
         return False
 
+    upload_meta: dict = json.loads(content.upload_meta) if content.upload_meta else {}
     thumbnail_path = upload_meta.get("thumbnail_path", "")
 
     metadata = {
@@ -36,8 +37,6 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
         "privacy": privacy,
         "thumbnail_path": thumbnail_path,
     }
-
-    upload_meta: dict = json.loads(content.upload_meta) if content.upload_meta else {}
     all_ok = True
 
     for platform_name in platforms:

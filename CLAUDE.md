@@ -29,9 +29,9 @@
 ## 상태 전이
 
 ```
-COLLECTED → (대시보드 승인) → APPROVED → (AI워커) → PROCESSING → RENDERED → UPLOADED
-                                                                              ↕
-                                                                    DECLINED / FAILED
+COLLECTED → (수신함 승인) → EDITING → (편집실 저장&확정 or 건너뛰기) → APPROVED → (AI워커) → PROCESSING → RENDERED → UPLOADED
+                                                                                                                         ↕
+                                                                                                               DECLINED / FAILED
 ```
 
 ---
@@ -71,6 +71,13 @@ with gpu_manager.managed_inference(ModelType.LLM, "name"):
 
 ---
 
+## Docker Compose 동기화 규칙
+
+`docker-compose.yml`(GPU)을 수정할 때 **반드시** `docker-compose.galaxybook.yml`(No-GPU)도 동일하게 반영해야 한다.
+두 파일의 서비스 환경변수·설정은 항상 동기화 상태를 유지할 것.
+
+---
+
 ## 승인 없이 수정 금지
 
 | 대상 | 이유 |
@@ -83,42 +90,6 @@ with gpu_manager.managed_inference(ModelType.LLM, "name"):
 | `git push --force` to main | 이력 파괴 |
 | `DROP TABLE` | 데이터 손실 |
 | `/app/media/` 삭제 | 업로드 영상 손실 |
-
----
-
-## Docker 우선 명령어
-
-모든 서비스는 Docker 컨테이너에서 실행됨. 호스트에서 직접 실행 시 DB 연결 등 환경 차이 발생.
-
-```bash
-# 전체 서비스 시작/중지
-docker compose up -d
-docker compose down
-
-# 서비스별 로그
-docker compose logs -f ai_worker
-docker compose logs -f crawler
-
-# 크롤러 1회 실행 (테스트)
-docker exec wagglebot-crawler-1 python main.py --once
-
-# 테스트
-docker exec wagglebot-crawler-1 pytest
-docker exec wagglebot-crawler-1 pytest -k test_crawler
-
-# DB 초기화
-docker exec wagglebot-crawler-1 python -c "from db.session import init_db; init_db()"
-
-# 코드 수정 후 재시작 (재빌드 불필요 — 볼륨 마운트됨)
-docker restart wagglebot-ai_worker-1
-
-# requirements.txt 변경 시에만 재빌드 필요
-docker compose build ai_worker && docker compose up -d ai_worker
-
-# GPU/Ollama 확인
-nvidia-smi
-docker compose exec ai_worker curl http://host.docker.internal:11434/api/tags
-```
 
 ---
 

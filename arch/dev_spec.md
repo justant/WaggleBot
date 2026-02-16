@@ -8,7 +8,7 @@
 |------|------|
 | **언어** | Python 3.12 |
 | **DB** | MariaDB 11.x + SQLAlchemy ORM |
-| **LLM** | Ollama (qwen2.5:14b / 1.5b) |
+| **LLM** | Ollama (모델명: `.env`의 `OLLAMA_MODEL` — GPU: `qwen2.5:14b`, No-GPU: `qwen2.5:1.5b`) |
 | **TTS** | Edge-TTS / Kokoro-82M / GPT-SoVITS |
 | **영상** | FFmpeg (h264_nvenc) |
 | **인프라** | Docker Compose (GPU/No-GPU 분리) |

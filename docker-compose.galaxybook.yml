@@ -52,6 +52,10 @@ services:
       - /app/__pycache__
     environment:
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: streamlit run dashboard.py --server.port 8501 --server.headless true --server.address 0.0.0.0
 
   ai_worker:
@@ -65,9 +69,9 @@ services:
       - /app/venv
       - /app/__pycache__
     environment:
-      LLM_MODEL: "qwen2.5:1.5b"
-      DEFAULT_MODEL: "qwen2.5:1.5b"
-      OLLAMA_MODEL: "qwen2.5:1.5b"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+      LLM_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
+      DEFAULT_MODEL: "${OLLAMA_MODEL:-qwen2.5:1.5b}"
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
       OLLAMA_HOST: "http://host.docker.internal:11434"
       OLLAMA_BASE_URL: "http://host.docker.internal:11434"

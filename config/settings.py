@@ -47,6 +47,11 @@ AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
 MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
+
+
+def get_ollama_host() -> str:
+    """Ollama 호스트를 호출 시점의 환경변수에서 읽는다 (컨테이너 재시작 없이도 반영)."""
+    return os.getenv("OLLAMA_HOST", "http://localhost:11434")
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
 ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
@@ -83,7 +88,7 @@ _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "pipeline.json"
 _PIPELINE_DEFAULTS: dict[str, str] = {
     "tts_engine": "edge-tts",
     "tts_voice": "ko-KR-SunHiNeural",
-    "llm_model": "qwen2.5:14b",
+    "llm_model": OLLAMA_MODEL,
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
     "bgm_volume": "0.15",

@@ -102,7 +102,7 @@ class RobustProcessor:
 
                 # ===== Step 3: 영상 렌더링 =====
                 logger.info("[Step 3/3] 영상 렌더링 중...")
-                video_path = self._safe_render_video(post, audio_path, script.to_plain_text())
+                video_path = self._safe_render_video(post, audio_path, script.to_json())
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 =====

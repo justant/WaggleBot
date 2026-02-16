@@ -21,7 +21,7 @@ from sqlalchemy import func, or_
 from config.settings import (
     TTS_VOICES, MEDIA_DIR, ASSETS_DIR,
     PLATFORM_CREDENTIAL_FIELDS,
-    OLLAMA_HOST, OLLAMA_MODEL,
+    get_ollama_host, OLLAMA_MODEL,
     load_pipeline_config, save_pipeline_config,
     load_credentials_config, save_credentials_config,
 )
@@ -103,6 +103,52 @@ def delete_post(post_id: int):
             log.info(f"Post {post_id} deleted")
 
 
+def render_image_slider(images_raw: "str | list | None", key_prefix: str, width: int = 320) -> None:
+    """이미지 URL 목록을 슬라이드로 렌더링한다.
+
+    - 서버에서 이미지를 프록시로 가져와 핫링크 차단 우회
+    - 여러 장이면 ◀ / ▶ 버튼으로 슬라이드 이동
+    """
+    if not images_raw or images_raw == "[]":
+        return
+    try:
+        imgs: list[str] = (
+            json.loads(images_raw) if isinstance(images_raw, str) else list(images_raw)
+        )
+    except Exception:
+        return
+    if not imgs:
+        return
+
+    slide_key = f"slide_{key_prefix}"
+    if slide_key not in st.session_state:
+        st.session_state[slide_key] = 0
+    cur = max(0, min(st.session_state[slide_key], len(imgs) - 1))
+
+    if len(imgs) > 1:
+        nav_l, nav_mid, nav_r = st.columns([1, 6, 1])
+        with nav_l:
+            if st.button("◀", key=f"img_prev_{key_prefix}", disabled=(cur == 0)):
+                st.session_state[slide_key] = cur - 1
+                st.rerun()
+        with nav_mid:
+            st.caption(f"{cur + 1} / {len(imgs)}")
+        with nav_r:
+            if st.button("▶", key=f"img_next_{key_prefix}", disabled=(cur == len(imgs) - 1)):
+                st.session_state[slide_key] = cur + 1
+                st.rerun()
+
+    try:
+        resp = _http.get(
+            imgs[cur], timeout=8,
+            headers={"Referer": imgs[cur], "User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+        st.image(resp.content, width=width)
+    except Exception:
+        st.caption(f"이미지 로드 실패: {imgs[cur]}")
+
+
 def run_ai_fit_analysis(post: Post, model: str) -> dict:
     """Ollama LLM으로 쇼츠 적합도 분석 (1~10점) 요청.
 
@@ -126,7 +172,7 @@ def run_ai_fit_analysis(post: Post, model: str) -> dict:
     )
     try:
         resp = _http.post(
-            f"{OLLAMA_HOST}/api/generate",
+            f"{get_ollama_host()}/api/generate",
             json={"model": model, "prompt": prompt, "stream": False},
             timeout=40,
         )
@@ -176,7 +222,8 @@ def _write_youtube_token(token_json_str: str) -> bool:
 
 STATUS_COLORS = {
     PostStatus.COLLECTED: "gray",
-    PostStatus.APPROVED: "blue",
+    PostStatus.EDITING: "blue",
+    PostStatus.APPROVED: "violet",
     PostStatus.PROCESSING: "orange",
     PostStatus.RENDERED: "green",
     PostStatus.UPLOADED: "violet",
@@ -186,6 +233,7 @@ STATUS_COLORS = {
 
 STATUS_EMOJI = {
     PostStatus.COLLECTED: "📥",
+    PostStatus.EDITING: "✏️",
     PostStatus.APPROVED: "✅",
     PostStatus.PROCESSING: "⚙️",
     PostStatus.RENDERED: "🎬",
@@ -222,7 +270,7 @@ with tab_inbox:
     auto_threshold = int(inbox_cfg.get("auto_approve_threshold", "80"))
 
     # ---------------------------------------------------------------------------
-    # 자동 승인: COLLECTED + score >= threshold → APPROVED
+    # 자동 승인: COLLECTED + score >= threshold → EDITING (편집실 대기)
     # ---------------------------------------------------------------------------
     if auto_approve_enabled:
         with SessionLocal() as _asess:
@@ -240,7 +288,7 @@ with tab_inbox:
             ]
             if _new_auto:
                 for _p in _new_auto:
-                    _p.status = PostStatus.APPROVED
+                    _p.status = PostStatus.EDITING
                     st.session_state["auto_approved_ids"].add(_p.id)
                 _asess.commit()
                 st.toast(
@@ -318,7 +366,7 @@ with tab_inbox:
                 type="primary",
             ):
                 for pid in list(st.session_state["selected_posts"]):
-                    update_status(pid, PostStatus.APPROVED)
+                    update_status(pid, PostStatus.EDITING)
                 st.session_state["selected_posts"] = set()
                 st.rerun()
         with bc2:
@@ -398,16 +446,7 @@ with tab_inbox:
                         else:
                             st.caption("내용 없음")
                         if has_img:
-                            try:
-                                imgs = (
-                                    json.loads(post.images)
-                                    if isinstance(post.images, str)
-                                    else post.images
-                                )
-                                if imgs:
-                                    st.image(imgs[0], width=280, caption="대표 이미지")
-                            except Exception:
-                                pass
+                            render_image_slider(post.images, key_prefix=f"inbox_{post.id}", width=320)
 
                     if best_coms:
                         st.markdown("**💬 베스트 댓글**")
@@ -446,7 +485,7 @@ with tab_inbox:
                         use_container_width=True,
                         help="승인",
                     ):
-                        update_status(post.id, PostStatus.APPROVED)
+                        update_status(post.id, PostStatus.EDITING)
                         st.session_state["selected_posts"].discard(post.id)
                         st.rerun()
                     if st.button(
@@ -476,7 +515,7 @@ with tab_inbox:
                     type="primary",
                 ):
                     for p in high_posts:
-                        update_status(p.id, PostStatus.APPROVED)
+                        update_status(p.id, PostStatus.EDITING)
                     st.session_state["selected_posts"] -= {p.id for p in high_posts}
                     st.rerun()
             for post in high_posts:
@@ -547,13 +586,13 @@ with tab_editor:
     with SessionLocal() as session:
         approved_posts = (
             session.query(Post)
-            .filter(Post.status == PostStatus.APPROVED)
+            .filter(Post.status == PostStatus.EDITING)
             .order_by(Post.created_at.desc())
             .all()
         )
 
         if not approved_posts:
-            st.info("✅ 승인된 게시글이 없습니다. 수신함에서 먼저 승인하세요.")
+            st.info("✏️ 편집 대기 게시글이 없습니다. 수신함에서 먼저 승인하세요.")
         else:
             # ---------------------------------------------------------------------------
             # 네비게이션 바
@@ -581,8 +620,9 @@ with tab_editor:
                     st.rerun()
             with skip_col:
                 if st.button("⏭ 건너뛰기", use_container_width=True,
-                             help="다음 게시글로 이동"):
-                    st.session_state["editor_idx"] = min(n_posts - 1, idx + 1)
+                             help="편집 없이 AI 처리 대기열로 이동"):
+                    update_status(approved_posts[idx].id, PostStatus.APPROVED)
+                    st.session_state["editor_idx"] = max(0, idx - 1)
                     st.rerun()
 
             selected_post = approved_posts[idx]
@@ -623,17 +663,7 @@ with tab_editor:
                     f" | 🌐 {selected_post.site_code}"
                 )
 
-                if selected_post.images and selected_post.images != "[]":
-                    try:
-                        imgs = (
-                            json.loads(selected_post.images)
-                            if isinstance(selected_post.images, str)
-                            else selected_post.images
-                        )
-                        if imgs:
-                            st.image(imgs[0], use_container_width=True)
-                    except Exception:
-                        pass
+                render_image_slider(selected_post.images, key_prefix=f"editor_{selected_post_id}", width=360)
 
                 if selected_post.content:
                     st.markdown(selected_post.content[:600] + (
@@ -708,9 +738,10 @@ with tab_editor:
                                     (f"closer_{selected_post_id}", script_data.closer),
                                     (f"title_{selected_post_id}", script_data.title_suggestion),
                                     (f"tags_{selected_post_id}", ", ".join(script_data.tags)),
+                                    (f"body_{selected_post_id}", script_data.body),
                                 ]:
                                     st.session_state[_k] = _v
-                                # data_editor 초기화
+                                # data_editor 강제 재초기화
                                 _de_key = f"body_editor_{selected_post_id}"
                                 if _de_key in st.session_state:
                                     del st.session_state[_de_key]
@@ -733,9 +764,12 @@ with tab_editor:
                 )
 
                 st.markdown("**📝 본문 항목** (행 추가/삭제 가능)")
-                _body_init = script_data.body if script_data else []
+                _body_init = st.session_state.get(
+                    f"body_{selected_post_id}",
+                    script_data.body if script_data else [],
+                )
                 body_df_edited = st.data_editor(
-                    pd.DataFrame({"내용": _body_init}),
+                    pd.DataFrame({"내용": pd.Series(_body_init, dtype="object")}),
                     num_rows="dynamic",
                     use_container_width=True,
                     column_config={
@@ -805,34 +839,33 @@ with tab_editor:
                         st.caption("⚠️ 너무 깁니다 (권장 40~55초)")
 
                 with info_c2:
+                    _has_content = bool(plain_preview.strip())
                     if st.button("▶ TTS 미리듣기", use_container_width=True,
-                                 key=f"tts_preview_{selected_post_id}"):
-                        if plain_preview.strip():
-                            with st.spinner("TTS 생성 중..."):
-                                try:
-                                    import asyncio
-                                    from ai_worker.tts import get_tts_engine
-                                    tts_engine = get_tts_engine(cfg_editor["tts_engine"])
-                                    preview_dir = MEDIA_DIR / "tmp"
-                                    preview_dir.mkdir(parents=True, exist_ok=True)
-                                    preview_path = (
-                                        preview_dir / f"preview_{selected_post_id}.mp3"
+                                 key=f"tts_preview_{selected_post_id}",
+                                 disabled=not _has_content):
+                        with st.spinner("TTS 생성 중..."):
+                            try:
+                                import asyncio
+                                from ai_worker.tts import get_tts_engine
+                                tts_engine = get_tts_engine(cfg_editor["tts_engine"])
+                                preview_dir = MEDIA_DIR / "tmp"
+                                preview_dir.mkdir(parents=True, exist_ok=True)
+                                preview_path = (
+                                    preview_dir / f"preview_{selected_post_id}.mp3"
+                                )
+                                asyncio.run(
+                                    tts_engine.synthesize(
+                                        plain_preview,
+                                        cfg_editor["tts_voice"],
+                                        preview_path,
                                     )
-                                    asyncio.run(
-                                        tts_engine.synthesize(
-                                            plain_preview,
-                                            cfg_editor["tts_voice"],
-                                            preview_path,
-                                        )
-                                    )
-                                    st.session_state[f"tts_audio_{selected_post_id}"] = str(
-                                        preview_path
-                                    )
-                                    st.rerun()
-                                except Exception as exc:
-                                    st.error(f"TTS 미리듣기 실패: {exc}")
-                        else:
-                            st.warning("대본 내용이 없습니다.")
+                                )
+                                st.session_state[f"tts_audio_{selected_post_id}"] = str(
+                                    preview_path
+                                )
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"TTS 미리듣기 실패: {exc}")
 
                 # TTS 오디오 재생 (캐시)
                 audio_cache_key = f"tts_audio_{selected_post_id}"
@@ -870,8 +903,14 @@ with tab_editor:
                                 content_rec = Content(post_id=selected_post_id)
                                 session.add(content_rec)
                             content_rec.summary_text = confirmed.to_json()
+                            # 편집 완료 → AI 워커 대기 상태로 전환
+                            _edit_post = session.get(Post, selected_post_id)
+                            if _edit_post and _edit_post.status == PostStatus.EDITING:
+                                _edit_post.status = PostStatus.APPROVED
                             session.commit()
-                            st.success("✅ 저장되었습니다. AI Worker가 이 대본을 재사용합니다.")
+                            st.success("✅ 저장 완료! AI Worker 처리 대기열에 추가됩니다.")
+                            st.session_state["editor_idx"] = max(0, idx - 1)
+                            st.rerun()
                         except Exception as exc:
                             st.error(f"저장 실패: {exc}")
                 with skip_c:
@@ -879,8 +918,10 @@ with tab_editor:
                         "⏭ 건너뛰기",
                         use_container_width=True,
                         key=f"skip_bottom_{selected_post_id}",
+                        help="편집 없이 AI 처리 대기열로 이동",
                     ):
-                        st.session_state["editor_idx"] = min(n_posts - 1, idx + 1)
+                        update_status(selected_post_id, PostStatus.APPROVED)
+                        st.session_state["editor_idx"] = max(0, idx - 1)
                         st.rerun()
 
 # ===========================================================================
@@ -892,6 +933,7 @@ with tab_progress:
     st.caption("AI 워커 처리 상태 및 실시간 모니터링")
 
     progress_statuses = [
+        PostStatus.EDITING,
         PostStatus.APPROVED,
         PostStatus.PROCESSING,
         PostStatus.RENDERED,
@@ -1049,8 +1091,21 @@ with tab_gallery:
                                     key=f"upload_{content.id}",
                                     use_container_width=True
                                 ):
-                                    # TODO: 업로드 트리거
-                                    st.info("업로드 기능은 Phase 3에서 구현됩니다.")
+                                    try:
+                                        from uploaders.uploader import upload_post
+                                        with SessionLocal() as upload_session:
+                                            _post = upload_session.get(Post, post.id)
+                                            _content = upload_session.query(Content).filter_by(post_id=post.id).first()
+                                            ok = upload_post(_post, _content, upload_session)
+                                            if ok:
+                                                _post.status = PostStatus.UPLOADED
+                                                upload_session.commit()
+                                                st.success("업로드 완료!")
+                                                st.rerun()
+                                            else:
+                                                st.error("일부 플랫폼 업로드 실패. 로그를 확인하세요.")
+                                    except Exception as _e:
+                                        st.error(f"업로드 오류: {_e}")
 
                         with btn_col2:
                             if st.button(

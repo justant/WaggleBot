@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import requests
 
-from config.settings import OLLAMA_HOST, OLLAMA_MODEL
+from config.settings import get_ollama_host, OLLAMA_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ _SCRIPT_PROMPT_V2 = """\
 # ---------------------------------------------------------------------------
 
 def _call_ollama(prompt: str, model: str, num_predict: int = 400) -> str:
-    url = f"{OLLAMA_HOST}/api/generate"
+    url = f"{get_ollama_host()}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
@@ -93,6 +93,37 @@ def _call_ollama(prompt: str, model: str, num_predict: int = 400) -> str:
     resp = requests.post(url, json=payload, timeout=180)
     resp.raise_for_status()
     return resp.json().get("response", "").strip()
+
+
+def _fix_control_chars(s: str) -> str:
+    """JSON 문자열 리터럴 내부의 제어 문자를 이스케이프 시퀀스로 변환."""
+    result: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and in_string:
+            result.append(c)
+            i += 1
+            if i < len(s):
+                result.append(s[i])
+            i += 1
+            continue
+        if c == '"':
+            in_string = not in_string
+            result.append(c)
+        elif in_string and c == "\n":
+            result.append("\\n")
+        elif in_string and c == "\r":
+            result.append("\\r")
+        elif in_string and c == "\t":
+            result.append("\\t")
+        elif in_string and ord(c) < 0x20:
+            result.append(f"\\u{ord(c):04x}")
+        else:
+            result.append(c)
+        i += 1
+    return "".join(result)
 
 
 def _parse_script_json(raw: str, fallback_text: str) -> ScriptData:
@@ -106,6 +137,9 @@ def _parse_script_json(raw: str, fallback_text: str) -> ScriptData:
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if match:
         cleaned = match.group(0)
+
+    # JSON 문자열 내 제어 문자 정규화
+    cleaned = _fix_control_chars(cleaned)
 
     try:
         d = json.loads(cleaned)
