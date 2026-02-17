@@ -2,8 +2,10 @@
 
 TTS 오디오 + 이미지(또는 배경영상) + 자막 + BGM → 9:16 쇼츠 영상 렌더링.
 """
+import hashlib
 import logging
 import random
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _VIDEO_DIR = MEDIA_DIR / "video"
 _TEMP_DIR = MEDIA_DIR / "tmp"
+_IMG_CACHE_DIR = MEDIA_DIR / "tmp" / "img_cache"  # 이미지 리사이즈 캐시
 
 # NVENC 가용 여부 캐시 (None = 미확인)
 _nvenc_available: bool | None = None
@@ -119,6 +122,7 @@ def render_video(
         font=font,
         bgm_vol=bgm_vol,
         comment_timings=comment_timings,
+        post_id=post.id,
     )
 
     # 임시 파일 정리
@@ -204,6 +208,7 @@ def render_preview(
         font=font,
         bgm_vol=bgm_vol,
         comment_timings=comment_timings,
+        post_id=post.id,
     )
 
     if video_input.parent == _TEMP_DIR:
@@ -250,8 +255,20 @@ def _build_slideshow(
     img_dir = _TEMP_DIR / f"imgs_{post_id}"
     img_dir.mkdir(parents=True, exist_ok=True)
 
+    _IMG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     local_imgs: list[Path] = []
     for idx, url in enumerate(image_urls[:10]):  # 최대 10장
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        cache_key = f"{url_hash}_{width}x{height}.jpg"
+        cached_path = _IMG_CACHE_DIR / cache_key
+        img_path = img_dir / f"{idx:03d}.jpg"
+
+        if cached_path.exists():
+            shutil.copy2(cached_path, img_path)
+            local_imgs.append(img_path)
+            logger.debug("이미지 캐시 히트: %s…", url[:60])
+            continue
+
         try:
             resp = requests.get(url, timeout=15)
             resp.raise_for_status()
@@ -259,10 +276,10 @@ def _build_slideshow(
             logger.warning("이미지 다운로드 실패: %s", url)
             continue
 
-        img_path = img_dir / f"{idx:03d}.jpg"
         img_path.write_bytes(resp.content)
         try:
             _resize_cover(img_path, width, height)
+            shutil.copy2(img_path, cached_path)  # 캐시 저장
         except Exception:
             logger.warning("이미지 처리 실패 (손상/비이미지 응답), 건너뜀: %s", url)
             img_path.unlink(missing_ok=True)
@@ -456,6 +473,7 @@ def _compose_final(
     font: str,
     bgm_vol: float,
     comment_timings: "list[tuple[float, float]] | None" = None,
+    post_id: int | None = None,
 ) -> None:
     """영상 + TTS 오디오 + 자막(ASS 우선 / drawtext 폴백) + BGM + 댓글 효과를 합성한다."""
 
@@ -508,7 +526,7 @@ def _compose_final(
 
     inputs = ["-i", str(video_input), "-i", str(audio_path)]
     if bgm_files:
-        bgm = random.choice(bgm_files)
+        bgm = random.Random(post_id or 0).choice(bgm_files)  # post마다 동일 BGM 재사용
         inputs += ["-stream_loop", "-1", "-i", str(bgm)]
         # sidechaincompress: TTS가 나올 때 BGM 볼륨 자동 감소 (auto-ducking)
         audio_filter = (

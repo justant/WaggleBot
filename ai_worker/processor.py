@@ -4,7 +4,9 @@ AI Worker Processor with Robust Error Handling
 견고한 에러 핸들링 및 재시도 메커니즘
 """
 
+import hashlib
 import logging
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +23,7 @@ from ai_worker.tts import get_tts_engine
 from ai_worker.video import render_preview
 from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
 from db.models import Content, Post, PostStatus
+from db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -253,8 +256,18 @@ class RobustProcessor:
             audio_dir.mkdir(parents=True, exist_ok=True)
             audio_path = audio_dir / f"post_{post_id}.mp3"
 
-            # TTS 생성
-            await tts_engine.synthesize(text, voice_id, audio_path)
+            # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
+            tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
+            tts_cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_hash = hashlib.md5(f"{voice_id}:{text}".encode()).hexdigest()
+            cached_audio = tts_cache_dir / f"{cache_hash}.mp3"
+            if cached_audio.exists():
+                shutil.copy2(cached_audio, audio_path)
+                logger.info("[TTS 캐시 히트] post_id=%d", post_id)
+            else:
+                # TTS 생성
+                await tts_engine.synthesize(text, voice_id, audio_path)
+                shutil.copy2(audio_path, cached_audio)  # 캐시 저장
 
             # 파일 존재 확인
             if not audio_path.exists():
@@ -433,6 +446,89 @@ class RobustProcessor:
             attempts,
             str(last_error)[:100] if last_error else "N/A"
         )
+
+    # ===========================================================================
+    # 파이프라인 분리 스테이지 (병렬 처리용)
+    # ===========================================================================
+
+    async def llm_tts_stage(self, post_id: int) -> tuple[ScriptData, Path]:
+        """LLM 대본 생성 + TTS 합성 (CUDA/GPU 단계).
+
+        파이프라인 병렬화에서 독립적으로 호출되는 1단계.
+        완료 시 Content에 script/audio 중간 저장 후 (ScriptData, audio_path) 반환.
+        """
+        with SessionLocal() as session:
+            post = session.query(Post).filter_by(id=post_id).first()
+            if post is None:
+                raise ValueError(f"Post {post_id} 없음")
+
+            post.status = PostStatus.PROCESSING
+            post.retry_count = (post.retry_count or 0) + 1
+            session.commit()
+            logger.info("[Pipeline LLM+TTS] 시작: post_id=%d", post_id)
+
+            with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
+                script = self._safe_generate_summary(post, session)
+            logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
+
+            with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                audio_path = await self._safe_generate_tts(script.to_plain_text(), post_id)
+            logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
+
+            # 중간 결과 저장 (렌더 단계에서 재사용)
+            content = session.query(Content).filter_by(post_id=post_id).first()
+            if content is None:
+                content = Content(post_id=post_id)
+                session.add(content)
+            content.summary_text = script.to_json()
+            content.audio_path = str(audio_path)
+            session.commit()
+
+        return script, audio_path
+
+    def render_stage(self, post_id: int, script: ScriptData, audio_path: Path) -> Path:
+        """프리뷰 영상 렌더링 + 썸네일 생성 (CPU 단계).
+
+        파이프라인 병렬화에서 독립적으로 호출되는 2단계.
+        완료 시 post.status → PREVIEW_RENDERED.
+        """
+        _MOOD_TO_STYLE = {
+            "funny": "funny",
+            "shocking": "dramatic",
+            "serious": "news",
+            "heartwarming": "question",
+        }
+
+        with SessionLocal() as session:
+            post = session.query(Post).filter_by(id=post_id).first()
+            if post is None:
+                raise ValueError(f"Post {post_id} 없음")
+
+            logger.info("[Pipeline Render] 시작: post_id=%d", post_id)
+            video_path = self._safe_render_video(post, audio_path, script.to_json())
+            self._save_content(post, session, script, audio_path, video_path)
+            logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)
+
+            # 썸네일 생성
+            try:
+                images = post.images if isinstance(post.images, list) else []
+                thumb_path = get_thumbnail_path(post_id)
+                thumb_style = _MOOD_TO_STYLE.get(script.mood, "dramatic")
+                generate_thumbnail(script.hook, images, thumb_path, style=thumb_style)
+                content = session.query(Content).filter_by(post_id=post_id).first()
+                if content is not None:
+                    upload_meta = dict(content.upload_meta or {})
+                    upload_meta["thumbnail_path"] = str(thumb_path)
+                    content.upload_meta = upload_meta
+                    session.flush()
+            except Exception:
+                logger.warning("썸네일 생성 실패 (비치명적)", exc_info=True)
+
+            post.status = PostStatus.PREVIEW_RENDERED
+            session.commit()
+            logger.info("[Pipeline Render] ✓ 완료: post_id=%d → PREVIEW_RENDERED", post_id)
+
+        return video_path
 
 
 # ===========================================================================

@@ -132,6 +132,35 @@ class YouTubeUploader(BaseUploader):
         svc.thumbnails().set(videoId=video_id, media_body=media).execute()
         logger.info("썸네일 업로드 완료: video_id=%s", video_id)
 
+    def fetch_analytics(self, video_id: str) -> dict | None:
+        """YouTube Data API v3로 영상 통계(조회수·좋아요·댓글)를 가져온다.
+
+        YouTube Analytics API 대신 videos.list statistics 파트를 사용하므로
+        별도 Analytics API 스코프 없이 동작한다.
+
+        Returns:
+            {"views": int, "likes": int, "comments": int} 또는 None
+        """
+        try:
+            svc = self._get_service()
+            resp = svc.videos().list(
+                part="statistics",
+                id=video_id,
+            ).execute()
+            items = resp.get("items", [])
+            if not items:
+                logger.warning("video_id=%s 통계 없음", video_id)
+                return None
+            stats = items[0].get("statistics", {})
+            return {
+                "views": int(stats.get("viewCount", 0)),
+                "likes": int(stats.get("likeCount", 0)),
+                "comments": int(stats.get("commentCount", 0)),
+            }
+        except Exception as exc:
+            logger.warning("Analytics 수집 실패 video_id=%s: %s", video_id, exc)
+            return None
+
     @staticmethod
     def _resumable_upload(request) -> dict:
         """resumable upload 실행 (재시도 포함)."""
