@@ -1463,6 +1463,181 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
         else:
             st.caption("'인사이트 생성' 버튼을 눌러 LLM 분석을 시작하세요.")
 
+    # ---------------------------------------------------------------------------
+    # 🎯 피드백 파이프라인 반영
+    # ---------------------------------------------------------------------------
+    st.subheader("🎯 피드백 파이프라인 반영")
+
+    with st.container(border=True):
+        from analytics.feedback import (
+            load_feedback_config, generate_structured_insights,
+            apply_feedback, build_performance_summary,
+        )
+
+        _fb_cfg = load_feedback_config()
+        _fb_updated = _fb_cfg.get("updated_at")
+        if _fb_updated:
+            st.caption(f"마지막 반영: {_fb_updated[:19].replace('T', ' ')} UTC")
+
+        _col_fb1, _col_fb2 = st.columns([1, 1])
+        with _col_fb1:
+            if st.button(
+                "🔄 구조화 인사이트 생성 후 반영",
+                key="apply_feedback_btn",
+                width="stretch",
+                type="primary",
+                help="LLM이 성과 데이터를 분석해 대본 프롬프트·mood 가중치를 자동 업데이트합니다.",
+            ):
+                with st.spinner("성과 분석 + LLM 인사이트 생성 중..."):
+                    try:
+                        with SessionLocal() as _fb_s:
+                            _perf = build_performance_summary(_fb_s, days_back=period_days)
+                        if not _perf:
+                            st.warning("분석할 업로드 데이터가 없습니다.")
+                        else:
+                            _insights = generate_structured_insights(
+                                _perf,
+                                llm_model=load_pipeline_config().get("llm_model"),
+                            )
+                            apply_feedback(_insights)
+                            st.success("✅ 피드백이 파이프라인에 반영되었습니다.")
+                            st.rerun()
+                    except Exception as _ex:
+                        st.error(f"피드백 반영 실패: {_ex}")
+
+        with _col_fb2:
+            if st.button(
+                "🗑️ 피드백 초기화",
+                key="reset_feedback_btn",
+                width="stretch",
+                help="feedback_config.json을 기본값으로 초기화합니다.",
+            ):
+                from config.settings import FEEDBACK_CONFIG_PATH
+                FEEDBACK_CONFIG_PATH.unlink(missing_ok=True)
+                st.success("✅ 피드백 설정이 초기화되었습니다.")
+                st.rerun()
+
+        # 현재 피드백 설정 표시
+        _extra = _fb_cfg.get("extra_instructions", "")
+        _weights = _fb_cfg.get("mood_weights", {})
+        if _extra:
+            st.info(f"**현재 대본 지시사항:** {_extra[:200]}")
+        if any(v != 1.0 for v in _weights.values()):
+            _w_lines = " | ".join(f"{k}: ×{v:.1f}" for k, v in _weights.items() if v != 1.0)
+            st.caption(f"Mood 가중치 조정: {_w_lines}")
+
+    # ---------------------------------------------------------------------------
+    # 🧪 A/B 테스트
+    # ---------------------------------------------------------------------------
+    st.subheader("🧪 A/B 테스트")
+
+    from analytics.ab_test import (
+        list_tests, create_test, cancel_test,
+        evaluate_group, apply_winner, VARIANT_PRESETS,
+    )
+
+    _ab_tests = list_tests()
+    _active_tests  = [t for t in _ab_tests if t.status == "active"]
+    _done_tests    = [t for t in _ab_tests if t.status == "completed"]
+    _all_tests     = _ab_tests  # cancelled 포함 전체
+
+    # ── 진행 중인 테스트 ──────────────────────────────────────────────────────
+    with st.container(border=True):
+        st.markdown("**진행 중인 테스트**")
+        if not _active_tests:
+            st.caption("활성 A/B 테스트 없음")
+        else:
+            for _t in _active_tests:
+                _tc1, _tc2, _tc3 = st.columns([4, 2, 2])
+                with _tc1:
+                    st.markdown(
+                        f"🟢 **{_t.name}**  \n"
+                        f"`{_t.group_id}` · "
+                        f"A: {_t.config_a.get('label', _t.config_a.get('preset_key','?'))} / "
+                        f"B: {_t.config_b.get('label', _t.config_b.get('preset_key','?'))}"
+                    )
+                with _tc2:
+                    if st.button("📊 결과 평가", key=f"eval_{_t.group_id}", width="stretch"):
+                        with SessionLocal() as _es:
+                            _w = evaluate_group(_t.group_id, _es)
+                        if _w:
+                            st.success(f"승자: Variant {_w}")
+                        else:
+                            st.warning("데이터 부족 (최소 3건/변형 필요)")
+                        st.rerun()
+                with _tc3:
+                    if st.button("❌ 취소", key=f"cancel_{_t.group_id}", width="stretch"):
+                        cancel_test(_t.group_id)
+                        st.rerun()
+
+    # ── 완료된 테스트 ──────────────────────────────────────────────────────────
+    if _done_tests:
+        with st.container(border=True):
+            st.markdown("**완료된 테스트**")
+            for _t in _done_tests:
+                _dc1, _dc2 = st.columns([5, 2])
+                with _dc1:
+                    _a_avg = _t.stats.get("A", {}).get("avg_views", 0)
+                    _b_avg = _t.stats.get("B", {}).get("avg_views", 0)
+                    _a_n   = _t.stats.get("A", {}).get("posts", 0)
+                    _b_n   = _t.stats.get("B", {}).get("posts", 0)
+                    _winner_badge = f"🏆 승자: {_t.winner}" if _t.winner else "판정 없음"
+                    st.markdown(
+                        f"✅ **{_t.name}**  \n"
+                        f"A: {_a_avg:,.0f}회/{_a_n}건 | B: {_b_avg:,.0f}회/{_b_n}건  \n"
+                        f"{_winner_badge}"
+                        + (" ✔ 적용됨" if _t.winner_applied else "")
+                    )
+                with _dc2:
+                    if _t.winner and not _t.winner_applied:
+                        if st.button(
+                            f"✨ 승자({_t.winner}) 반영",
+                            key=f"apply_winner_{_t.group_id}",
+                            width="stretch",
+                            type="primary",
+                        ):
+                            if apply_winner(_t.group_id):
+                                st.success(f"Variant {_t.winner} 설정이 파이프라인에 반영되었습니다.")
+                            else:
+                                st.error("반영 실패")
+                            st.rerun()
+
+    # ── 새 테스트 생성 ──────────────────────────────────────────────────────────
+    with st.expander("➕ 새 A/B 테스트 생성", expanded=False):
+        _preset_options = list(VARIANT_PRESETS.keys())
+        _preset_labels  = {k: v["label"] for k, v in VARIANT_PRESETS.items()}
+
+        _new_name = st.text_input("테스트 이름", placeholder="예: hook 스타일 테스트 2026-02")
+        _col_a, _col_b = st.columns(2)
+        with _col_a:
+            _preset_a = st.selectbox(
+                "Variant A",
+                _preset_options,
+                format_func=lambda k: f"{k} — {_preset_labels[k]}",
+                key="ab_preset_a",
+            )
+        with _col_b:
+            _preset_b = st.selectbox(
+                "Variant B",
+                _preset_options,
+                index=1,
+                format_func=lambda k: f"{k} — {_preset_labels[k]}",
+                key="ab_preset_b",
+            )
+
+        if _preset_a == _preset_b:
+            st.warning("Variant A와 B가 동일합니다. 다른 프리셋을 선택하세요.")
+        elif st.button("테스트 시작", key="create_ab_test", type="primary", width="content"):
+            if not _new_name.strip():
+                st.error("테스트 이름을 입력하세요.")
+            else:
+                _new_test = create_test(_new_name.strip(), _preset_a, _preset_b)
+                st.success(
+                    f"✅ A/B 테스트 생성 완료! (group_id: `{_new_test.group_id}`)  \n"
+                    f"이후 APPROVED 포스트는 자동으로 A/B 변형이 배정됩니다."
+                )
+                st.rerun()
+
 
 # ===========================================================================
 # Tab 6: 설정 (Settings)

@@ -215,12 +215,38 @@ class RobustProcessor:
             best_comments = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
             comment_texts = [f"{c.author}: {c.content[:100]}" for c in best_comments]
 
+            # 피드백 설정 로드 (feedback_config.json)
+            extra_instructions: str | None = None
+            try:
+                from analytics.feedback import load_feedback_config
+                fb = load_feedback_config()
+                extra_instructions = fb.get("extra_instructions") or None
+            except Exception:
+                logger.debug("feedback_config 로드 실패 — 무시", exc_info=True)
+
+            # A/B 변형 설정 우선 적용 (variant_config > feedback)
+            try:
+                existing_content = session.query(Content).filter(
+                    Content.post_id == post.id
+                ).first()
+                if existing_content and existing_content.variant_config:
+                    variant_extra = existing_content.variant_config.get("extra_instructions")
+                    if variant_extra:
+                        extra_instructions = variant_extra
+                        logger.info(
+                            "[A/B] 변형 설정 적용: post_id=%d label=%s",
+                            post.id, existing_content.variant_label,
+                        )
+            except Exception:
+                logger.debug("variant_config 로드 실패 — 무시", exc_info=True)
+
             # LLM 대본 생성
             script = generate_script(
                 title=post.title,
                 body=post.content or "",
                 comments=comment_texts,
                 model=self.cfg.get("llm_model"),
+                extra_instructions=extra_instructions,
             )
 
             # 유효성 검사
@@ -466,6 +492,14 @@ class RobustProcessor:
             post.retry_count = (post.retry_count or 0) + 1
             session.commit()
             logger.info("[Pipeline LLM+TTS] 시작: post_id=%d", post_id)
+
+            # A/B 테스트 변형 배정 (활성 테스트 있을 경우)
+            try:
+                from analytics.ab_test import assign_variant
+                assign_variant(post_id, session)
+                session.commit()
+            except Exception:
+                logger.debug("A/B 변형 배정 실패 — 무시", exc_info=True)
 
             with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
                 script = self._safe_generate_summary(post, session)

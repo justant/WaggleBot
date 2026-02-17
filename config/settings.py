@@ -84,6 +84,8 @@ TTS_VOICES: dict[str, list[dict[str, str]]] = {
 # Pipeline config (JSON 파일)
 # ---------------------------------------------------------------------------
 _PIPELINE_CONFIG_PATH = _PROJECT_ROOT / "config" / "pipeline.json"
+FEEDBACK_CONFIG_PATH = _PROJECT_ROOT / "config" / "feedback_config.json"
+AB_TEST_CONFIG_PATH  = _PROJECT_ROOT / "config" / "ab_tests.json"
 
 _PIPELINE_DEFAULTS: dict[str, str] = {
     "tts_engine": "edge-tts",
