@@ -249,8 +249,8 @@ STATUS_EMOJI = {
 # 탭 구성
 # ---------------------------------------------------------------------------
 
-tab_inbox, tab_editor, tab_progress, tab_gallery, tab_settings = st.tabs(
-    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "⚙️ 설정"]
+tab_inbox, tab_editor, tab_progress, tab_gallery, tab_analytics, tab_settings = st.tabs(
+    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "📊 분석", "⚙️ 설정"]
 )
 
 # ===========================================================================
@@ -1186,7 +1186,286 @@ font-size:0.875rem;text-align:center;}}</style>
                                     st.warning("한 번 더 클릭하면 삭제됩니다.")
 
 # ===========================================================================
-# Tab 4: 설정 (Settings)
+# Tab 5: 분석 (Analytics)
+# ===========================================================================
+
+with tab_analytics:
+    from datetime import datetime, timedelta
+
+    st.header("📊 분석")
+
+    # ---------------------------------------------------------------------------
+    # 기간 선택
+    # ---------------------------------------------------------------------------
+    hdr_c1, hdr_c2 = st.columns([4, 1])
+    with hdr_c1:
+        period_days = st.selectbox(
+            "분석 기간",
+            [7, 14, 30],
+            format_func=lambda d: f"최근 {d}일",
+            label_visibility="collapsed",
+        )
+    with hdr_c2:
+        if st.button("🔄 새로고침", key="analytics_refresh", width="stretch"):
+            st.rerun()
+
+    since_dt = datetime.now(timezone.utc) - timedelta(days=period_days)
+
+    # ---------------------------------------------------------------------------
+    # DB 집계
+    # ---------------------------------------------------------------------------
+    with SessionLocal() as _db:
+        _total_collected = (
+            _db.query(func.count(Post.id))
+            .filter(Post.created_at >= since_dt)
+            .scalar() or 0
+        )
+        _total_approved = (
+            _db.query(func.count(Post.id))
+            .filter(
+                Post.created_at >= since_dt,
+                Post.status.in_([
+                    PostStatus.APPROVED, PostStatus.PROCESSING,
+                    PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED,
+                    PostStatus.UPLOADED,
+                ]),
+            )
+            .scalar() or 0
+        )
+        _total_rendered = (
+            _db.query(func.count(Post.id))
+            .filter(
+                Post.created_at >= since_dt,
+                Post.status.in_([PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED]),
+            )
+            .scalar() or 0
+        )
+        _total_uploaded = (
+            _db.query(func.count(Post.id))
+            .filter(Post.created_at >= since_dt, Post.status == PostStatus.UPLOADED)
+            .scalar() or 0
+        )
+        # 업로드된 컨텐츠 목록 (analytics 데이터 포함)
+        _uploaded_contents: list[tuple[Post, Content]] = (
+            _db.query(Post, Content)
+            .join(Content, Content.post_id == Post.id)
+            .filter(Post.status == PostStatus.UPLOADED)
+            .order_by(Post.updated_at.desc())
+            .all()
+        )
+
+    _conversion_rate = (_total_uploaded / _total_collected * 100) if _total_collected else 0.0
+
+    # ---------------------------------------------------------------------------
+    # 📈 주간 생산성
+    # ---------------------------------------------------------------------------
+    st.subheader("📈 파이프라인 생산성")
+    with st.container(border=True):
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("수집", f"{_total_collected:,}건")
+        m2.metric("승인", f"{_total_approved:,}건")
+        m3.metric("렌더링", f"{_total_rendered:,}건")
+        m4.metric("업로드", f"{_total_uploaded:,}건")
+        m5.metric("전환율", f"{_conversion_rate:.1f}%")
+
+        # 퍼널 프로그레스바
+        if _total_collected:
+            st.markdown("**수집 → 업로드 전환 퍼널**")
+            stages = [
+                ("수집", _total_collected, "#4e8cff"),
+                ("승인", _total_approved, "#48bb78"),
+                ("렌더링", _total_rendered, "#ed8936"),
+                ("업로드", _total_uploaded, "#e53e3e"),
+            ]
+            for label, count, color in stages:
+                pct = count / _total_collected if _total_collected else 0
+                st.markdown(
+                    f"""<div style="margin:4px 0">
+<span style="display:inline-block;width:60px;font-size:0.8rem">{label}</span>
+<span style="display:inline-block;height:18px;width:{int(pct*400)}px;
+background:{color};border-radius:3px;vertical-align:middle"></span>
+<span style="margin-left:8px;font-size:0.85rem">{count:,}건 ({pct*100:.1f}%)</span>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+    # ---------------------------------------------------------------------------
+    # 🏆 Top 5 영상
+    # ---------------------------------------------------------------------------
+    st.subheader("🏆 Top 5 영상 (조회수 기준)")
+
+    # upload_meta 또는 post.stats 에서 조회수 수집
+    _ranked: list[dict] = []
+    for _post, _cnt in _uploaded_contents:
+        _meta = _cnt.upload_meta or {}
+        # YouTube Analytics에서 수집된 최신 analytics 우선, 없으면 post.stats
+        _yt = _meta.get("youtube", {})
+        _analytics = _yt.get("analytics", {})
+        _views = _analytics.get("views") or (_post.stats or {}).get("views", 0)
+        _likes = _analytics.get("likes") or (_post.stats or {}).get("likes", 0)
+        _yt_url = _yt.get("url", "")
+        _ranked.append({
+            "title": _post.title,
+            "views": int(_views),
+            "likes": int(_likes),
+            "url": _yt_url,
+            "post_id": _post.id,
+            "analytics": _analytics,
+        })
+
+    _ranked.sort(key=lambda x: x["views"], reverse=True)
+
+    if _ranked:
+        with st.container(border=True):
+            for rank, item in enumerate(_ranked[:5], 1):
+                rc1, rc2, rc3 = st.columns([6, 2, 2])
+                with rc1:
+                    _title_str = item["title"][:55] + "..." if len(item["title"]) > 55 else item["title"]
+                    if item["url"]:
+                        st.markdown(f"**{rank}.** [{_title_str}]({item['url']})")
+                    else:
+                        st.markdown(f"**{rank}.** {_title_str}")
+                with rc2:
+                    st.markdown(f"👁️ **{item['views']:,}**회")
+                with rc3:
+                    st.markdown(f"👍 {item['likes']:,}")
+                if item["analytics"].get("avg_watch_pct"):
+                    st.caption(
+                        f"   평균 시청률 {item['analytics']['avg_watch_pct']:.1f}% · "
+                        f"수집일: {item['analytics'].get('collected_at', '?')[:10]}"
+                    )
+    else:
+        st.info("업로드된 영상이 없습니다.")
+
+    # ---------------------------------------------------------------------------
+    # 📉 성과 분석
+    # ---------------------------------------------------------------------------
+    st.subheader("📉 성과 분석")
+    with st.container(border=True):
+        if _ranked:
+            _all_views = [r["views"] for r in _ranked]
+            _all_likes = [r["likes"] for r in _ranked]
+            _analytics_items = [r["analytics"] for r in _ranked if r["analytics"]]
+
+            avg_views = sum(_all_views) / len(_all_views) if _all_views else 0
+            avg_likes = sum(_all_likes) / len(_all_likes) if _all_likes else 0
+            avg_watch = (
+                sum(a["avg_watch_pct"] for a in _analytics_items if "avg_watch_pct" in a)
+                / len([a for a in _analytics_items if "avg_watch_pct" in a])
+                if any("avg_watch_pct" in a for a in _analytics_items) else None
+            )
+            sub_conv = (
+                sum(a.get("subscriber_gained", 0) for a in _analytics_items)
+            )
+
+            pa1, pa2, pa3, pa4 = st.columns(4)
+            pa1.metric("평균 조회수", f"{avg_views:,.0f}회")
+            pa2.metric("평균 좋아요", f"{avg_likes:,.0f}")
+            pa3.metric(
+                "평균 시청 유지율",
+                f"{avg_watch:.1f}%" if avg_watch is not None else "데이터 없음"
+            )
+            pa4.metric("구독 전환 합계", f"{sub_conv:,}명")
+        else:
+            st.caption("업로드 후 YouTube Analytics 수집 시 성과 지표가 표시됩니다.")
+
+        # YouTube Analytics 수집 버튼
+        st.divider()
+        st.markdown("**YouTube Analytics 수동 수집**")
+        st.caption("업로드된 영상의 조회수·좋아요·시청 유지율을 YouTube Analytics API에서 가져옵니다.")
+        if st.button("📡 Analytics 수집", key="fetch_analytics", width="content"):
+            _fetched, _errors = 0, 0
+            with st.spinner("YouTube Analytics 수집 중..."):
+                for _post, _cnt in _uploaded_contents:
+                    _meta = dict(_cnt.upload_meta or {})
+                    _yt = _meta.get("youtube", {})
+                    _video_id = _yt.get("video_id")
+                    if not _video_id:
+                        continue
+                    try:
+                        from uploaders.youtube import YouTubeUploader
+                        _uploader = YouTubeUploader()
+                        _stats = _uploader.fetch_analytics(_video_id)
+                        if _stats:
+                            _yt["analytics"] = {
+                                **_stats,
+                                "collected_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                            _meta["youtube"] = _yt
+                            with SessionLocal() as _s:
+                                _c = _s.query(Content).filter_by(post_id=_post.id).first()
+                                if _c:
+                                    _c.upload_meta = _meta
+                                    _s.commit()
+                            _fetched += 1
+                    except Exception as _ex:
+                        log.warning("Analytics 수집 실패 post_id=%d: %s", _post.id, _ex)
+                        _errors += 1
+            if _fetched:
+                st.success(f"✅ {_fetched}건 수집 완료" + (f" ({_errors}건 실패)" if _errors else ""))
+                st.rerun()
+            else:
+                st.warning("수집된 데이터가 없습니다. YouTube 인증 정보를 확인하세요.")
+
+    # ---------------------------------------------------------------------------
+    # 🎯 AI 인사이트
+    # ---------------------------------------------------------------------------
+    st.subheader("🎯 AI 인사이트")
+
+    _insight_key = f"analytics_insight_{period_days}"
+    with st.container(border=True):
+        if st.button("✨ 인사이트 생성", key="gen_insight", width="content", type="primary"):
+            if not _ranked:
+                st.warning("업로드된 영상 데이터가 없습니다.")
+            else:
+                with st.spinner("LLM 분석 중..."):
+                    try:
+                        import requests as _req
+                        _data_summary = "\n".join(
+                            f"- {r['title'][:60]}: 조회수 {r['views']:,}, 좋아요 {r['likes']:,}"
+                            + (f", 시청유지율 {r['analytics']['avg_watch_pct']:.1f}%" if r['analytics'].get('avg_watch_pct') else "")
+                            for r in _ranked[:10]
+                        )
+                        _prompt = f"""당신은 유튜브 쇼츠 채널 성과 분석 전문가입니다.
+아래 최근 {period_days}일 업로드 영상 성과 데이터를 분석하고,
+운영자에게 유용한 인사이트 3~5가지를 간결하게 한국어로 작성하세요.
+
+## 성과 데이터
+수집: {_total_collected}건 → 승인: {_total_approved}건 → 업로드: {_total_uploaded}건 (전환율 {_conversion_rate:.1f}%)
+업로드 영상 목록:
+{_data_summary}
+
+## 인사이트 형식
+- 어떤 주제/패턴이 잘 됐는지
+- 개선이 필요한 부분
+- 다음 {period_days}일 운영 전략 제안
+각 항목은 "- " 로 시작하는 한 줄 문장으로 작성하세요."""
+
+                        _resp = _req.post(
+                            f"{get_ollama_host()}/api/generate",
+                            json={
+                                "model": load_pipeline_config().get("llm_model", OLLAMA_MODEL),
+                                "prompt": _prompt,
+                                "stream": False,
+                                "options": {"num_predict": 512, "temperature": 0.7},
+                            },
+                            timeout=120,
+                        )
+                        _resp.raise_for_status()
+                        _insight_text = _resp.json().get("response", "").strip()
+                        st.session_state[_insight_key] = _insight_text
+                    except Exception as _ex:
+                        st.error(f"인사이트 생성 실패: {_ex}")
+
+        _saved_insight = st.session_state.get(_insight_key)
+        if _saved_insight:
+            st.markdown(_saved_insight)
+        else:
+            st.caption("'인사이트 생성' 버튼을 눌러 LLM 분석을 시작하세요.")
+
+
+# ===========================================================================
+# Tab 6: 설정 (Settings)
 # ===========================================================================
 
 with tab_settings:

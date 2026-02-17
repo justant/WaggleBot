@@ -1,43 +1,108 @@
+"""AI Worker 메인 루프 — 파이프라인 병렬 처리.
+
+구조:
+  _llm_tts_worker  : APPROVED 폴링 → LLM+TTS (CUDA) → render_queue에 적재
+  _render_worker   : render_queue 소비 → 프리뷰 렌더링 (CPU) → PREVIEW_RENDERED
+
+두 워커가 asyncio.gather로 동시 실행되므로
+Post A가 CPU로 렌더링되는 동안 Post B는 GPU로 LLM+TTS를 처리할 수 있다.
+"""
 import asyncio
 import logging
 
-from config.settings import AI_POLL_INTERVAL, MAX_RETRY_COUNT
+from config.settings import AI_POLL_INTERVAL
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
 
 logger = logging.getLogger(__name__)
 
 
-async def poll_once() -> bool:
-    """
-    APPROVED 상태 게시글 1개 처리
+def _mark_post_failed(post_id: int) -> None:
+    """예외 발생 시 post를 FAILED로 안전하게 마킹한다."""
+    try:
+        with SessionLocal() as session:
+            post = session.query(Post).filter_by(id=post_id).first()
+            if post is not None and post.status not in (
+                PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED
+            ):
+                post.status = PostStatus.FAILED
+                session.commit()
+    except Exception:
+        logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
 
-    Returns:
-        처리할 게시글이 있었는지 여부
-    """
-    with SessionLocal() as session:
-        post = (
-            session.query(Post)
-            .filter(Post.status == PostStatus.APPROVED)
-            .order_by(Post.created_at.asc())
-            .first()
-        )
-        if post is None:
-            return False
 
-        from ai_worker.processor import RobustProcessor
+# CUDA 리소스를 직렬화하는 세마포어 (LLM + TTS 는 순차 실행)
+_cuda_sem: asyncio.Semaphore | None = None
 
-        # RobustProcessor가 내부적으로 재시도 및 에러 핸들링 처리
-        processor = RobustProcessor()
+
+def _get_cuda_sem() -> asyncio.Semaphore:
+    global _cuda_sem
+    if _cuda_sem is None:
+        _cuda_sem = asyncio.Semaphore(1)
+    return _cuda_sem
+
+
+# ---------------------------------------------------------------------------
+# 파이프라인 워커
+# ---------------------------------------------------------------------------
+
+async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
+    """APPROVED 게시글을 폴링해 LLM+TTS 처리 후 render_queue에 적재."""
+    from ai_worker.processor import RobustProcessor
+    processor = RobustProcessor()
+    cuda_sem = _get_cuda_sem()
+
+    while True:
+        post_id: int | None = None
+        with SessionLocal() as session:
+            post = (
+                session.query(Post)
+                .filter(Post.status == PostStatus.APPROVED)
+                .order_by(Post.created_at.asc())
+                .first()
+            )
+            if post is not None:
+                post_id = post.id
+
+        if post_id is None:
+            await asyncio.sleep(AI_POLL_INTERVAL)
+            continue
+
+        async with cuda_sem:
+            try:
+                script, audio_path = await processor.llm_tts_stage(post_id)
+                await render_queue.put((post_id, script, audio_path))
+                logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
+                            post_id, render_queue.qsize())
+            except Exception:
+                logger.exception("LLM+TTS 실패: post_id=%d", post_id)
+                _mark_post_failed(post_id)
+                await asyncio.sleep(5)
+
+
+async def _render_worker(render_queue: asyncio.Queue) -> None:
+    """render_queue에서 꺼내 프리뷰 렌더링 (CPU libx264, GPU 점유 없음)."""
+    from ai_worker.processor import RobustProcessor
+    processor = RobustProcessor()
+
+    while True:
+        post_id, script, audio_path = await render_queue.get()
         try:
-            await processor.process_with_retry(post, session)
+            # render_stage는 동기 CPU 작업 — event loop를 블록하지 않도록 executor 사용
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, processor.render_stage, post_id, script, audio_path
+            )
         except Exception:
-            # RobustProcessor 내부에서 이미 에러 처리되었으므로 로그만 남김
-            logger.exception("예상치 못한 에러: post_id=%d", post.id)
-            session.rollback()
+            logger.exception("렌더링 실패: post_id=%d", post_id)
+            _mark_post_failed(post_id)
+        finally:
+            render_queue.task_done()
 
-    return True
 
+# ---------------------------------------------------------------------------
+# 업로드 워커 (기존 동작 유지)
+# ---------------------------------------------------------------------------
 
 async def upload_once() -> bool:
     """RENDERED 상태 포스트를 찾아 업로드 실행."""
@@ -74,16 +139,29 @@ async def upload_once() -> bool:
     return True
 
 
-async def _main_loop() -> None:
+async def _upload_loop() -> None:
+    """RENDERED 게시글을 주기적으로 업로드."""
     while True:
         try:
-            found = await poll_once()
+            found = await upload_once()
         except Exception:
-            logger.exception("폴링 루프 예외")
+            logger.exception("업로드 루프 예외")
             found = False
-
         if not found:
             await asyncio.sleep(AI_POLL_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
+# 메인
+# ---------------------------------------------------------------------------
+
+async def _main_loop() -> None:
+    render_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+    await asyncio.gather(
+        _llm_tts_worker(render_queue),
+        _render_worker(render_queue),
+        _upload_loop(),
+    )
 
 
 def main() -> None:
@@ -92,7 +170,7 @@ def main() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
     init_db()
-    logger.info("AI Worker 시작 (poll_interval=%ds)", AI_POLL_INTERVAL)
+    logger.info("AI Worker 시작 (pipeline 모드, poll_interval=%ds)", AI_POLL_INTERVAL)
     asyncio.run(_main_loop())
 
 
