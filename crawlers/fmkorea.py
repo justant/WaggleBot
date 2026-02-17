@@ -52,13 +52,15 @@ class FMKoreaCrawler(BaseCrawler):
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+            soup = BeautifulSoup(resp.content, "html.parser")
             section_count = 0
 
-            # /best/{숫자} 형식 링크만 선택 (내비·광고 제외)
-            for link in soup.find_all("a", href=re.compile(r"/best/\d+")):
+            # 최신순: /best/{숫자}  |  화제순: ?document_srl={숫자} 혼용 대응
+            _href_pat = re.compile(r"/best/\d+|document_srl=\d+")
+            for link in soup.find_all("a", href=_href_pat):
                 href = link.get("href", "")
-                m = re.search(r"/best/(\d+)", href)
+                # /best/숫자 경로 우선 추출, 없으면 document_srl 파라미터에서 추출
+                m = re.search(r"/best/(\d+)", href) or re.search(r"document_srl=(\d+)", href)
                 if not m:
                     continue
 
@@ -76,6 +78,7 @@ class FMKoreaCrawler(BaseCrawler):
                 section_count += 1
 
             log.info("Section '%s': %d new posts", section["name"], section_count)
+            time.sleep(2)  # 섹션 간 딜레이 — rate limit 방지
 
         log.info("Total unique posts from listing: %d", len(posts))
         return posts
@@ -96,7 +99,7 @@ class FMKoreaCrawler(BaseCrawler):
         self._rotate_ua()
         resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(resp.content, "html.parser")
 
         # 제목: h1 > span.np_18px_span 또는 h1 직접
         title_el = (
