@@ -5,6 +5,7 @@ AI Worker Processor with Robust Error Handling
 """
 
 import hashlib
+import json
 import logging
 import shutil
 import time
@@ -103,10 +104,15 @@ class RobustProcessor:
                     audio_path = await self._safe_generate_tts(script.to_plain_text(), post.id)
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
-                # ===== Step 3: 프리뷰 렌더링 (480×854 CPU libx264) =====
-                logger.info("[Step 3/3] 프리뷰 렌더링 중 (480×854 CPU)...")
-                video_path = self._safe_render_video(post, audio_path, script.to_json())
-                logger.info("[Step 3/3] ✓ 프리뷰 완료: %s", video_path)
+                # ===== Step 3: 렌더링 (render_style에 따라 분기) =====
+                render_style = json.loads(script.to_json()).get("render_style", "ssul")
+                logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
+                if render_style == "ssul":
+                    from ai_worker.ssul_renderer import render_ssul_video
+                    video_path = render_ssul_video(post, script)
+                else:
+                    video_path = self._safe_render_video(post, audio_path, script.to_json())
+                logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 =====
                 self._save_content(post, session, script, audio_path, video_path)
@@ -521,7 +527,11 @@ class RobustProcessor:
         return script, audio_path
 
     def render_stage(self, post_id: int, script: ScriptData, audio_path: Path) -> Path:
-        """프리뷰 영상 렌더링 + 썸네일 생성 (CPU 단계).
+        """영상 렌더링 + 썸네일 생성 (CPU 단계).
+
+        Content.summary_text의 render_style 필드로 렌더러를 선택한다:
+        - "ssul" (기본값): 양산형 쇼츠 스타일 (PIL 누적 텍스트 + 효과음)
+        - 그 외: Ken Burns 슬라이드쇼 (기존 방식)
 
         파이프라인 병렬화에서 독립적으로 호출되는 2단계.
         완료 시 post.status → PREVIEW_RENDERED.
@@ -538,8 +548,24 @@ class RobustProcessor:
             if post is None:
                 raise ValueError(f"Post {post_id} 없음")
 
-            logger.info("[Pipeline Render] 시작: post_id=%d", post_id)
-            video_path = self._safe_render_video(post, audio_path, script.to_json())
+            # render_style 확인: DB에 저장된 summary_text JSON에서 읽는다
+            render_style = "ssul"
+            try:
+                existing = session.query(Content).filter_by(post_id=post_id).first()
+                if existing and existing.summary_text:
+                    _d = json.loads(existing.summary_text)
+                    render_style = _d.get("render_style", "ssul")
+            except Exception:
+                logger.debug("render_style 파싱 실패 — ssul 기본값 사용")
+
+            logger.info("[Pipeline Render] 시작: post_id=%d render_style=%s", post_id, render_style)
+
+            if render_style == "ssul":
+                from ai_worker.ssul_renderer import render_ssul_video
+                video_path = render_ssul_video(post, script)
+            else:
+                video_path = self._safe_render_video(post, audio_path, script.to_json())
+
             self._save_content(post, session, script, audio_path, video_path)
             logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)
 

@@ -83,7 +83,7 @@ def top_comments(post_id: int, session, limit: int = 2) -> list[Comment]:
 def update_status(post_id: int, new_status: PostStatus):
     """게시글 상태 업데이트"""
     with SessionLocal() as session:
-        post = session.query(Post).get(post_id)
+        post = session.get(Post, post_id)
         if post:
             post.status = new_status
             session.commit()
@@ -97,7 +97,7 @@ def delete_post(post_id: int):
         if content:
             session.delete(content)
             session.flush()
-        post = session.query(Post).get(post_id)
+        post = session.get(Post, post_id)
         if post:
             session.delete(post)
         session.commit()

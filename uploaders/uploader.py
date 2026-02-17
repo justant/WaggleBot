@@ -27,7 +27,13 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
         logger.error("영상 파일 없음: %s (post_id=%d)", content.video_path, post.id)
         return False
 
-    upload_meta: dict = json.loads(content.upload_meta) if content.upload_meta else {}
+    raw_meta = content.upload_meta
+    if isinstance(raw_meta, dict):
+        upload_meta: dict = raw_meta
+    elif raw_meta:
+        upload_meta = json.loads(raw_meta)
+    else:
+        upload_meta = {}
     thumbnail_path = upload_meta.get("thumbnail_path", "")
 
     metadata = {
@@ -60,7 +66,7 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
             logger.exception("업로드 실패: %s (post_id=%d)", platform_name, post.id)
             all_ok = False
 
-    content.upload_meta = json.dumps(upload_meta, ensure_ascii=False)
+    content.upload_meta = upload_meta
     session.flush()
     return all_ok
 

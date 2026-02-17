@@ -170,6 +170,29 @@ def save_credentials_config(creds: dict[str, dict]) -> None:
         json.dump(creds, f, ensure_ascii=False, indent=2)
 
 # ---------------------------------------------------------------------------
+# 썰 렌더러 (ssul_renderer.py)
+# ---------------------------------------------------------------------------
+SSUL_TEMPLATE_PATH: Path = Path(os.getenv(
+    "SSUL_TEMPLATE_PATH",
+    str(_PROJECT_ROOT / "assets" / "backgrounds" / "base_template.png"),
+))
+SSUL_AUDIO_DIR: Path = Path(os.getenv(
+    "SSUL_AUDIO_DIR",
+    str(_PROJECT_ROOT / "assets" / "audio"),
+))
+SSUL_TTS_VOICE: str = os.getenv("SSUL_TTS_VOICE", "ko-KR-SunHiNeural")
+SSUL_TTS_RATE: str = os.getenv("SSUL_TTS_RATE", "+25%")
+SSUL_FONT_BODY: Path = Path(os.getenv(
+    "SSUL_FONT_BODY",
+    str(_PROJECT_ROOT / "assets" / "fonts" / "NotoSansKR-Medium.ttf"),
+))
+SSUL_FONT_TITLE: Path = Path(os.getenv(
+    "SSUL_FONT_TITLE",
+    str(_PROJECT_ROOT / "assets" / "fonts" / "NotoSansKR-Bold.ttf"),
+))
+SSUL_META_RANDOMIZE: bool = os.getenv("SSUL_META_RANDOMIZE", "true").lower() == "true"
+
+# ---------------------------------------------------------------------------
 # Monitoring & Alerting
 # ---------------------------------------------------------------------------
 MONITORING_ENABLED = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
