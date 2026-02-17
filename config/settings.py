@@ -23,6 +23,11 @@ NATE_PANN_SECTIONS = [
     {"name": "톡커들의 선택", "url": "https://pann.nate.com/talk/ranking/best"},
 ]
 
+BOBAEDREAM_SECTIONS = [
+    {"name": "자유게시판 베스트", "url": "https://m.bobaedream.co.kr/board/best/freeb"},
+    {"name": "전체 베스트", "url": "https://m.bobaedream.co.kr/board/new_writing/best"},
+]
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
