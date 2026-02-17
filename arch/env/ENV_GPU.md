@@ -4,7 +4,7 @@
 
 | 항목 | 사양 |
 |------|------|
-| 노드 | Windows PC (WSL Ubuntu) |
+| 노드 | Windows PC (WSL2 Ubuntu 24.04) |
 | GPU | NVIDIA RTX 3080 Ti (12GB VRAM) |
 | Compose 파일 | `docker-compose.yml` |
 | Dockerfile | `Dockerfile.gpu` |
@@ -13,88 +13,164 @@
 
 ---
 
-## 전제 조건
+## WSL2 GPU Docker — 알려진 함정
 
-- NVIDIA 드라이버 설치 (`nvidia-smi` 정상 출력)
-- Docker 설치
-- NVIDIA Container Toolkit 설치
-- Ollama 설치 및 `.env`의 `OLLAMA_MODEL`에 지정한 모델 다운로드 (기본값: `qwen2.5:14b`)
+> 이 환경에서 실제로 발생했던 두 가지 핵심 문제. 최초 설정 전 반드시 숙지.
+
+### 함정 1: Docker Snap 패키지 → WSL2 NVIDIA 라이브러리 차단
+
+Ubuntu에서 `snap install docker`로 설치한 경우 발생.
+
+- Snap 샌드박스가 `/usr/lib/wsl/lib/` 접근을 차단
+- `nvidia-container-cli`가 `libnvidia-ml.so.1`을 찾지 못해 컨테이너 생성 실패
+- 증상: `OCI runtime create failed: ... libnvidia-ml.so.1: cannot open shared object file`
+- 확인: `docker info --format '{{.DockerRootDir}}'` 결과가 `/var/snap/...`이면 Snap
+
+**해결**: Snap 제거 → Docker Engine(apt) 설치 (`scripts/setup_docker_gpu.sh`가 자동 처리)
+
+### 함정 2: WSL2 + systemd mount namespace 분리 → Docker 소켓 불가시
+
+systemd 활성화(`/etc/wsl.conf`의 `systemd=true`) 환경에서 발생.
+
+- systemd와 유저 셸이 서로 다른 mount namespace를 사용
+- `docker.socket`이 생성하는 `/run/docker.sock`이 systemd namespace 안에만 존재
+- 유저 셸, `sudo`, `nsenter -m -t 1` 어디서도 소켓 파일이 보이지 않음
+- 증상: `dial unix /var/run/docker.sock: connect: no such file or directory`
+
+**해결**: `docker.socket` 비활성화 + dockerd가 TCP(`127.0.0.1:2375`)로 직접 리스닝
+→ TCP는 mount namespace와 무관하게 접근 가능
 
 ---
 
-## 최초 설정
+## 전제 조건
 
-### 1. Docker 설치
+- Windows용 NVIDIA 드라이버 설치 (WSL2에서 `nvidia-smi` 또는 `/usr/lib/wsl/lib/nvidia-smi` 실행 가능)
+- **Docker Engine(apt) 설치** — Snap 아님 (위 함정 1 참고)
+- NVIDIA Container Toolkit 설치
+- Ollama 설치 및 `.env`의 `OLLAMA_MODEL`에 지정한 모델 다운로드
 
-```bash
-# Docker 공식 GPG 키 추가
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
+---
 
-# Docker 저장소 추가
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Docker 설치
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# 서비스 시작 및 자동 시작 설정
-sudo systemctl start docker
-sudo systemctl enable docker
-
-# 현재 사용자를 docker 그룹에 추가 (sudo 없이 docker 실행)
-sudo usermod -aG docker $USER
-newgrp docker
-```
-
-### 2. NVIDIA Container Toolkit 설치
-
-자동 설정 스크립트 실행:
+## 최초 설정 (권장: 자동 스크립트)
 
 ```bash
-cd /home/justant/Data/WaggleBot
+cd ~/Data/WaggleBot
 bash scripts/setup_docker_gpu.sh
 ```
 
-스크립트가 수행하는 작업:
-1. NVIDIA GPU 확인
-2. Docker 설치 확인
-3. NVIDIA Container Toolkit Repository 추가
-4. NVIDIA Container Toolkit 설치
-5. Docker 데몬 설정 및 재시작
-6. GPU 접근 테스트
+스크립트가 수행하는 작업 (7단계):
+1. NVIDIA GPU 확인 (`/usr/lib/wsl/lib/nvidia-smi`)
+2. Snap Docker 감지 시 자동 제거
+3. Docker Engine(apt) 설치 (없는 경우)
+4. WSL2 mount namespace 우회 — TCP 리스너 설정 + `docker.socket` 비활성화
+5. NVIDIA Container Toolkit 설치
+6. NVIDIA 런타임 + `config.toml` 설정 (`no-cgroups=true` 포함)
+7. GPU 접근 테스트
 
-수동 설정 (스크립트 실패 시):
+---
+
+## 수동 설정
+
+### 1. Docker Engine (apt) 설치
 
 ```bash
-# Repository 추가
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+# Snap Docker 설치 여부 확인
+docker info --format '{{.DockerRootDir}}'
+# /var/snap/... 이 나오면 Snap → 제거 필요
+sudo snap remove docker --purge
 
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-
-# 설치 및 Docker 데몬 설정
+# Docker Engine 설치
 sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-# 테스트
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+    | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
+    docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
 ```
 
-### 3. Ollama 설치 및 0.0.0.0 Listen 설정
+### 2. WSL2 mount namespace 우회 설정
 
 ```bash
-# Ollama를 Docker 브리지 네트워크에서 접근 가능하도록 설정
+# override.conf — TCP 리스너 + WSL2 라이브러리 경로
+sudo mkdir -p /etc/systemd/system/docker.service.d
+sudo tee /etc/systemd/system/docker.service.d/override.conf << 'EOF'
+[Service]
+Environment="LD_LIBRARY_PATH=/usr/lib/wsl/lib"
+ExecStart=
+ExecStart=/usr/bin/dockerd -H tcp://127.0.0.1:2375 --containerd=/run/containerd/containerd.sock
+EOF
+
+# docker.socket 비활성화 (Unix 소켓 활성화 불필요)
+sudo systemctl disable docker.socket
+sudo systemctl stop docker.socket
+```
+
+### 3. NVIDIA Container Toolkit 설치
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+    | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+```
+
+### 4. NVIDIA 런타임 설정
+
+```bash
+# daemon.json (hosts 키 없이 — ExecStart의 -H와 중복 금지)
+sudo tee /etc/docker/daemon.json << 'EOF'
+{
+  "runtimes": {
+    "nvidia": {
+      "args": [],
+      "path": "nvidia-container-runtime"
+    }
+  }
+}
+EOF
+
+# config.toml 생성 + WSL2 cgroups 우회
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo nvidia-ctk config \
+    --config-file /etc/nvidia-container-runtime/config.toml \
+    --in-place \
+    --set nvidia-container-cli.no-cgroups=true
+
+# WSL2 라이브러리 경로 ldconfig 등록
+echo "/usr/lib/wsl/lib" | sudo tee /etc/ld.so.conf.d/nvidia-wsl.conf
+sudo ldconfig
+```
+
+### 5. Docker 시작 및 DOCKER_HOST 설정
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable docker
+sudo systemctl restart docker
+
+# 영구 등록
+echo 'export DOCKER_HOST=tcp://127.0.0.1:2375' >> ~/.bashrc
+source ~/.bashrc
+
+# 확인
+docker ps
+docker run --rm --gpus all ubuntu:22.04 nvidia-smi
+```
+
+### 6. Ollama 설치 및 0.0.0.0 Listen 설정
+
+```bash
 sudo systemctl edit ollama.service
 ```
 
@@ -107,22 +183,7 @@ Environment="OLLAMA_HOST=0.0.0.0"
 
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart ollama
-```
-
-### 4. `.env` 설정 및 모델 다운로드
-
-`.env`에서 사용할 모델을 지정합니다 (기본값: `qwen2.5:14b`):
-
-```bash
-# .env
-OLLAMA_MODEL=qwen2.5:14b
-```
-
-이후 해당 모델을 다운로드합니다:
-
-```bash
 ollama pull qwen2.5:14b
-# 다른 모델을 .env에 지정한 경우 해당 모델명으로 변경
 ```
 
 ---
@@ -134,7 +195,7 @@ ollama pull qwen2.5:14b
 docker compose up -d
 
 # 로그 확인
-docker compose logs -f ai_worker
+docker compose logs --tail 50 ai_worker
 
 # 종료
 docker compose down
@@ -171,7 +232,7 @@ docker exec wagglebot-ai_worker-1 python3 -c \
 docker restart wagglebot-ai_worker-1
 
 # 3. 로그 확인
-docker logs -f wagglebot-ai_worker-1
+docker logs --tail 50 -f wagglebot-ai_worker-1
 ```
 
 `requirements.txt` 변경 시에만 재빌드 필요:
@@ -185,18 +246,63 @@ docker compose up -d ai_worker
 
 ## 문제 해결
 
-### GPU 인식 실패
+### Docker 소켓 연결 실패 (WSL2 mount namespace)
 
 **증상:**
 ```
-docker.errors.APIError: could not select device driver "" with capabilities: [[gpu]]
+dial unix /var/run/docker.sock: connect: no such file or directory
+```
+`sudo docker ps`도 실패, `nsenter -m -t 1`으로도 소켓 파일 없음.
+
+**원인:** WSL2 + systemd 환경에서 systemd와 유저 셸이 다른 mount namespace 사용.
+
+**해결:**
+```bash
+# override.conf에 TCP 리스너 추가 확인
+cat /etc/systemd/system/docker.service.d/override.conf
+# ExecStart에 -H tcp://127.0.0.1:2375 있어야 함
+
+# DOCKER_HOST 설정 확인
+echo $DOCKER_HOST
+# tcp://127.0.0.1:2375 이어야 함
+
+# 미설정 시
+export DOCKER_HOST=tcp://127.0.0.1:2375
+echo 'export DOCKER_HOST=tcp://127.0.0.1:2375' >> ~/.bashrc
+```
+
+### GPU 인식 실패 (Snap Docker)
+
+**증상:**
+```
+nvidia-container-cli: initialization error: load library failed: libnvidia-ml.so.1
+Auto-detected mode as 'legacy'
+```
+
+**확인:**
+```bash
+docker info --format '{{.DockerRootDir}}'
+# /var/snap/ 이면 Snap Docker → 제거 필요
+```
+
+**해결:**
+```bash
+sudo snap remove docker --purge
+# 이후 수동 설정 1~5 단계 진행
+```
+
+### GPU 인식 실패 (런타임 미설정)
+
+**증상:**
+```
+could not select device driver "" with capabilities: [[gpu]]
 ```
 
 **해결:**
 ```bash
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all ubuntu:22.04 nvidia-smi
 ```
 
 ### Ollama 연결 실패
@@ -219,7 +325,6 @@ environment:
 **해결 — Option 2: network_mode: host (대안)**
 
 ```yaml
-# docker-compose.yml의 ai_worker 서비스
 network_mode: host
 environment:
   OLLAMA_HOST: "http://127.0.0.1:11434"
@@ -238,19 +343,4 @@ PermissionError: [Errno 13] Permission denied: '/app/media/...'
 sudo chown -R $USER:$USER ./media
 chmod -R 755 ./media
 docker restart wagglebot-ai_worker-1
-```
-
-### Docker 데몬 연결 실패
-
-**증상:**
-```
-Cannot connect to the Docker daemon at unix:///var/run/docker.sock.
-```
-
-**해결:**
-```bash
-sudo systemctl start docker
-sudo systemctl enable docker
-sudo usermod -aG docker $USER
-newgrp docker
 ```

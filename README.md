@@ -110,6 +110,22 @@ docker compose ps
 
 대시보드: **http://localhost:8501**
 
+### 5. DB 스키마 초기화 (최초 1회)
+
+컨테이너가 모두 `Up` 상태가 된 뒤, **MariaDB 컨테이너가 완전히 준비되면** 아래 명령으로 스키마를 생성합니다.
+
+```bash
+# dashboard 컨테이너 안에서 init_db() 호출
+docker compose exec dashboard python -c "from db.session import init_db; init_db(); print('DB 초기화 완료')"
+```
+
+`db/session.py`의 `init_db()`는 `Base.metadata.create_all()`을 호출해 **없는 테이블만 생성**합니다.
+이미 테이블이 존재하면 건드리지 않으므로 재실행해도 안전합니다.
+
+> **스키마를 완전 삭제 후 재생성하는 경우**에도 동일 명령을 실행하면 됩니다.
+
+생성되는 테이블: `posts`, `comments`, `contents`
+
 ---
 
 ## 사용법
