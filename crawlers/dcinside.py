@@ -141,17 +141,26 @@ class DcInsideCrawler(BaseCrawler):
         body_el = soup.select_one("div.writing_view_box")
         content = body_el.get_text("\n", strip=True) if body_el else ""
 
-        # 이미지
+        # 이미지 (DCInside lazy load: data-lazy > data-src > data-lazy-src > src 순으로 확인)
         images: list[str] = []
         if body_el:
             for img in body_el.select("img"):
                 src = (
-                    img.get("src")
+                    img.get("data-lazy")       # DCInside 실제 이미지 URL
                     or img.get("data-src")
                     or img.get("data-lazy-src")
+                    or img.get("src")
                     or ""
                 )
-                if src and src.startswith("http"):
+                # 프로토콜 상대 URL 처리 (//dcimg...)
+                if src.startswith("//"):
+                    src = "https:" + src
+                # 플레이스홀더 gif 및 비이미지 제외
+                if (
+                    src.startswith("http")
+                    and not src.endswith("img.gif")
+                    and "img.gif" not in src
+                ):
                     images.append(src)
 
         # 통계
