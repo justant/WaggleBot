@@ -33,6 +33,11 @@ DCINSIDE_SECTIONS = [
     {"name": "HIT 갤러리 (힛갤)",   "url": "https://gall.dcinside.com/board/lists/?id=hit"},
 ]
 
+FMKOREA_SECTIONS = [
+    {"name": "포텐 터짐 최신순", "url": "https://www.fmkorea.com/index.php?mid=best"},
+    {"name": "포텐 터짐 화제순", "url": "https://www.fmkorea.com/index.php?mid=best2&sort_index=pop&order_type=desc"},
+]
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
