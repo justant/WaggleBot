@@ -48,7 +48,9 @@ class BobaedrreamCrawler(BaseCrawler):
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+            # bytes를 넘기면 BS4가 HTML meta charset으로 인코딩 자동 감지
+            # (resp.text 사용 시 charset 미지정 페이지에서 ISO-8859-1 기본 적용 → 한글 깨짐)
+            soup = BeautifulSoup(resp.content, "html.parser")
             section_count = 0
 
             for li in soup.select("ul li"):
@@ -78,6 +80,7 @@ class BobaedrreamCrawler(BaseCrawler):
                 section_count += 1
 
             log.info("Section '%s': %d new posts", section["name"], section_count)
+            time.sleep(1)  # 섹션 간 딜레이
 
         log.info("Total unique posts from listing: %d", len(posts))
         return posts
@@ -90,10 +93,16 @@ class BobaedrreamCrawler(BaseCrawler):
         self._rotate_ua()
         resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(resp.content, "html.parser")
 
-        title_el = soup.select_one("h3")
+        title_el = (
+            soup.select_one(".subject")
+            or (soup.select("h3")[1] if len(soup.select("h3")) > 1 else None)
+            or soup.select_one("h3")
+        )
         title = title_el.get_text(strip=True) if title_el else ""
+        # 후미 "(댓글수)" 레이블 제거
+        title = re.sub(r"\(\d+\).*$", "", title).strip()
 
         body_el = soup.select_one("div#body_frame")
         content = body_el.get_text("\n", strip=True) if body_el else ""
@@ -161,7 +170,7 @@ class BobaedrreamCrawler(BaseCrawler):
             log.warning("Failed to fetch comments from %s", comment_url)
             return []
 
-        return self._parse_comments(BeautifulSoup(resp.text, "html.parser"))
+        return self._parse_comments(BeautifulSoup(resp.content, "html.parser"))
 
     def _parse_comments(self, soup: BeautifulSoup) -> list[dict]:
         results: list[dict] = []
@@ -208,10 +217,10 @@ class BobaedrreamCrawler(BaseCrawler):
     @staticmethod
     def _extract_title(raw: str) -> str:
         """링크 텍스트에서 제목만 추출. 날짜·작성자·통계 제거."""
-        # [이미지], [동영상] 등 미디어 태그 제거
-        text = re.sub(r"\[(?:이미지|동영상|캡처|영상|링크|사진)\]", "", raw)
         # 날짜(MM/DD 또는 YY.MM.DD) 이후는 작성자·통계 — 잘라냄
-        text = re.split(r"\s+\d{2}[\./]\d{2}", text)[0]
+        text = re.split(r"\s+\d{2}[\./]\d{2}", raw)[0]
+        # [이미지] 등 브래킷 형태 및 비브래킷 미디어 레이블 제거
+        text = re.sub(r"\[?(?:이미지|동영상|캡처|영상|링크|사진)\]?", "", text)
         return text.strip()
 
     @staticmethod
