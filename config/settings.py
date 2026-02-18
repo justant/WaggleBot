@@ -183,6 +183,14 @@ FONT_BODY: Path = Path(os.getenv(
 # 효과음 타이밍 오프셋 (음수 = 앞당김)
 SFX_OFFSET: float = float(os.getenv("SFX_OFFSET", "-0.15"))
 
+# 썰 렌더러 — 텍스트 오버플로우 제어
+SSUL_MAX_VISIBLE_SENTENCES: int = int(os.getenv("SSUL_MAX_VISIBLE_SENTENCES", "5"))
+SSUL_SCROLL_OUT_COUNT: int = int(os.getenv("SSUL_SCROLL_OUT_COUNT", "2"))
+SSUL_PREV_TEXT_COLOR: str = os.getenv("SSUL_PREV_TEXT_COLOR", "#666666")
+SSUL_NEW_TEXT_COLOR: str = os.getenv("SSUL_NEW_TEXT_COLOR", "#000000")
+SSUL_COMMENT_BG_ENABLE: bool = os.getenv("SSUL_COMMENT_BG_ENABLE", "true").lower() == "true"
+SSUL_SFX_OFFSET: float = float(os.getenv("SSUL_SFX_OFFSET", "-0.08"))
+
 # ---------------------------------------------------------------------------
 # Monitoring & Alerting
 # ---------------------------------------------------------------------------
