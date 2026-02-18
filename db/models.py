@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, Float, Index, Integer, BigInteger, String, Text, Enum, JSON,
+    Boolean, Column, Float, Index, Integer, BigInteger, String, Text, Enum, JSON,
     ForeignKey, DateTime, UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -93,7 +93,7 @@ class Content(Base):
 
     post = relationship("Post", backref="content_item")
 
-    def get_script(self) -> "ScriptData | None":
+    def get_script(self) -> "ScriptData | None":  # type: ignore[return]
         """
         summary_text에서 ScriptData 반환.
 
@@ -119,3 +119,44 @@ class Content(Base):
                 tags=[],
                 mood="funny",
             )
+
+
+class LLMLog(Base):
+    """LLM 호출 이력 — 프롬프트 튜닝용 상세 로그.
+
+    call_type:
+        'generate_script' — llm.generate_script() (ScriptData 생성)
+        'chunk'           — llm_chunker.chunk_with_llm() (청킹 전용)
+    """
+    __tablename__ = "llm_logs"
+    __table_args__ = (
+        Index("ix_llm_logs_post_id",    "post_id"),
+        Index("ix_llm_logs_call_type",  "call_type"),
+        Index("ix_llm_logs_created_at", "created_at"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    post_id = Column(
+        BigInteger,
+        ForeignKey("posts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # 호출 메타
+    call_type   = Column(String(32),  nullable=False)   # generate_script | chunk
+    model_name  = Column(String(64),  nullable=True)
+    strategy    = Column(String(32),  nullable=True)     # img_heavy|balanced|text_heavy
+    image_count    = Column(Integer,  nullable=False, default=0, server_default="0")
+    content_length = Column(Integer,  nullable=False, default=0, server_default="0")
+
+    # 프롬프트 / 응답 (TEXT: ~64KB — 운영 후 필요 시 MEDIUMTEXT 마이그레이션)
+    prompt_text  = Column(Text, nullable=True)
+    raw_response = Column(Text, nullable=True)
+    parsed_result = Column(JSON, nullable=True)   # validate_and_fix 후 최종 dict
+
+    # 결과
+    success       = Column(Boolean, nullable=False, default=True, server_default="1")
+    error_message = Column(Text,    nullable=True)
+    duration_ms   = Column(Integer, nullable=True)   # 밀리초
+
+    created_at = Column(DateTime, nullable=False, default=_utcnow)

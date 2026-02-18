@@ -1,4 +1,26 @@
 {
+  "constraints": {
+    "post_title": {
+      "max_chars": 40,
+      "max_lines": 1,
+      "description": "헤더 고정 제목 (LLM 요약 없이 원문 그대로 사용)"
+    },
+    "hook_text": {
+      "max_chars": 50,
+      "max_lines": 2,
+      "description": "인트로 후킹 문장"
+    },
+    "body_sentence": {
+      "max_chars": 45,
+      "max_lines": 1,
+      "description": "본문 한 줄 (img_text, text_only 공통)"
+    },
+    "img_text_caption": {
+      "max_chars": 60,
+      "max_lines": 2,
+      "description": "이미지 하단 캡션"
+    }
+  },
   "canvas": {
     "width": 1080,
     "height": 1920
@@ -78,7 +100,7 @@
           "x": 90,
           "y": 550,
           "width": 900,
-          "height": 1150,
+          "height": 1100,
           "fit_mode": "cover",
           "border_radius": 20
         },
