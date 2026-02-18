@@ -63,16 +63,17 @@ _SCRIPT_PROMPT_V2 = """\
     "핵심 내용 문장 1",
     "핵심 내용 문장 2",
     "핵심 내용 문장 3",
-    "베스트 댓글 인용: 'OOO'"
+    "베댓 'OOO' 1",
+    "베댓 'OOO' 2"
   ],
-  "closer": "공감 유도 마무리 + 구독/좋아요 CTA",
+  "closer": "여러분들의 생각은 어떤가요?",
   "title_suggestion": "YouTube 쇼츠 제목 (50자 이내, 이모지 포함)",
   "tags": ["태그1", "태그2", "태그3"]
 }}
 
 ## 규칙
 - 총 분량: TTS로 읽었을 때 40~55초 분량
-- 말투: 반말, ~했다/~인데/~ㅋㅋ 구어체
+- 말투: 반말, ~했다/~인데/~ㅋㅋ/~했음/~함/음슴체 구어체
 - 베스트 댓글 최소 1개 인용 필수 (따옴표로 표시)
 - body는 정확히 4개 항목
 - 자극적이되 사실 왜곡 금지"""
@@ -174,12 +175,16 @@ def generate_script(
     *,
     model: str | None = None,
     extra_instructions: str | None = None,
+    post_id: int | None = None,
 ) -> ScriptData:
     """구조화 대본(ScriptData) 생성.
 
     Args:
         extra_instructions: 프롬프트 끝에 추가할 보조 지시사항 (스타일, 톤 등).
+        post_id:            LLM 로그 연결용 게시글 ID (선택).
     """
+    from ai_worker.llm_logger import LLMCallTimer, log_llm_call
+
     model = model or OLLAMA_MODEL
     prompt = _SCRIPT_PROMPT_V2.format(
         title=title,
@@ -191,8 +196,37 @@ def generate_script(
         prompt += f"\n\n## 추가 지시사항\n{extra_instructions.strip()}"
 
     logger.info("Ollama 대본 생성 요청: model=%s (extra=%s)", model, bool(extra_instructions))
-    raw = _call_ollama(prompt, model, num_predict=512)
-    logger.info("Ollama 응답 수신: %d자", len(raw))
+
+    raw = ""
+    success = True
+    error_msg: str | None = None
+    script: ScriptData | None = None
+
+    with LLMCallTimer() as timer:
+        try:
+            raw = _call_ollama(prompt, model, num_predict=512)
+        except Exception as exc:
+            success = False
+            error_msg = str(exc)
+            logger.error("Ollama 호출 실패: %s", exc)
+            raise
+        finally:
+            # 성공/실패 모두 로그 기록
+            log_llm_call(
+                call_type="generate_script",
+                post_id=post_id,
+                model_name=model,
+                prompt_text=prompt,
+                raw_response=raw,
+                parsed_result=None,   # 파싱 후 아래서 갱신 불가 — None 허용
+                image_count=0,
+                content_length=len(body),
+                success=success,
+                error_message=error_msg,
+                duration_ms=timer.elapsed_ms,
+            )
+
+    logger.info("Ollama 응답 수신: %d자 (%dms)", len(raw), timer.elapsed_ms)
 
     script = _parse_script_json(raw, fallback_text=raw)
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])

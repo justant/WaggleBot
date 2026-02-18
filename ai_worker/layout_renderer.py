@@ -678,55 +678,92 @@ def _build_layout_sfx_filter(
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# SceneDecision 변환 유틸리티
 # ---------------------------------------------------------------------------
 
-def render_layout_video(post, script, output_path: Path | None = None) -> Path:
-    """레이아웃 기반 쇼츠 영상 렌더링.
+def _scenes_to_plan_and_sentences(
+    scenes: list,
+) -> tuple[list[dict], list[dict], list[str]]:
+    """SceneDecision 목록을 내부 렌더러 형식 (sentences, plan, images)으로 변환한다.
 
-    Args:
-        post:        Post 객체 (post.id, post.title, post.images 사용)
-        script:      ScriptData 객체 (hook / body / closer)
-        output_path: 최종 mp4 저장 경로
+    text_only SceneDecision의 여러 text_lines는 각각 별도 plan 엔트리로 분리해
+    렌더러의 누적 스태킹 메커니즘과 호환되도록 한다.
+
+    Returns:
+        sentences : [{"text": str, "section": str}, ...]
+        plan      : [{"type": str, "sent_idx": int|None, "img_idx": int|None}, ...]
+        images    : [url_or_path, ...]  (plan의 img_idx 는 이 리스트 인덱스)
     """
-    from config import settings as s
+    sentences: list[dict] = []
+    plan: list[dict] = []
+    images: list[str] = []
 
-    layout = _load_layout()
-    voice: str = getattr(s, "TTS_VOICE", "ko-KR-SunHiNeural")
-    rate: str = getattr(s, "TTS_RATE", "+25%")
-    sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
-    max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
-    font_dir: Path = ASSETS_DIR / "fonts"
-    audio_dir: Path = getattr(s, "AUDIO_DIR", ASSETS_DIR / "audio")
+    for scene in scenes:
+        img_idx: Optional[int] = None
+        if scene.image_url:
+            img_idx = len(images)
+            images.append(scene.image_url)
 
-    video_dir = MEDIA_DIR / "video"
-    video_dir.mkdir(parents=True, exist_ok=True)
-    if output_path is None:
-        output_path = video_dir / f"post_{post.id}.mp4"
+        if scene.type == "intro":
+            text = scene.text_lines[0] if scene.text_lines else ""
+            sent_idx = len(sentences)
+            sentences.append({"text": text, "section": "hook"})
+            plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx})
 
-    tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post.id}"
+        elif scene.type == "img_text":
+            text = scene.text_lines[0] if scene.text_lines else ""
+            sent_idx = len(sentences)
+            sentences.append({"text": text, "section": "body"})
+            plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
+
+        elif scene.type == "text_only":
+            # 여러 줄 → 각각 별도 plan 엔트리 → 렌더러가 누적 스태킹
+            for line in scene.text_lines:
+                sent_idx = len(sentences)
+                sentences.append({"text": line, "section": "body"})
+                plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
+
+        elif scene.type == "outro":
+            text = scene.text_lines[0] if scene.text_lines else ""
+            sent_idx: Optional[int] = None
+            if text:
+                sent_idx = len(sentences)
+                sentences.append({"text": text, "section": "closer"})
+            plan.append({"type": "outro", "sent_idx": sent_idx, "img_idx": img_idx})
+
+    return sentences, plan, images
+
+
+# ---------------------------------------------------------------------------
+# 공통 렌더링 파이프라인 (Steps 2 / 4 – 11)
+# ---------------------------------------------------------------------------
+
+def _render_pipeline(
+    post_id: int,
+    title: str,
+    sentences: list[dict],
+    plan: list[dict],
+    images: list[str],
+    output_path: Path,
+    layout: dict,
+    voice: str,
+    rate: str,
+    sfx_offset: float,
+    max_slots: int,
+    font_dir: Path,
+    audio_dir: Path,
+) -> Path:
+    """sentences / plan / images 를 받아 mp4를 생성한다.
+
+    Steps 2, 4–11 을 담당. _plan_sequence 단계는 호출자가 수행한다.
+    """
+    tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # ── Step 1: 문장 구조화 ────────────────────────────────
-        sentences: list[dict] = []
-        sentences.append({"text": script.hook, "section": "hook"})
-        for body_text in script.body:
-            is_quote = any(q in body_text for q in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d"))
-            sentences.append({"text": body_text, "section": "comment" if is_quote else "body"})
-        sentences.append({"text": script.closer, "section": "closer"})
-
-        images: list[str] = post.images if isinstance(post.images, list) else []
-        logger.info("[layout] post_id=%d 문장=%d 이미지=%d", post.id, len(sentences), len(images))
-
-        # ── Step 2: 베이스 프레임 베이킹 (제목 고정 위치에 1회 합성) ──
-        title = (post.title or "")
+        # ── Step 2: 베이스 프레임 베이킹 ──────────────────────
         base_frame = _create_base_frame(layout, title, font_dir, ASSETS_DIR)
         logger.info("[layout] 베이스 프레임 생성 완료 (제목 헤더 고정)")
-
-        # ── Step 3: 씬 배분 계획 ───────────────────────────────
-        plan = _plan_sequence(sentences, images, layout)
-        logger.info("[layout] 씬 계획: %s", [p["type"] for p in plan])
 
         # ── Step 4: 이미지 사전 다운로드 ──────────────────────
         img_cache: dict[int, Optional[Image.Image]] = {}
@@ -756,7 +793,6 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
         to_ta = sc_to["elements"]["text_area"]
         to_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", to_ta["font_size"])
         to_max_w = to_ta["max_width"]
-
         to_max_chars = sc_to.get("text_max_chars", 0)
 
         for sent in sentences:
@@ -777,7 +813,6 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
             img_idx = entry.get("img_idx")
             frame_path = tmp_dir / f"frame_{frame_idx:03d}.png"
 
-            # text_only가 아닌 씬에서는 누적 히스토리 리셋
             if scene_type != "text_only":
                 text_only_history = []
 
@@ -790,13 +825,11 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
                 _render_img_text_frame(base_frame, img_pil, text, layout, font_dir, frame_path)
 
             elif scene_type == "text_only":
-                # 이전 슬롯 흐리게
                 for prev in text_only_history:
                     prev["is_new"] = False
 
                 new_lines = sentences[sent_idx]["lines"] if sent_idx is not None else []
 
-                # 슬롯 초과 시 Clear
                 if len(text_only_history) >= max_slots:
                     if len(new_lines) > max_slots:
                         logger.warning("[layout] 프레임 %d: %d줄 초과 — 단독 표시",
@@ -858,14 +891,107 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
         ]
 
         logger.info("[layout] FFmpeg 인코딩 시작: %s", output_path.name)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode != 0:
+        ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if ffmpeg_result.returncode != 0:
             logger.error("[layout] FFmpeg 실패 (returncode=%d):\n%s",
-                         result.returncode, result.stderr[-3000:])
-            raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+                         ffmpeg_result.returncode, ffmpeg_result.stderr[-3000:])
+            raise subprocess.CalledProcessError(
+                ffmpeg_result.returncode, cmd, ffmpeg_result.stdout, ffmpeg_result.stderr
+            )
 
         logger.info("[layout] 완료: %s (총 %.1fs)", output_path.name, total_dur)
         return output_path
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def render_layout_video(post, script, output_path: Path | None = None) -> Path:
+    """레이아웃 기반 쇼츠 영상 렌더링.
+
+    Args:
+        post:        Post 객체 (post.id, post.title, post.images 사용)
+        script:      ScriptData 객체 (hook / body / closer)
+        output_path: 최종 mp4 저장 경로
+    """
+    from config import settings as s
+
+    layout = _load_layout()
+    voice: str = getattr(s, "TTS_VOICE", "ko-KR-SunHiNeural")
+    rate: str = getattr(s, "TTS_RATE", "+25%")
+    sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
+    max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
+    font_dir: Path = ASSETS_DIR / "fonts"
+    audio_dir: Path = getattr(s, "AUDIO_DIR", ASSETS_DIR / "audio")
+
+    video_dir = MEDIA_DIR / "video"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    if output_path is None:
+        output_path = video_dir / f"post_{post.id}.mp4"
+
+    # ── Step 1: 문장 구조화 ────────────────────────────────────
+    sentences: list[dict] = []
+    sentences.append({"text": script.hook, "section": "hook"})
+    for body_text in script.body:
+        is_quote = any(q in body_text for q in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d"))
+        sentences.append({"text": body_text, "section": "comment" if is_quote else "body"})
+    sentences.append({"text": script.closer, "section": "closer"})
+
+    images: list[str] = post.images if isinstance(post.images, list) else []
+    logger.info("[layout] post_id=%d 문장=%d 이미지=%d", post.id, len(sentences), len(images))
+
+    # ── Step 3: 씬 배분 계획 (기존 알고리즘) ──────────────────
+    plan = _plan_sequence(sentences, images, layout)
+    logger.info("[layout] 씬 계획: %s", [p["type"] for p in plan])
+
+    return _render_pipeline(
+        post.id, post.title or "", sentences, plan, images,
+        output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
+    )
+
+
+def render_layout_video_from_scenes(
+    post,
+    scenes: list,
+    output_path: Path | None = None,
+) -> Path:
+    """SceneDirector 출력(SceneDecision 목록)으로 직접 렌더링.
+
+    _plan_sequence 를 건너뛰고 사전에 계산된 씬 배분을 그대로 사용한다.
+    resource_analyzer → scene_director 파이프라인과 함께 사용.
+
+    Args:
+        post:        Post 객체 (post.id, post.title 사용)
+        scenes:      list[SceneDecision] — content_processor.process_content() 반환값
+        output_path: 최종 mp4 저장 경로
+    """
+    from config import settings as s
+
+    layout = _load_layout()
+    voice: str = getattr(s, "TTS_VOICE", "ko-KR-SunHiNeural")
+    rate: str = getattr(s, "TTS_RATE", "+25%")
+    sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
+    max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
+    font_dir: Path = ASSETS_DIR / "fonts"
+    audio_dir: Path = getattr(s, "AUDIO_DIR", ASSETS_DIR / "audio")
+
+    video_dir = MEDIA_DIR / "video"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    if output_path is None:
+        output_path = video_dir / f"post_{post.id}.mp4"
+
+    # SceneDecision → 내부 렌더러 형식 변환
+    sentences, plan, images = _scenes_to_plan_and_sentences(scenes)
+    logger.info(
+        "[layout:scenes] post_id=%d 씬=%d 문장=%d 이미지=%d",
+        post.id, len(scenes), len(sentences), len(images),
+    )
+
+    return _render_pipeline(
+        post.id, post.title or "", sentences, plan, images,
+        output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
+    )

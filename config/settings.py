@@ -116,6 +116,8 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     # 수신함 자동 승인
     "auto_approve_enabled": "false",
     "auto_approve_threshold": "80",
+    # LLM 파이프라인 (5-Phase content_processor 활성화 여부)
+    "use_content_processor": "false",
 }
 
 
@@ -210,6 +212,32 @@ SSUL_COMMENT_BORDER_RADIUS: int = int(os.getenv("SSUL_COMMENT_BORDER_RADIUS", "1
 
 # 효과음 타이밍 오프셋 (음수 = 앞당김)
 SSUL_SFX_OFFSET: float = float(os.getenv("SSUL_SFX_OFFSET", "-0.15"))
+
+# ---------------------------------------------------------------------------
+# Layout constraints (layout.json 단일 소스)
+# ---------------------------------------------------------------------------
+_LAYOUT_CONFIG_PATH = _PROJECT_ROOT / "config" / "layout.json"
+with open(_LAYOUT_CONFIG_PATH, encoding="utf-8") as _f:
+    _layout_cfg = json.load(_f)
+
+CONSTRAINTS: dict = _layout_cfg.get("constraints", {})
+
+MAX_TITLE_CHARS: int   = CONSTRAINTS.get("post_title",      {}).get("max_chars", 40)
+MAX_HOOK_CHARS: int    = CONSTRAINTS.get("hook_text",        {}).get("max_chars", 50)
+MAX_BODY_CHARS: int    = CONSTRAINTS.get("body_sentence",    {}).get("max_chars", 45)
+MAX_CAPTION_CHARS: int = CONSTRAINTS.get("img_text_caption", {}).get("max_chars", 60)
+
+
+def get_llm_constraints_prompt() -> str:
+    """LLM 프롬프트에 삽입할 텍스트 길이 제약 문자열."""
+    return (
+        f"## 텍스트 길이 제약 (엄수 필수)\n"
+        f"- 후킹 문장: 최대 {MAX_HOOK_CHARS}자\n"
+        f"- 본문 한 줄: 최대 {MAX_BODY_CHARS}자\n"
+        f"- 이미지 캡션: 최대 {MAX_CAPTION_CHARS}자\n"
+        f"\n**초과 시 화면에서 잘립니다.**"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Monitoring & Alerting

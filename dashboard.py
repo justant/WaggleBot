@@ -10,7 +10,7 @@ Streamlit 기반 웹 UI
 import json
 import logging
 import re
-from datetime import timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests as _http
@@ -25,7 +25,7 @@ from config.settings import (
     load_pipeline_config, save_pipeline_config,
     load_credentials_config, save_credentials_config,
 )
-from db.models import Post, PostStatus, Comment, Content
+from db.models import Post, PostStatus, Comment, Content, LLMLog
 from db.session import SessionLocal
 
 log = logging.getLogger(__name__)
@@ -249,8 +249,8 @@ STATUS_EMOJI = {
 # 탭 구성
 # ---------------------------------------------------------------------------
 
-tab_inbox, tab_editor, tab_progress, tab_gallery, tab_analytics, tab_settings = st.tabs(
-    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "📊 분석", "⚙️ 설정"]
+tab_inbox, tab_editor, tab_progress, tab_gallery, tab_analytics, tab_settings, tab_llm_log = st.tabs(
+    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "📊 분석", "⚙️ 설정", "🔬 LLM 이력"]
 )
 
 # ===========================================================================
@@ -1798,6 +1798,20 @@ with tab_settings:
 
     st.divider()
 
+    # LLM 파이프라인 설정
+    st.subheader("🔬 LLM 파이프라인")
+    st.caption(
+        "활성화 시 resource_analyzer → llm_chunker → text_validator → scene_director "
+        "5-Phase 파이프라인으로 대본을 생성합니다."
+    )
+    use_content_processor = st.checkbox(
+        "content_processor 사용 (5-Phase 파이프라인)",
+        value=cfg.get("use_content_processor") == "true",
+        help="비활성화 시 기존 generate_script() 경로(레거시)를 사용합니다.",
+    )
+
+    st.divider()
+
     # 저장 버튼 (파이프라인 설정만)
     if st.button("💾 파이프라인 설정 저장", type="primary"):
         new_cfg = {
@@ -1808,6 +1822,7 @@ with tab_settings:
             "upload_privacy": selected_privacy,
             "auto_approve_enabled": "true" if auto_approve_on else "false",
             "auto_approve_threshold": str(auto_approve_thresh),
+            "use_content_processor": "true" if use_content_processor else "false",
         }
         save_pipeline_config(new_cfg)
         st.success("✅ 설정이 저장되었습니다.")
@@ -1815,3 +1830,97 @@ with tab_settings:
     # 현재 설정 표시
     with st.expander("🔍 현재 저장된 설정 보기"):
         st.json(load_pipeline_config())
+
+
+# ===========================================================================
+# Tab 7: LLM 이력
+# ===========================================================================
+
+with tab_llm_log:
+    st.header("🔬 LLM 호출 이력")
+
+    # 필터 컨트롤
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        filter_call_type = st.selectbox(
+            "호출 유형", ["전체", "chunk", "generate_script"], key="llm_filter_type"
+        )
+    with col_f2:
+        filter_success = st.selectbox(
+            "성공 여부", ["전체", "성공", "실패"], key="llm_filter_success"
+        )
+    with col_f3:
+        filter_days = st.selectbox(
+            "기간",
+            [7, 30, 90],
+            format_func=lambda d: f"최근 {d}일",
+            key="llm_filter_days",
+        )
+
+    with SessionLocal() as _db:
+        _cutoff = datetime.now(timezone.utc) - timedelta(days=filter_days)
+
+        # 전체 기간 통계 (호출유형/성공여부 필터 무관)
+        _base_q = _db.query(LLMLog).filter(LLMLog.created_at >= _cutoff)
+        _total_period = _base_q.count()
+        _success_period = _base_q.filter(LLMLog.success == True).count()  # noqa: E712
+        _avg_dur = (
+            _db.query(func.avg(LLMLog.duration_ms))
+            .filter(LLMLog.created_at >= _cutoff)
+            .scalar()
+            or 0
+        )
+
+        # 필터 적용 로그 목록
+        _fq = _db.query(LLMLog).filter(LLMLog.created_at >= _cutoff)
+        if filter_call_type != "전체":
+            _fq = _fq.filter(LLMLog.call_type == filter_call_type)
+        if filter_success == "성공":
+            _fq = _fq.filter(LLMLog.success == True)  # noqa: E712
+        elif filter_success == "실패":
+            _fq = _fq.filter(LLMLog.success == False)  # noqa: E712
+
+        _logs = _fq.order_by(LLMLog.created_at.desc()).limit(200).all()
+
+    # 통계 카드
+    _sc1, _sc2, _sc3 = st.columns(3)
+    _sc1.metric("총 호출 (기간)", _total_period)
+    _sc2.metric(
+        "성공률",
+        f"{(_success_period / _total_period * 100):.1f}%" if _total_period else "N/A",
+    )
+    _sc3.metric("평균 응답시간", f"{_avg_dur:.0f}ms" if _avg_dur else "N/A")
+
+    st.divider()
+
+    if not _logs:
+        st.info("조건에 맞는 이력이 없습니다.")
+    else:
+        st.caption(f"최근 {filter_days}일 이력 (최대 200건 표시)")
+        for _log in _logs:
+            _icon = "✅" if _log.success else "❌"
+            _strat = _log.strategy or "-"
+            _hdr = (
+                f"{_icon} #{_log.id} "
+                f"[{_log.call_type}] "
+                f"{to_kst(_log.created_at)} | "
+                f"전략={_strat} | 이미지={_log.image_count}장 | {_log.duration_ms}ms"
+            )
+            with st.expander(_hdr):
+                _mc, _rc = st.columns(2)
+                with _mc:
+                    st.markdown(
+                        f"**모델:** `{_log.model_name or '-'}`  \n"
+                        f"**본문 길이:** {_log.content_length}자"
+                    )
+                    if _log.error_message:
+                        st.error(_log.error_message)
+                with _rc:
+                    if _log.parsed_result:
+                        st.markdown("**파싱 결과**")
+                        st.json(_log.parsed_result)
+
+                st.markdown("**프롬프트**")
+                st.code(_log.prompt_text or "(없음)", language="text")
+                st.markdown("**LLM 응답**")
+                st.code(_log.raw_response or "(없음)", language="text")

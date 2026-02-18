@@ -108,8 +108,32 @@ class RobustProcessor:
                 render_style = json.loads(script.to_json()).get("render_style", "layout")
                 logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
                 if render_style == "layout":
-                    from ai_worker.layout_renderer import render_layout_video
-                    video_path = render_layout_video(post, script)
+                    from ai_worker.layout_renderer import render_layout_video_from_scenes
+                    from ai_worker.resource_analyzer import analyze_resources
+                    from ai_worker.scene_director import SceneDirector
+                    from ai_worker.text_validator import validate_and_fix
+
+                    _images: list[str] = post.images if isinstance(post.images, list) else []
+
+                    # Phase 1: 자원 분석
+                    _profile = analyze_resources(post, _images)
+                    logger.info(
+                        "[Step 3/3] 전략=%s 이미지=%d",
+                        _profile.strategy, _profile.image_count,
+                    )
+
+                    # Phase 3: 대본 검증/보정 (max_chars)
+                    _script_dict = validate_and_fix(
+                        {"hook": script.hook, "body": list(script.body), "closer": script.closer}
+                    )
+
+                    # Phase 4: 씬 배분
+                    _director = SceneDirector(_profile, _images, _script_dict)
+                    _scenes = _director.direct()
+                    logger.info("[Step 3/3] 씬=%d개", len(_scenes))
+
+                    # Phase 5: 렌더링
+                    video_path = render_layout_video_from_scenes(post, _scenes)
                 else:
                     video_path = self._safe_render_video(post, audio_path, script.to_json())
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
@@ -246,13 +270,14 @@ class RobustProcessor:
             except Exception:
                 logger.debug("variant_config 로드 실패 — 무시", exc_info=True)
 
-            # LLM 대본 생성
+            # LLM 대본 생성 (post_id 전달 → LLM 이력 로그 연결)
             script = generate_script(
                 title=post.title,
                 body=post.content or "",
                 comments=comment_texts,
                 model=self.cfg.get("llm_model"),
                 extra_instructions=extra_instructions,
+                post_id=post.id,
             )
 
             # 유효성 검사
@@ -507,8 +532,39 @@ class RobustProcessor:
             except Exception:
                 logger.debug("A/B 변형 배정 실패 — 무시", exc_info=True)
 
-            with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
-                script = self._safe_generate_summary(post, session)
+            use_cp = self.cfg.get("use_content_processor") == "true"
+
+            if use_cp:
+                # 5-Phase content_processor 파이프라인
+                from ai_worker.llm_chunker import chunk_with_llm
+                from ai_worker.resource_analyzer import analyze_resources
+
+                _images: list[str] = post.images if isinstance(post.images, list) else []
+                _profile = analyze_resources(post, _images)
+                logger.info(
+                    "[Pipeline LLM+TTS] content_processor 모드: 전략=%s 이미지=%d",
+                    _profile.strategy, _profile.image_count,
+                )
+                with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
+                    _raw = await chunk_with_llm(
+                        post.content or "",
+                        _profile,
+                        post_id=post_id,
+                        extended=True,
+                    )
+                script = ScriptData(
+                    hook=_raw.get("hook", ""),
+                    body=_raw.get("body", []),
+                    closer=_raw.get("closer", ""),
+                    title_suggestion=_raw.get("title_suggestion", ""),
+                    tags=_raw.get("tags", []),
+                    mood=_raw.get("mood", "funny"),
+                )
+            else:
+                # 레거시 generate_script 경로
+                with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
+                    script = self._safe_generate_summary(post, session)
+
             logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
             with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
@@ -529,8 +585,9 @@ class RobustProcessor:
     def render_stage(self, post_id: int, script: ScriptData, audio_path: Path) -> Path:
         """영상 렌더링 + 썸네일 생성 (CPU 단계).
 
-        Content.summary_text의 render_style 필드로 렌더러를 선택한다:
-        - 기본값: Ken Burns 슬라이드쇼 (기존 방식)
+        render_style에 따라 렌더러를 선택한다:
+        - "layout" (기본): SceneDirector → render_layout_video_from_scenes()
+        - 기타: 레거시 render_preview()
 
         파이프라인 병렬화에서 독립적으로 호출되는 2단계.
         완료 시 post.status → PREVIEW_RENDERED.
@@ -560,8 +617,31 @@ class RobustProcessor:
             logger.info("[Pipeline Render] 시작: post_id=%d render_style=%s", post_id, render_style)
 
             if render_style == "layout":
-                from ai_worker.layout_renderer import render_layout_video
-                video_path = render_layout_video(post, script)
+                from ai_worker.layout_renderer import render_layout_video_from_scenes
+                from ai_worker.resource_analyzer import analyze_resources
+                from ai_worker.scene_director import SceneDirector
+                from ai_worker.text_validator import validate_and_fix
+
+                images: list[str] = post.images if isinstance(post.images, list) else []
+
+                # Phase 1: 자원 분석
+                profile = analyze_resources(post, images)
+                logger.info(
+                    "[Pipeline Render] 전략=%s 이미지=%d",
+                    profile.strategy, profile.image_count,
+                )
+
+                # Phase 3: 대본 검증/보정 (max_chars)
+                script_dict = validate_and_fix(
+                    {"hook": script.hook, "body": list(script.body), "closer": script.closer}
+                )
+
+                # Phase 4: 씬 배분
+                director = SceneDirector(profile, images, script_dict)
+                scenes = director.direct()
+                logger.info("[Pipeline Render] 씬=%d개", len(scenes))
+
+                video_path = render_layout_video_from_scenes(post, scenes)
             else:
                 video_path = self._safe_render_video(post, audio_path, script.to_json())
 
