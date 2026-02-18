@@ -45,7 +45,8 @@ LINE_HEIGHT = int(BODY_FONT_SIZE * 1.45)          # ≈ 67px
 SENTENCE_GAP = int(LINE_HEIGHT * 0.6)             # ≈ 40px
 COMMENT_LINE_HEIGHT = int(COMMENT_FONT_SIZE * 1.45)  # ≈ 58px
 COMMENT_INDENT = 30
-WRAP_WIDTH = 20   # 한 줄 최대 글자 수
+WRAP_WIDTH = 20   # 한 줄 최대 글자 수 (레거시 — pixel wrapper로 대체)
+MAX_TEXT_WIDTH = TEXT_X_RIGHT - TEXT_X  # 917px
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,40 @@ def _wrap_text_ko(text: str, width: int = WRAP_WIDTH) -> list[str]:
     if text:
         lines.append(text)
     return lines
+
+
+def _wrap_text_pixel(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    indent: int = 0,
+) -> list[str]:
+    """픽셀 기반 텍스트 래핑 (들여쓰기 고려).
+
+    Args:
+        text:      래핑할 텍스트
+        font:      렌더링에 사용할 폰트
+        max_width: 전체 텍스트 영역 폭(px)
+        indent:    들여쓰기 폭(px) — 실제 가용 폭은 max_width - indent
+    """
+    available_width = max_width - indent
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        test = current + char
+        try:
+            w = font.getlength(test)
+        except AttributeError:
+            w = font.getbbox(test)[2]
+        if w > available_width:
+            if current:
+                lines.append(current)
+            current = char
+        else:
+            current = test
+    if current:
+        lines.append(current)
+    return lines or [text]
 
 
 def _calc_entry_height(text: str, is_comment: bool) -> int:
@@ -204,6 +239,12 @@ def create_ssul_frame(
             break
         history.pop(0)
 
+    # 설정 로드 (런타임에 변경 가능하도록 매 프레임 조회)
+    from config import settings as s
+    prev_color: str = getattr(s, "SSUL_PREV_TEXT_COLOR", "#666666")
+    new_color: str = getattr(s, "SSUL_NEW_TEXT_COLOR", "#000000")
+    comment_bg_enable: bool = getattr(s, "SSUL_COMMENT_BG_ENABLE", True)
+
     # 본문 텍스트 렌더링
     current_y = TEXT_Y_BODY_START
     for entry in history:
@@ -212,12 +253,27 @@ def create_ssul_frame(
         is_new = entry.get("is_new", False)
         is_comment = section == "comment"
 
-        color = "#000000" if is_new else "#444444"
+        color = new_color if is_new else prev_color
         font = font_comment if is_comment else font_body
         lh = COMMENT_LINE_HEIGHT if is_comment else LINE_HEIGHT
-        x = TEXT_X + (COMMENT_INDENT if is_comment else 0)
+        indent = COMMENT_INDENT if is_comment else 0
+        x = TEXT_X + indent
 
-        for line in _wrap_text_ko(text):
+        # 픽셀 기반 래핑 (들여쓰기 반영)
+        lines = _wrap_text_pixel(text, font, MAX_TEXT_WIDTH, indent)
+
+        # 댓글 배경 박스
+        if is_comment and comment_bg_enable:
+            box_y_start = current_y - 5
+            box_y_end = current_y + len(lines) * lh + 5
+            draw.rectangle(
+                [(TEXT_X + 10, box_y_start), (TEXT_X_RIGHT - 10, box_y_end)],
+                fill="#F0F0F0",
+                outline="#DDDDDD",
+                width=1,
+            )
+
+        for line in lines:
             if current_y > TEXT_Y_OVERFLOW_MAX:
                 break
             draw.text((x, current_y), line, font=font, fill=color)
@@ -249,6 +305,21 @@ async def _tts_chunk_async(
         try:
             communicate = edge_tts.Communicate(text, voice, rate=rate)
             await communicate.save(str(out_path))
+
+            # 앞부분 묵음 제거 (Edge-TTS 패딩 0.1~0.3초 제거 → SFX 싱크 개선)
+            trimmed_path = out_path.with_suffix(".trimmed.mp3")
+            trim_result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", str(out_path),
+                    "-af", "silenceremove=start_periods=1:start_threshold=-50dB:start_duration=0.1",
+                    "-c:a", "libmp3lame", "-b:a", "128k",
+                    str(trimmed_path),
+                ],
+                capture_output=True,
+            )
+            if trim_result.returncode == 0 and trimmed_path.exists():
+                trimmed_path.replace(out_path)
+
             return _get_audio_duration(out_path)
         except Exception:
             if attempt == 0:
@@ -333,6 +404,7 @@ def _build_sfx_filter(
     sfx_choices: list[tuple[str, float]],  # (파일명, 볼륨)
     audio_dir: Path,
     tts_input_idx: int = 1,        # FFmpeg 입력 중 merged_tts.mp3의 인덱스
+    sfx_offset: float = -0.08,     # 전역 SFX 타이밍 오프셋(초, 음수=앞당김)
 ) -> tuple[list[str], str]:
     """효과음 amix용 FFmpeg 입력 목록과 filter_complex 문자열을 구성한다.
 
@@ -365,9 +437,9 @@ def _build_sfx_filter(
             logger.warning("SFX 파일 없음: %s", sfx_path)
             continue
 
-        # 긴 효과음은 0.1초 앞당겨 배치
+        # 긴 효과음은 0.1초, 전역 오프셋 추가 앞당겨 배치
         lead_in = 0.1 if sfx_file in ("ding.mp3", "error.mp3") else 0.0
-        delay_ms = max(0, int((t_start - lead_in) * 1000))
+        delay_ms = max(0, int((t_start - lead_in + sfx_offset) * 1000))
         label = f"sfx{i}"
 
         extra_inputs += ["-i", str(sfx_path)]
@@ -439,6 +511,7 @@ def render_ssul_video(post, script, output_path: Path | None = None) -> Path:
     audio_dir: Path = getattr(s, "SSUL_AUDIO_DIR", ASSETS_DIR / "audio")
     voice: str = getattr(s, "SSUL_TTS_VOICE", "ko-KR-SunHiNeural")
     rate: str = getattr(s, "SSUL_TTS_RATE", "+25%")
+    sfx_offset: float = getattr(s, "SSUL_SFX_OFFSET", -0.08)
     font_dir: Path = ASSETS_DIR / "fonts"
 
     if not template_path.exists():
@@ -467,11 +540,15 @@ def render_ssul_video(post, script, output_path: Path | None = None) -> Path:
         logger.info("[ssul] post_id=%d 문장 %d개 렌더링 시작", post.id, len(sentences))
 
         # ── Step 2: TTS 청크 생성 ─────────────────────────────────
+        import time as _time
+        logger.info("[ssul] TTS 생성 시작")
+        _t0 = _time.time()
         durations: list[float] = _run_async(  # type: ignore[assignment]
             _generate_all_chunks(sentences, tmp_dir, voice, rate)
         )
         total_dur = sum(durations)
-        logger.info("[ssul] TTS 청크 완료: %d개, 총 %.1fs", len(durations), total_dur)
+        logger.info("[ssul] TTS 청크 완료: %d개, 총 %.1fs (생성 %.2fs)",
+                    len(durations), total_dur, _time.time() - _t0)
 
         # ── Step 3: 타임스탬프 계산 ───────────────────────────────
         timings: list[float] = []
@@ -488,16 +565,26 @@ def render_ssul_video(post, script, output_path: Path | None = None) -> Path:
         merged_tts = tmp_dir / "merged_tts.mp3"
         _merge_tts_chunks(chunk_paths, merged_tts)
 
-        # ── Step 6: PIL 프레임 생성 ───────────────────────────────
+        # ── Step 6: PIL 프레임 생성 (5-2-5 하이브리드 스크롤) ────
+        max_visible: int = getattr(s, "SSUL_MAX_VISIBLE_SENTENCES", 5)
+        scroll_out: int = getattr(s, "SSUL_SCROLL_OUT_COUNT", 2)
+
         title = (post.title or "")[:40]
         meta_text = _generate_meta_text()
         text_history: list[dict] = []
         frame_paths: list[Path] = []
 
+        logger.info("[ssul] 이미지 프레임 생성 시작")
+        _t1 = _time.time()
         for i, sent in enumerate(sentences):
             # 이전 문장들을 흐리게 표시
             for prev in text_history:
                 prev["is_new"] = False
+
+            # 5-2-5 FIFO: 최대 문장 수 초과 시 오래된 것부터 제거
+            if len(text_history) >= max_visible:
+                text_history = text_history[scroll_out:]
+
             text_history.append({
                 "text": sent["text"],
                 "section": sent["section"],
@@ -510,7 +597,8 @@ def render_ssul_video(post, script, output_path: Path | None = None) -> Path:
             )
             frame_paths.append(frame_path)
 
-        logger.info("[ssul] PIL 프레임 %d장 생성 완료", len(frame_paths))
+        logger.info("[ssul] PIL 프레임 %d장 생성 완료 (%.2fs)",
+                    len(frame_paths), _time.time() - _t1)
 
         # ── Step 7: concat_list.txt ───────────────────────────────
         concat_file = tmp_dir / "concat_list.txt"
@@ -525,7 +613,8 @@ def render_ssul_video(post, script, output_path: Path | None = None) -> Path:
 
         # ── Step 8: 효과음 필터 구성 ──────────────────────────────
         extra_inputs, sfx_filter = _build_sfx_filter(
-            sentences, timings, sfx_choices, audio_dir, tts_input_idx=1,
+            sentences, timings, sfx_choices, audio_dir,
+            tts_input_idx=1, sfx_offset=sfx_offset,
         )
 
         # ── Step 9: FFmpeg 최종 인코딩 ────────────────────────────
