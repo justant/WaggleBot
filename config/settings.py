@@ -169,28 +169,19 @@ def save_credentials_config(creds: dict[str, dict]) -> None:
     with open(_CREDENTIALS_PATH, "w", encoding="utf-8") as f:
         json.dump(creds, f, ensure_ascii=False, indent=2)
 
-# ---------------------------------------------------------------------------
-# 썰 렌더러 (ssul_renderer.py)
-# ---------------------------------------------------------------------------
-SSUL_TEMPLATE_PATH: Path = Path(os.getenv(
-    "SSUL_TEMPLATE_PATH",
-    str(_PROJECT_ROOT / "assets" / "backgrounds" / "base_template.png"),
-))
-SSUL_AUDIO_DIR: Path = Path(os.getenv(
-    "SSUL_AUDIO_DIR",
+AUDIO_DIR: Path = Path(os.getenv(
+    "AUDIO_DIR",
     str(_PROJECT_ROOT / "assets" / "audio"),
 ))
-SSUL_TTS_VOICE: str = os.getenv("SSUL_TTS_VOICE", "ko-KR-SunHiNeural")
-SSUL_TTS_RATE: str = os.getenv("SSUL_TTS_RATE", "+25%")
-SSUL_FONT_BODY: Path = Path(os.getenv(
-    "SSUL_FONT_BODY",
+TTS_VOICE: str = os.getenv("TTS_VOICE", "ko-KR-SunHiNeural")
+TTS_RATE: str = os.getenv("TTS_RATE", "+25%")
+FONT_BODY: Path = Path(os.getenv(
+    "FONT_BODY",
     str(_PROJECT_ROOT / "assets" / "fonts" / "NotoSansKR-Medium.ttf"),
 ))
-SSUL_FONT_TITLE: Path = Path(os.getenv(
-    "SSUL_FONT_TITLE",
-    str(_PROJECT_ROOT / "assets" / "fonts" / "NotoSansKR-Bold.ttf"),
-))
-SSUL_META_RANDOMIZE: bool = os.getenv("SSUL_META_RANDOMIZE", "true").lower() == "true"
+
+# 효과음 타이밍 오프셋 (음수 = 앞당김)
+SFX_OFFSET: float = float(os.getenv("SFX_OFFSET", "-0.15"))
 
 # ---------------------------------------------------------------------------
 # Monitoring & Alerting

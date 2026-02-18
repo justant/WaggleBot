@@ -1,0 +1,109 @@
+{
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "global": {
+    "font_bold":    "assets/fonts/NotoSansKR-Bold.ttf",
+    "font_medium":  "assets/fonts/NotoSansKR-Medium.ttf",
+    "font_regular": "assets/fonts/NotoSansKR-Regular.ttf",
+    "background_color": "#FFFFFF",
+    "header_height": 160,
+    "header_color":  "#4A44FF",
+    "base_layout": "assets/backgrounds/base_layout.png",
+    "header_title": {
+      "comment": "모든 프레임 공통 — 헤더 안에 고정 출력되는 제목",
+      "x":50,
+      "y": 190,
+      "max_width": 980,
+      "font_size": 55,
+      "font_weight": "bold",
+      "align": "left",
+      "color": "#000000",
+      "max_chars": 20
+    }
+  },
+  "scenes": {
+    "intro": {
+      "description": "제목만 — title_only.svg (베이스 프레임 그대로 사용)",
+      "title_max_chars": 18
+    },
+    "img_text": {
+      "description": "이미지 + 텍스트 — img_text.svg",
+      "text_max_chars": 20,
+      "elements": {
+        "image_area": {
+          "x": 90,
+          "y": 550,
+          "width": 900,
+          "height": 900,
+          "fit_mode": "cover",
+          "border_radius": 20
+        },
+        "text_area": {
+          "x": 540,
+          "y": 1550,
+          "max_width": 900,
+          "font_size": 60,
+          "font_weight": "medium",
+          "align": "center",
+          "color": "#000000",
+          "line_height": 90,
+          "max_lines": 2
+        }
+      }
+    },
+    "text_only": {
+      "description": "텍스트만, 3슬롯 고정 Y좌표 — text_only.svg",
+      "text_max_chars": 20,
+      "elements": {
+        "text_area": {
+          "x": 540,
+          "max_width": 950,
+          "font_size": 60,
+          "font_weight": "medium",
+          "align": "center",
+          "color": "#000000",
+          "prev_text_color": "#888888",
+          "line_height": 110,
+          "y_coords": [550, 700, 850],
+          "max_slots": 3
+        }
+      }
+    },
+    "outro": {
+      "description": "이미지만 (남은 이미지 아웃트로) — img_only.svg",
+      "elements": {
+        "image_area": {
+          "x": 90,
+          "y": 550,
+          "width": 900,
+          "height": 1150,
+          "fit_mode": "cover",
+          "border_radius": 20
+        },
+        "overlay_text": {
+          "x": 540,
+          "y": 1700,
+          "max_width": 900,
+          "font_size": 75,
+          "font_weight": "regular",
+          "align": "center",
+          "color": "#FFFFFF",
+          "stroke_color": "#000000",
+          "stroke_width": 3
+        }
+      }
+    }
+  },
+  "layout_algorithm": {
+    "img_heavy_threshold": 0.8,
+    "img_mixed_threshold": 0.3,
+    "sfx": {
+      "intro":     "click.mp3",
+      "img_text":  "shutter.mp3",
+      "text_only": "pop.mp3",
+      "outro":     "ding.mp3"
+    }
+  }
+}

@@ -130,8 +130,9 @@ async def upload_once() -> bool:
                 session.commit()
                 logger.info("업로드 완료: post_id=%d", post.id)
             else:
+                post.status = PostStatus.FAILED
                 session.commit()
-                logger.warning("일부 플랫폼 업로드 실패: post_id=%d", post.id)
+                logger.warning("업로드 실패, FAILED 처리: post_id=%d", post.id)
         except Exception:
             logger.exception("업로드 실패: post_id=%d", post.id)
             session.rollback()
@@ -147,8 +148,7 @@ async def _upload_loop() -> None:
         except Exception:
             logger.exception("업로드 루프 예외")
             found = False
-        if not found:
-            await asyncio.sleep(AI_POLL_INTERVAL)
+        await asyncio.sleep(AI_POLL_INTERVAL if not found else 1)
 
 
 # ---------------------------------------------------------------------------

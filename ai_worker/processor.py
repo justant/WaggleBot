@@ -105,11 +105,11 @@ class RobustProcessor:
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
                 # ===== Step 3: 렌더링 (render_style에 따라 분기) =====
-                render_style = json.loads(script.to_json()).get("render_style", "ssul")
+                render_style = json.loads(script.to_json()).get("render_style", "layout")
                 logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
-                if render_style == "ssul":
-                    from ai_worker.ssul_renderer import render_ssul_video
-                    video_path = render_ssul_video(post, script)
+                if render_style == "layout":
+                    from ai_worker.layout_renderer import render_layout_video
+                    video_path = render_layout_video(post, script)
                 else:
                     video_path = self._safe_render_video(post, audio_path, script.to_json())
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
@@ -530,8 +530,7 @@ class RobustProcessor:
         """영상 렌더링 + 썸네일 생성 (CPU 단계).
 
         Content.summary_text의 render_style 필드로 렌더러를 선택한다:
-        - "ssul" (기본값): 양산형 쇼츠 스타일 (PIL 누적 텍스트 + 효과음)
-        - 그 외: Ken Burns 슬라이드쇼 (기존 방식)
+        - 기본값: Ken Burns 슬라이드쇼 (기존 방식)
 
         파이프라인 병렬화에서 독립적으로 호출되는 2단계.
         완료 시 post.status → PREVIEW_RENDERED.
@@ -549,20 +548,20 @@ class RobustProcessor:
                 raise ValueError(f"Post {post_id} 없음")
 
             # render_style 확인: DB에 저장된 summary_text JSON에서 읽는다
-            render_style = "ssul"
+            render_style = "layout"
             try:
                 existing = session.query(Content).filter_by(post_id=post_id).first()
                 if existing and existing.summary_text:
                     _d = json.loads(existing.summary_text)
-                    render_style = _d.get("render_style", "ssul")
+                    render_style = _d.get("render_style", "layout")
             except Exception:
-                logger.debug("render_style 파싱 실패 — ssul 기본값 사용")
+                logger.debug("render_style 파싱 실패 — layout 기본값 사용")
 
             logger.info("[Pipeline Render] 시작: post_id=%d render_style=%s", post_id, render_style)
 
-            if render_style == "ssul":
-                from ai_worker.ssul_renderer import render_ssul_video
-                video_path = render_ssul_video(post, script)
+            if render_style == "layout":
+                from ai_worker.layout_renderer import render_layout_video
+                video_path = render_layout_video(post, script)
             else:
                 video_path = self._safe_render_video(post, audio_path, script.to_json())
 
