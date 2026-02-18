@@ -105,7 +105,7 @@ class RobustProcessor:
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
                 # ===== Step 3: 렌더링 (render_style에 따라 분기) =====
-                render_style = json.loads(script.to_json()).get("render_style", "ssul")
+                render_style = json.loads(script.to_json()).get("render_style", "layout")
                 logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
                 if render_style == "ssul":
                     from ai_worker.ssul_renderer import render_ssul_video
@@ -557,7 +557,7 @@ class RobustProcessor:
                 existing = session.query(Content).filter_by(post_id=post_id).first()
                 if existing and existing.summary_text:
                     _d = json.loads(existing.summary_text)
-                    render_style = _d.get("render_style", "ssul")
+                    render_style = _d.get("render_style", "layout")
             except Exception:
                 logger.debug("render_style 파싱 실패 — ssul 기본값 사용")
 

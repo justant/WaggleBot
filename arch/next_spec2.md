@@ -217,7 +217,7 @@ def generate_meta_text() -> str:
 
 ```python
 # Content.summary_text JSON에 render_style 필드로 렌더러 선택
-render_style = script.get("render_style", "ssul")   # 기본값: ssul
+render_style = script.get("render_style", "layout")   # 기본값: ssul
 
 if render_style == "ssul":
     from ai_worker.ssul_renderer import render_ssul_video

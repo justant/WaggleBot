@@ -4,29 +4,28 @@
     "height": 1920
   },
   "global": {
-    "font_bold": "assets/fonts/NotoSansKR-Bold.ttf",
-    "font_medium": "assets/fonts/NotoSansKR-Medium.ttf",
+    "font_bold":    "assets/fonts/NotoSansKR-Bold.ttf",
+    "font_medium":  "assets/fonts/NotoSansKR-Medium.ttf",
     "font_regular": "assets/fonts/NotoSansKR-Regular.ttf",
     "background_color": "#FFFFFF",
     "header_height": 160,
-    "header_color": "#4A44FF"
+    "header_color":  "#4A44FF",
+    "base_template": "assets/backgrounds/base_layout.png",
+    "header_title": {
+      "comment": "모든 프레임 공통 — 헤더 안에 고정 출력되는 제목",
+      "y": 54,
+      "max_width": 860,
+      "font_size": 52,
+      "font_weight": "bold",
+      "align": "center",
+      "color": "#FFFFFF",
+      "max_chars": 18
+    }
   },
   "scenes": {
     "intro": {
-      "description": "제목만 표시 — title_only.svg",
-      "title_max_chars": 18,
-      "elements": {
-        "title_text": {
-          "x": 540,
-          "y": 800,
-          "max_width": 900,
-          "font_size": 95,
-          "font_weight": "bold",
-          "align": "center",
-          "color": "#000000",
-          "line_height": 130
-        }
-      }
+      "description": "제목만 — title_only.svg (베이스 프레임 그대로 사용)",
+      "title_max_chars": 18
     },
     "img_text": {
       "description": "이미지 + 텍스트 — img_text.svg",
@@ -54,21 +53,19 @@
       }
     },
     "text_only": {
-      "description": "텍스트만, 3줄 초과 시 Clear — text_only.svg",
+      "description": "텍스트만, 3슬롯 고정 Y좌표 — text_only.svg",
       "text_max_chars": 12,
       "elements": {
         "text_area": {
-          "x": 540,
-          "y": 500,
           "max_width": 950,
           "font_size": 85,
           "font_weight": "medium",
           "align": "center",
           "color": "#000000",
           "prev_text_color": "#888888",
-          "line_height": 140,
-          "max_total_lines": 3,
-          "wrap_mode": "korean_char"
+          "line_height": 120,
+          "y_coords": [500, 750, 1000],
+          "max_slots": 3
         }
       }
     },
@@ -101,10 +98,10 @@
     "img_heavy_threshold": 0.8,
     "img_mixed_threshold": 0.3,
     "sfx": {
-      "intro": "click.mp3",
-      "img_text": "shutter.mp3",
+      "intro":     "click.mp3",
+      "img_text":  "shutter.mp3",
       "text_only": "pop.mp3",
-      "outro": "ding.mp3"
+      "outro":     "ding.mp3"
     }
   }
 }
