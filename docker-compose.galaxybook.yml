@@ -2,6 +2,10 @@
 # 사용법: docker compose -f docker-compose.galaxybook.yml up -d
 #
 # 3080 Ti PC: docker compose up -d  (docker-compose.yml 기본 사용)
+#
+# [동기화 노트] docker-compose.yml과 구조 동기화 유지.
+# fish-speech 서비스는 NVIDIA GPU 필수이므로 이 파일에서 제외.
+# ai_worker의 FISH_SPEECH_URL 미설정 → TTS 생성 실패 시 로그 후 씬 skip (무음 처리).
 
 services:
   db:

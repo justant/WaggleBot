@@ -164,6 +164,14 @@ async def _main_loop() -> None:
     )
 
 
+async def _startup() -> None:
+    """앱 시작 시 외부 서비스 준비 대기."""
+    from ai_worker.tts_worker import wait_for_fish_speech
+    ready = await wait_for_fish_speech(retries=10, delay=5.0)
+    if not ready:
+        logger.warning("Fish Speech 서버 미준비 — TTS 생성 실패 시 해당 씬만 무음 처리")
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -171,6 +179,7 @@ def main() -> None:
     )
     init_db()
     logger.info("AI Worker 시작 (pipeline 모드, poll_interval=%ds)", AI_POLL_INTERVAL)
+    asyncio.run(_startup())
     asyncio.run(_main_loop())
 
 

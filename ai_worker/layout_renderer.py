@@ -542,45 +542,49 @@ async def _tts_chunk_async(
     text: str,
     idx: int,
     output_dir: Path,
-    voice: str,
-    rate: str,
+    scene_type: str = "img_text",
+    pre_audio: str | None = None,
 ) -> float:
-    """문장 TTS mp3 생성 + 앞부분 묵음 제거."""
-    import asyncio, edge_tts
+    """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Fish Speech 호출.
 
-    out_path = output_dir / f"chunk_{idx:03d}.mp3"
+    Args:
+        text:       읽을 텍스트
+        idx:        프레임 인덱스 (출력 파일명 결정)
+        output_dir: TTS 청크 저장 디렉터리
+        scene_type: 씬 타입 (Fish Speech 감정 태그 결정)
+        pre_audio:  content_processor에서 사전 생성된 오디오 경로 (있으면 복사)
+    """
+    import asyncio
+    import shutil
+    from ai_worker.tts_worker import synthesize as fish_synthesize
+
+    out_path = output_dir / f"chunk_{idx:03d}.wav"
     if not text or not text.strip():
         return 0.0
 
+    # 사전 생성된 오디오 재사용
+    if pre_audio:
+        pre_path = Path(pre_audio)
+        if pre_path.exists() and pre_path.stat().st_size > 0:
+            shutil.copy2(pre_path, out_path)
+            logger.debug("[layout] TTS 재사용: 프레임=%d %s", idx, pre_path.name)
+            return _get_audio_duration(out_path)
+
+    # Fish Speech 신규 생성
     for attempt in range(2):
         try:
-            communicate = edge_tts.Communicate(text, voice, rate=rate)
-            await communicate.save(str(out_path))
+            await fish_synthesize(text=text, scene_type=scene_type, output_path=out_path)
             break
         except Exception:
             if attempt == 0:
-                logger.warning("TTS 청크 %d 실패 — 재시도", idx, exc_info=True)
+                logger.warning("[layout] TTS 청크 %d 실패 — 재시도", idx, exc_info=True)
                 await asyncio.sleep(0.5)
             else:
-                logger.error("TTS 청크 %d 최종 실패", idx)
+                logger.error("[layout] TTS 청크 %d 최종 실패", idx)
                 return 0.0
 
-    trimmed = out_path.with_name(f"{out_path.stem}_trim.mp3")
-    try:
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(out_path),
-             "-af", "silenceremove=start_periods=1:start_threshold=-50dB:start_duration=0.1",
-             "-c:a", "libmp3lame", "-q:a", "2", str(trimmed)],
-            capture_output=True, timeout=10,
-        )
-        if r.returncode == 0 and trimmed.exists() and trimmed.stat().st_size > 0:
-            trimmed.replace(out_path)
-        else:
-            trimmed.unlink(missing_ok=True)
-    except Exception as e:
-        logger.warning("묵음 제거 실패 (원본 사용): %s", e)
-        trimmed.unlink(missing_ok=True)
-
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        return 0.0
     return _get_audio_duration(out_path)
 
 
@@ -592,19 +596,26 @@ async def _generate_tts_chunks(
     rate: str,
     outro_duration: float = 1.5,
 ) -> list[float]:
-    """plan 순서로 TTS를 생성하고 각 프레임의 지속 시간 목록을 반환한다."""
+    """plan 순서로 TTS를 생성하고 각 프레임의 지속 시간 목록을 반환한다.
+
+    sentences[sent_idx]에 "audio" 키가 있으면 사전 생성 오디오 재사용.
+    없으면 Fish Speech로 신규 생성.
+    """
     import asyncio
     durations: list[float] = []
     for frame_idx, entry in enumerate(plan):
         sent_idx = entry.get("sent_idx")
         if sent_idx is not None and sent_idx < len(sentences):
-            text = sentences[sent_idx]["text"]
-            dur = await _tts_chunk_async(text, frame_idx, output_dir, voice, rate)
+            sent = sentences[sent_idx]
+            text = sent["text"]
+            pre_audio = sent.get("audio")          # 사전 생성 경로 (없으면 None)
+            scene_type = entry.get("type", "img_text")
+            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio)
         else:
-            out_path = output_dir / f"chunk_{frame_idx:03d}.mp3"
+            out_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
-                 "-t", str(outro_duration), "-c:a", "libmp3lame", "-b:a", "64k", str(out_path)],
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
+                 "-t", str(outro_duration), "-c:a", "pcm_s16le", str(out_path)],
                 capture_output=True, check=True,
             )
             dur = outro_duration
@@ -681,6 +692,17 @@ def _build_layout_sfx_filter(
 # SceneDecision 변환 유틸리티
 # ---------------------------------------------------------------------------
 
+def _unpack_line(item) -> tuple[str, str | None]:
+    """text_lines 요소에서 (text, audio_path)를 추출한다.
+
+    content_processor Phase 5 이후 text_lines 요소가
+    str → {"text": str, "audio": str|None} dict로 교체되므로 양쪽 형식 모두 처리.
+    """
+    if isinstance(item, dict):
+        return item.get("text", ""), item.get("audio")
+    return str(item), None
+
+
 def _scenes_to_plan_and_sentences(
     scenes: list,
 ) -> tuple[list[dict], list[dict], list[str]]:
@@ -689,8 +711,12 @@ def _scenes_to_plan_and_sentences(
     text_only SceneDecision의 여러 text_lines는 각각 별도 plan 엔트리로 분리해
     렌더러의 누적 스태킹 메커니즘과 호환되도록 한다.
 
+    text_lines 요소가 str 또는 dict{"text", "audio"} 모두 처리.
+    사전 생성 audio 경로는 sentences의 "audio" 키에 보존되어
+    _generate_tts_chunks에서 재사용된다.
+
     Returns:
-        sentences : [{"text": str, "section": str}, ...]
+        sentences : [{"text": str, "section": str, "audio": str|None}, ...]
         plan      : [{"type": str, "sent_idx": int|None, "img_idx": int|None}, ...]
         images    : [url_or_path, ...]  (plan의 img_idx 는 이 리스트 인덱스)
     """
@@ -705,30 +731,31 @@ def _scenes_to_plan_and_sentences(
             images.append(scene.image_url)
 
         if scene.type == "intro":
-            text = scene.text_lines[0] if scene.text_lines else ""
+            text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "hook"})
+            sentences.append({"text": text, "section": "hook", "audio": audio})
             plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx})
 
         elif scene.type == "img_text":
-            text = scene.text_lines[0] if scene.text_lines else ""
+            text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "body"})
+            sentences.append({"text": text, "section": "body", "audio": audio})
             plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
 
         elif scene.type == "text_only":
             # 여러 줄 → 각각 별도 plan 엔트리 → 렌더러가 누적 스태킹
             for line in scene.text_lines:
+                text, audio = _unpack_line(line)
                 sent_idx = len(sentences)
-                sentences.append({"text": line, "section": "body"})
+                sentences.append({"text": text, "section": "body", "audio": audio})
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
 
         elif scene.type == "outro":
-            text = scene.text_lines[0] if scene.text_lines else ""
+            text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx: Optional[int] = None
             if text:
                 sent_idx = len(sentences)
-                sentences.append({"text": text, "section": "closer"})
+                sentences.append({"text": text, "section": "closer", "audio": audio})
             plan.append({"type": "outro", "sent_idx": sent_idx, "img_idx": img_idx})
 
     return sentences, plan, images
@@ -784,8 +811,8 @@ def _render_pipeline(
                     len(durations), total_dur, time.time() - t0)
 
         # ── Step 6: TTS concat ─────────────────────────────────
-        chunk_paths = [tmp_dir / f"chunk_{i:03d}.mp3" for i in range(len(plan))]
-        merged_tts = tmp_dir / "merged_tts.mp3"
+        chunk_paths = [tmp_dir / f"chunk_{i:03d}.wav" for i in range(len(plan))]
+        merged_tts = tmp_dir / "merged_tts.wav"
         _merge_chunks(chunk_paths, merged_tts)
 
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
