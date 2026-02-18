@@ -275,7 +275,7 @@ def _create_base_frame(
 
     # 1. 배경 템플릿 로드
     _proj_root = Path(__file__).resolve().parent.parent
-    tpl_path = _proj_root / g.get("base_template", "assets/backgrounds/base_layout.png")
+    tpl_path = _proj_root / g.get("base_layout", "assets/backgrounds/base_layout.png")
     if tpl_path.exists():
         base = Image.open(tpl_path).convert("RGB")
         # 캔버스 크기와 다를 경우 리사이즈

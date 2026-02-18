@@ -10,17 +10,17 @@
     "background_color": "#FFFFFF",
     "header_height": 160,
     "header_color":  "#4A44FF",
-    "base_template": "assets/backgrounds/base_layout.png",
+    "base_layout": "assets/backgrounds/base_layout.png",
     "header_title": {
       "comment": "모든 프레임 공통 — 헤더 안에 고정 출력되는 제목",
       "x":50,
       "y": 190,
-      "max_width": 930,
+      "max_width": 980,
       "font_size": 55,
       "font_weight": "bold",
       "align": "left",
       "color": "#000000",
-      "max_chars": 22
+      "max_chars": 20
     }
   },
   "scenes": {
