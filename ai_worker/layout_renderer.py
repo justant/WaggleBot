@@ -298,11 +298,14 @@ def _create_base_frame(
         lines = _wrap_korean(display, font, ht.get("max_width", 860))
         lh = int(ht.get("font_size", 52) * 1.3)
         draw = ImageDraw.Draw(base)
-        _draw_centered_text(
-            draw, lines, font,
-            ht.get("y", 54), lh,
-            ht.get("color", "#FFFFFF"), cw,
-        )
+
+        x_pos = ht.get("x", 50)  # layout.json의 "x": 50 값을 가져옴
+        y_curr = ht.get("y", 200)
+        color = ht.get("color", "#000000")
+
+        for line in lines:
+            draw.text((x_pos, y_curr), line, font=font, fill=color)
+            y_curr += lh
 
     return base
 
@@ -357,7 +360,7 @@ def _render_img_text_frame(
             draw.rectangle([(ia["x"], ia["y"]), (ia["x"] + iw, ia["y"] + ih)], fill="#CCCCCC")
 
     # ── 텍스트 영역 ───────────────────────────────────────────
-    display_text = _truncate(text, max_chars * max_lines)
+    display_text = _truncate(text, max_chars)
     lines = _wrap_korean(display_text, font, ta["max_width"])[:max_lines]
     total_h = len(lines) * lh
     y_start = ta["y"] - total_h // 2
@@ -689,12 +692,12 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     from config import settings as s
 
     layout = _load_layout()
-    voice: str = getattr(s, "SSUL_TTS_VOICE", "ko-KR-SunHiNeural")
-    rate: str = getattr(s, "SSUL_TTS_RATE", "+25%")
-    sfx_offset: float = getattr(s, "SSUL_SFX_OFFSET", -0.15)
+    voice: str = getattr(s, "TTS_VOICE", "ko-KR-SunHiNeural")
+    rate: str = getattr(s, "TTS_RATE", "+25%")
+    sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
     font_dir: Path = ASSETS_DIR / "fonts"
-    audio_dir: Path = getattr(s, "SSUL_AUDIO_DIR", ASSETS_DIR / "audio")
+    audio_dir: Path = getattr(s, "AUDIO_DIR", ASSETS_DIR / "audio")
 
     video_dir = MEDIA_DIR / "video"
     video_dir.mkdir(parents=True, exist_ok=True)
@@ -754,8 +757,13 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
         to_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", to_ta["font_size"])
         to_max_w = to_ta["max_width"]
 
+        to_max_chars = sc_to.get("text_max_chars", 0)
+
         for sent in sentences:
-            sent["lines"] = _wrap_korean(sent["text"], to_font, to_max_w)
+            text_content = sent["text"]
+            if to_max_chars > 0:
+                text_content = _truncate(text_content, to_max_chars)
+            sent["lines"] = _wrap_korean(text_content, to_font, to_max_w)
 
         # ── Step 8: PIL 프레임 생성 ────────────────────────────
         logger.info("[layout] 프레임 생성 시작")

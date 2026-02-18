@@ -13,13 +13,14 @@
     "base_template": "assets/backgrounds/base_layout.png",
     "header_title": {
       "comment": "모든 프레임 공통 — 헤더 안에 고정 출력되는 제목",
-      "y": 54,
+      "x":50,
+      "y": 190,
       "max_width": 860,
-      "font_size": 52,
+      "font_size": 55,
       "font_weight": "bold",
-      "align": "center",
-      "color": "#FFFFFF",
-      "max_chars": 18
+      "align": "left",
+      "color": "#000000",
+      "max_chars": 22
     }
   },
   "scenes": {
@@ -29,11 +30,11 @@
     },
     "img_text": {
       "description": "이미지 + 텍스트 — img_text.svg",
-      "text_max_chars": 12,
+      "text_max_chars": 20,
       "elements": {
         "image_area": {
           "x": 90,
-          "y": 220,
+          "y": 3800,
           "width": 900,
           "height": 900,
           "fit_mode": "cover",
@@ -41,30 +42,31 @@
         },
         "text_area": {
           "x": 540,
-          "y": 1200,
+          "y": 1350,
           "max_width": 900,
-          "font_size": 75,
+          "font_size": 60,
           "font_weight": "medium",
           "align": "center",
           "color": "#000000",
-          "line_height": 105,
+          "line_height": 90,
           "max_lines": 2
         }
       }
     },
     "text_only": {
       "description": "텍스트만, 3슬롯 고정 Y좌표 — text_only.svg",
-      "text_max_chars": 12,
+      "text_max_chars": 20,
       "elements": {
         "text_area": {
+          "x": 540,
           "max_width": 950,
-          "font_size": 85,
+          "font_size": 60,
           "font_weight": "medium",
           "align": "center",
           "color": "#000000",
           "prev_text_color": "#888888",
-          "line_height": 120,
-          "y_coords": [500, 750, 1000],
+          "line_height": 110,
+          "y_coords": [550, 700, 850],
           "max_slots": 3
         }
       }
@@ -84,7 +86,7 @@
           "x": 540,
           "y": 1700,
           "max_width": 900,
-          "font_size": 55,
+          "font_size": 75,
           "font_weight": "regular",
           "align": "center",
           "color": "#FFFFFF",
