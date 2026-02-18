@@ -15,7 +15,7 @@
       "comment": "모든 프레임 공통 — 헤더 안에 고정 출력되는 제목",
       "x":50,
       "y": 190,
-      "max_width": 860,
+      "max_width": 930,
       "font_size": 55,
       "font_weight": "bold",
       "align": "left",
@@ -34,7 +34,7 @@
       "elements": {
         "image_area": {
           "x": 90,
-          "y": 3800,
+          "y": 550,
           "width": 900,
           "height": 900,
           "fit_mode": "cover",
@@ -42,7 +42,7 @@
         },
         "text_area": {
           "x": 540,
-          "y": 1350,
+          "y": 1550,
           "max_width": 900,
           "font_size": 60,
           "font_weight": "medium",
@@ -75,12 +75,12 @@
       "description": "이미지만 (남은 이미지 아웃트로) — img_only.svg",
       "elements": {
         "image_area": {
-          "x": 40,
-          "y": 250,
-          "width": 1000,
-          "height": 1400,
+          "x": 90,
+          "y": 550,
+          "width": 900,
+          "height": 1150,
           "fit_mode": "cover",
-          "border_radius": 30
+          "border_radius": 20
         },
         "overlay_text": {
           "x": 540,
