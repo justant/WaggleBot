@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from ai_worker.resource_analyzer import ResourceProfile
+from config.settings import EMOTION_TAGS
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,10 @@ _STACK_BY_STRATEGY: dict[str, int] = {
 @dataclass
 class SceneDecision:
     type: SceneType
-    text_lines: list[str]
-    image_url: str | None           # img_text / outro 에서 사용
-    text_only_stack: int = 1        # text_only 씬의 실제 스택 줄 수
+    text_lines: list          # str 또는 {"text": str, "audio": str|None} — TTS 사전 생성 후 dict로 교체
+    image_url: str | None     # img_text / outro 에서 사용
+    text_only_stack: int = 1  # text_only 씬의 실제 스택 줄 수
+    emotion_tag: str = ""     # Fish Speech 감정 태그 (EMOTION_TAGS에서 자동 할당)
 
 
 class SceneDirector:
@@ -61,10 +63,10 @@ class SceneDirector:
         scenes: list[SceneDecision] = []
 
         # ── Intro ──────────────────────────────────────────────────────
-        scenes.append(SceneDecision(
-            type="intro",
-            text_lines=[self.script.get("hook", "")],
-            image_url=None,
+        scenes.append(self._make_scene(
+            type_="intro",
+            lines=[self.script.get("hook", "")],
+            image=None,
         ))
 
         # ── Body ───────────────────────────────────────────────────────
@@ -78,18 +80,18 @@ class SceneDirector:
         # ── Outro ──────────────────────────────────────────────────────
         closer = self.script.get("closer", "")
         if self._images:
-            scenes.append(SceneDecision(
-                type="outro",
-                text_lines=[closer] if closer else [],
-                image_url=self._images.pop(0),
+            scenes.append(self._make_scene(
+                type_="outro",
+                lines=[closer] if closer else [],
+                image=self._images.pop(0),
             ))
         elif closer:
             # 이미지 없을 때 closer를 text_only로 처리
-            scenes.append(SceneDecision(
-                type="text_only",
-                text_lines=[closer],
-                image_url=None,
-                text_only_stack=1,
+            scenes.append(self._make_scene(
+                type_="text_only",
+                lines=[closer],
+                image=None,
+                stack=1,
             ))
 
         logger.debug(
@@ -103,22 +105,37 @@ class SceneDirector:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _make_img_text(self, body: list[str]) -> SceneDecision:
+    def _make_scene(
+        self,
+        type_: str,
+        lines: list[str],
+        image: str | None = None,
+        stack: int = 1,
+    ) -> SceneDecision:
+        """SceneDecision을 생성하며 emotion_tag를 자동 할당한다."""
         return SceneDecision(
-            type="img_text",
-            text_lines=[body.pop(0)],
-            image_url=self._images.pop(0),
+            type=type_,
+            text_lines=lines,
+            image_url=image,
+            text_only_stack=stack,
+            emotion_tag=EMOTION_TAGS.get(type_, ""),
+        )
+
+    def _make_img_text(self, body: list[str]) -> SceneDecision:
+        return self._make_scene(
+            type_="img_text",
+            lines=[body.pop(0)],
+            image=self._images.pop(0),
         )
 
     def _make_text_only(self, body: list[str]) -> SceneDecision:
         n = self._decide_stack(body)
         count = min(n, len(body))
         lines = [body.pop(0) for _ in range(count)]
-        return SceneDecision(
-            type="text_only",
-            text_lines=lines,
-            image_url=None,
-            text_only_stack=len(lines),
+        return self._make_scene(
+            type_="text_only",
+            lines=lines,
+            stack=len(lines),
         )
 
     def _decide_stack(self, remaining: list[str]) -> int:

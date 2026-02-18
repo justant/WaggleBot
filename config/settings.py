@@ -236,3 +236,38 @@ ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").split(",") if os.getenv("ALERT_
 # 슬랙 알림 설정
 SLACK_ALERTS_ENABLED = os.getenv("SLACK_ALERTS_ENABLED", "false").lower() == "true"
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+
+# ────────────────────────────────────────────
+# TTS — Fish Speech 1.5
+# ────────────────────────────────────────────
+FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
+FISH_SPEECH_TIMEOUT = 60  # seconds (4B 모델 첫 생성 느림)
+
+# 참조 오디오 프리셋
+# key: 씬 용도, value: assets/voices/ 내 파일명
+VOICE_PRESETS: dict[str, str] = {
+    "default": "korean_man_default.wav",
+    # 향후 추가 예시:
+    # "female":   "korean_female.wav",
+    # "energetic":"korean_energetic.wav",
+}
+VOICE_DEFAULT = "default"
+
+# 참조 오디오 스크립트 (fish-speech가 언어를 인식하는 데 사용)
+# 실제 녹음 내용과 정확히 일치할수록 음성 클로닝 품질이 좋아짐
+# 정확한 스크립트를 모를 경우 한국어 샘플 텍스트라도 반드시 입력 (빈 문자열 → 중국어 출력)
+VOICE_REFERENCE_TEXTS: dict[str, str] = {
+    "default": "안녕하세요. 반갑습니다. 오늘도 좋은 하루 되세요.",
+}
+
+# 감정 태그 매핑 (scene type → Fish Speech control tag)
+EMOTION_TAGS: dict[str, str] = {
+    "intro":     "(excited)",
+    "img_text":  "",           # 태그 없음 = 자연체
+    "text_only": "",
+    "outro":     "(friendly)",
+}
+
+# 오디오 출력 설정
+TTS_OUTPUT_FORMAT = "wav"
+TTS_SAMPLE_RATE   = 44100

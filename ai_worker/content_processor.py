@@ -1,11 +1,12 @@
 """Phase 5: 전체 통합 진입점 (Content Processor)
 
-Phase 1 ~ 4를 순서대로 실행해 SceneDecision 목록을 반환한다.
+Phase 1 ~ 5를 순서대로 실행해 SceneDecision 목록을 반환한다.
 
     [Phase 1] analyze_resources  - ResourceProfile
     [Phase 2] chunk_with_llm     - raw script dict
     [Phase 3] validate_and_fix   - validated script dict
     [Phase 4] SceneDirector      - list[SceneDecision]
+    [Phase 5] TTS 사전 생성      - scene.text_lines[j] = {"text": str, "audio": str|None}
 """
 import collections
 import logging
@@ -15,6 +16,7 @@ from ai_worker.llm_chunker import chunk_with_llm
 from ai_worker.resource_analyzer import ResourceProfile, analyze_resources
 from ai_worker.scene_director import SceneDecision, SceneDirector
 from ai_worker.text_validator import validate_and_fix
+from ai_worker.tts_worker import synthesize
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,8 @@ async def process_content(post, images: list[str]) -> list[SceneDecision]:
         images: 이미지 URL/경로 목록
 
     Returns:
-        렌더러에 전달할 SceneDecision 목록
+        렌더러에 전달할 SceneDecision 목록.
+        Phase 5 이후 scene.text_lines 요소는 {"text": str, "audio": str|None} dict.
 
     Raises:
         requests.RequestException: Ollama 통신 오류
@@ -60,6 +63,29 @@ async def process_content(post, images: list[str]) -> list[SceneDecision]:
     logger.info(
         "[content_processor] Phase 4 완료: %d씬 구성 %s",
         len(scenes), dict(counter),
+    )
+
+    # ── Phase 5: TTS 사전 생성 ────────────────────────────────────
+    tts_ok = 0
+    tts_fail = 0
+    for scene in scenes:
+        for j, line in enumerate(scene.text_lines):
+            text = line if isinstance(line, str) else line.get("text", "")
+            try:
+                audio_path = await synthesize(text=text, scene_type=scene.type)
+                scene.text_lines[j] = {"text": text, "audio": str(audio_path)}
+                tts_ok += 1
+            except Exception as exc:
+                logger.warning(
+                    "[content_processor] TTS 실패 (씬=%s, 줄=%d): %s",
+                    scene.type, j, exc,
+                )
+                scene.text_lines[j] = {"text": text, "audio": None}
+                tts_fail += 1
+
+    logger.info(
+        "[content_processor] Phase 5 완료: TTS 성공=%d 실패=%d",
+        tts_ok, tts_fail,
     )
 
     return scenes
