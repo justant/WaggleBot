@@ -110,6 +110,9 @@ class RobustProcessor:
                 if render_style == "ssul":
                     from ai_worker.ssul_renderer import render_ssul_video
                     video_path = render_ssul_video(post, script)
+                elif render_style == "layout":
+                    from ai_worker.layout_renderer import render_layout_video
+                    video_path = render_layout_video(post, script)
                 else:
                     video_path = self._safe_render_video(post, audio_path, script.to_json())
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
@@ -563,6 +566,9 @@ class RobustProcessor:
             if render_style == "ssul":
                 from ai_worker.ssul_renderer import render_ssul_video
                 video_path = render_ssul_video(post, script)
+            elif render_style == "layout":
+                from ai_worker.layout_renderer import render_layout_video
+                video_path = render_layout_video(post, script)
             else:
                 video_path = self._safe_render_video(post, audio_path, script.to_json())
 

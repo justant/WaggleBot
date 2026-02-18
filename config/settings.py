@@ -192,13 +192,33 @@ SSUL_FONT_TITLE: Path = Path(os.getenv(
 ))
 SSUL_META_RANDOMIZE: bool = os.getenv("SSUL_META_RANDOMIZE", "true").lower() == "true"
 
-# 썰 렌더러 — 텍스트 오버플로우 제어
-SSUL_MAX_VISIBLE_SENTENCES: int = int(os.getenv("SSUL_MAX_VISIBLE_SENTENCES", "5"))
-SSUL_SCROLL_OUT_COUNT: int = int(os.getenv("SSUL_SCROLL_OUT_COUNT", "2"))
+# ==================== 썰 렌더러 v4 ====================
+
+# 폰트 크기 (대폭 확대 — 모바일 쇼츠 가독성)
+SSUL_FONT_SIZE_BODY: int = int(os.getenv("SSUL_FONT_SIZE_BODY", "85"))
+SSUL_FONT_SIZE_COMMENT: int = int(os.getenv("SSUL_FONT_SIZE_COMMENT", "70"))
+SSUL_FONT_SIZE_TITLE: int = int(os.getenv("SSUL_FONT_SIZE_TITLE", "52"))
+SSUL_FONT_SIZE_META: int = int(os.getenv("SSUL_FONT_SIZE_META", "32"))
+
+# 레이아웃
+SSUL_TEXT_Y_START: int = int(os.getenv("SSUL_TEXT_Y_START", "500"))
+SSUL_MAX_TEXT_WIDTH: int = int(os.getenv("SSUL_MAX_TEXT_WIDTH", "950"))
+
+# 페이지 넘김 (3줄 초과 시 화면 완전 Clear)
+SSUL_MAX_LINES_PER_PAGE: int = int(os.getenv("SSUL_MAX_LINES_PER_PAGE", "3"))
+
+# 색상
 SSUL_PREV_TEXT_COLOR: str = os.getenv("SSUL_PREV_TEXT_COLOR", "#666666")
 SSUL_NEW_TEXT_COLOR: str = os.getenv("SSUL_NEW_TEXT_COLOR", "#000000")
+
+# 댓글 스타일
 SSUL_COMMENT_BG_ENABLE: bool = os.getenv("SSUL_COMMENT_BG_ENABLE", "true").lower() == "true"
-SSUL_SFX_OFFSET: float = float(os.getenv("SSUL_SFX_OFFSET", "-0.08"))
+SSUL_COMMENT_BG_COLOR: str = os.getenv("SSUL_COMMENT_BG_COLOR", "#F5F5F5")
+SSUL_COMMENT_BORDER_COLOR: str = os.getenv("SSUL_COMMENT_BORDER_COLOR", "#DDDDDD")
+SSUL_COMMENT_BORDER_RADIUS: int = int(os.getenv("SSUL_COMMENT_BORDER_RADIUS", "15"))
+
+# 효과음 타이밍 오프셋 (음수 = 앞당김)
+SSUL_SFX_OFFSET: float = float(os.getenv("SSUL_SFX_OFFSET", "-0.15"))
 
 # ---------------------------------------------------------------------------
 # Monitoring & Alerting

@@ -1,0 +1,110 @@
+{
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "global": {
+    "font_bold": "assets/fonts/NotoSansKR-Bold.ttf",
+    "font_medium": "assets/fonts/NotoSansKR-Medium.ttf",
+    "font_regular": "assets/fonts/NotoSansKR-Regular.ttf",
+    "background_color": "#FFFFFF",
+    "header_height": 160,
+    "header_color": "#4A44FF"
+  },
+  "scenes": {
+    "intro": {
+      "description": "제목만 표시 — title_only.svg",
+      "title_max_chars": 18,
+      "elements": {
+        "title_text": {
+          "x": 540,
+          "y": 800,
+          "max_width": 900,
+          "font_size": 95,
+          "font_weight": "bold",
+          "align": "center",
+          "color": "#000000",
+          "line_height": 130
+        }
+      }
+    },
+    "img_text": {
+      "description": "이미지 + 텍스트 — img_text.svg",
+      "text_max_chars": 12,
+      "elements": {
+        "image_area": {
+          "x": 90,
+          "y": 220,
+          "width": 900,
+          "height": 900,
+          "fit_mode": "cover",
+          "border_radius": 20
+        },
+        "text_area": {
+          "x": 540,
+          "y": 1200,
+          "max_width": 900,
+          "font_size": 75,
+          "font_weight": "medium",
+          "align": "center",
+          "color": "#000000",
+          "line_height": 105,
+          "max_lines": 2
+        }
+      }
+    },
+    "text_only": {
+      "description": "텍스트만, 3줄 초과 시 Clear — text_only.svg",
+      "text_max_chars": 12,
+      "elements": {
+        "text_area": {
+          "x": 540,
+          "y": 500,
+          "max_width": 950,
+          "font_size": 85,
+          "font_weight": "medium",
+          "align": "center",
+          "color": "#000000",
+          "prev_text_color": "#888888",
+          "line_height": 140,
+          "max_total_lines": 3,
+          "wrap_mode": "korean_char"
+        }
+      }
+    },
+    "outro": {
+      "description": "이미지만 (남은 이미지 아웃트로) — img_only.svg",
+      "elements": {
+        "image_area": {
+          "x": 40,
+          "y": 250,
+          "width": 1000,
+          "height": 1400,
+          "fit_mode": "cover",
+          "border_radius": 30
+        },
+        "overlay_text": {
+          "x": 540,
+          "y": 1700,
+          "max_width": 900,
+          "font_size": 55,
+          "font_weight": "regular",
+          "align": "center",
+          "color": "#FFFFFF",
+          "stroke_color": "#000000",
+          "stroke_width": 3
+        }
+      }
+    }
+  },
+  "layout_algorithm": {
+    "img_heavy_threshold": 0.8,
+    "img_mixed_threshold": 0.3,
+    "sfx": {
+      "intro": "click.mp3",
+      "img_text": "shutter.mp3",
+      "text_only": "pop.mp3",
+      "outro": "ding.mp3"
+    }
+  }
+}
