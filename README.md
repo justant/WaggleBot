@@ -16,7 +16,7 @@
 
 - **자동 크롤링**: 네이트판 등 커뮤니티 인기 게시글 수집 + 인기도 스코어링
 - **AI 대본**: Ollama LLM 기반 쇼츠 특화 3막 구조 대본 (hook/body/closer)
-- **TTS**: Edge-TTS, Kokoro-82M, GPT-SoVITS 지원
+- **TTS**: Fish Speech 1.5 (zero-shot 음성 클로닝, 감정 태그 지원)
 - **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 장면 전환, 썸네일 자동 생성
 - **대시보드**: Streamlit 기반 수신함/편집실/갤러리/분석 탭
 - **자동 업로드**: YouTube Shorts + YouTube Analytics 성과 추적
@@ -34,7 +34,7 @@
 |------|------|
 | 언어 | Python 3.12 |
 | LLM | Ollama (`qwen2.5:14b` / `qwen2.5:1.5b`) |
-| TTS | Edge-TTS, Kokoro-82M, GPT-SoVITS |
+| TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
 | DB | MariaDB 11.x + SQLAlchemy ORM |
 | 영상 | FFmpeg (h264_nvenc / libx264 폴백) |
 | 웹 | Streamlit Dashboard |
@@ -90,7 +90,42 @@ sudo systemctl daemon-reload && sudo systemctl restart ollama
 ollama pull qwen2.5:14b
 ```
 
-### 4. 프로젝트 설정 및 실행
+### 4. Fish Speech 모델 다운로드
+
+```bash
+# HuggingFace CLI 설치 (없는 경우)
+pip install huggingface_hub
+
+# 모델 다운로드 (~4GB)
+bash scripts/download_fish_speech.sh
+```
+
+다운로드 후 구조 확인:
+```
+checkpoints/fish-speech-1.5/
+├── model.pth
+├── firefly-gan-vq-fsq-8x1024-21hz-generator.pth
+└── (기타 config 파일)
+```
+
+### 참조 오디오 준비
+
+Fish Speech는 **zero-shot 음성 클로닝** 방식입니다.
+원하는 목소리의 WAV 파일을 준비하세요.
+
+```
+assets/voices/
+└── korean_man_default.wav   ← 10~30초, 16kHz 이상, 깨끗한 음성
+```
+
+참조 텍스트를 `config/settings.py`의 `VOICE_REFERENCE_TEXTS`에 등록:
+```python
+VOICE_REFERENCE_TEXTS = {
+    "default": "WAV 파일에서 실제로 말한 내용을 입력하세요.",
+}
+```
+
+### 5. 프로젝트 설정 및 실행
 
 ```bash
 git clone https://github.com/justant/WaggleBot.git
@@ -110,19 +145,11 @@ docker compose ps
 
 대시보드: **http://localhost:8501**
 
-### 5. DB 스키마 초기화 (최초 1회)
-
-컨테이너가 모두 `Up` 상태가 된 뒤, **MariaDB 컨테이너가 완전히 준비되면** 아래 명령으로 스키마를 생성합니다.
+### 6. DB 스키마 초기화 (최초 1회)
 
 ```bash
-# dashboard 컨테이너 안에서 init_db() 호출
 docker compose exec dashboard python -c "from db.session import init_db; init_db(); print('DB 초기화 완료')"
 ```
-
-`db/session.py`의 `init_db()`는 `Base.metadata.create_all()`을 호출해 **없는 테이블만 생성**합니다.
-이미 테이블이 존재하면 건드리지 않으므로 재실행해도 안전합니다.
-
-> **스키마를 완전 삭제 후 재생성하는 경우**에도 동일 명령을 실행하면 됩니다.
 
 생성되는 테이블: `posts`, `comments`, `contents`
 
@@ -143,8 +170,22 @@ docker compose exec dashboard python -c "from db.session import init_db; init_db
 ### 영상 생성 흐름
 
 ```
-수신함 승인 → 편집실(대본 수정) → LLM 요약(~30초) → TTS 생성(~20초)
+수신함 승인 → 편집실(대본 수정) → LLM 요약(~30초) → Fish Speech TTS(~10초)
 → 영상 렌더링(~1-2분) → 썸네일 생성 → 갤러리 확인 → 업로드
+```
+
+### TTS 음성 변경
+
+`config/settings.py`의 `VOICE_PRESETS`에 WAV 파일 추가 후 등록:
+```python
+VOICE_PRESETS = {
+    "default":  "korean_man_default.wav",
+    "female":   "korean_female.wav",    # 추가 예시
+}
+VOICE_REFERENCE_TEXTS = {
+    "default": "기존 참조 텍스트",
+    "female":  "female 파일에서 실제 말한 내용",
+}
 ```
 
 ---
@@ -154,14 +195,17 @@ docker compose exec dashboard python -c "from db.session import init_db; init_db
 ```
 WaggleBot/
 ├── CLAUDE.md                          # AI 개발 규칙 (코딩 컨벤션, 제약사항)
-├── docker-compose.yml                 # GPU 환경
-├── docker-compose.galaxybook.yml      # No-GPU 환경
+├── docker-compose.yml                 # GPU 환경 (fish-speech 포함)
+├── docker-compose.galaxybook.yml      # No-GPU 환경 (fish-speech 제외, TTS 무음)
 ├── arch/
-│   ├── dev_spec.md                    # 1차 개발 명세
-│   ├── next_spec.md                   # 2차 개발 명세
+│   ├── 1. dev_spec.md                 # 1차 개발 명세
+│   ├── 2. next_spec_by_claude.md      # 2차 개발 명세 (Phase 3A/B/C)
+│   ├── 3. renderer_from_figma.md      # Figma 기반 렌더러 아키텍처
+│   ├── 4. llm_optimization.md         # LLM 최적화 5-Phase 파이프라인
+│   ├── 5. tts_inhancement.md          # Fish Speech 1.5 교체 전체 기록
 │   └── env/
-│       ├── ENV_GPU.md                 # NVIDIA GPU 환경 상세 가이드
-│       └── ENV_NOGPU.md              # CPU 환경 상세 가이드
+│       ├── ENV_GPU.md
+│       └── ENV_NOGPU.md
 ├── crawlers/
 │   ├── base.py                        # BaseCrawler (스코어링 포함)
 │   ├── nate_pann.py / nate_tok.py
@@ -171,26 +215,42 @@ WaggleBot/
 │   ├── models.py                      # Post/Comment/Content + PostStatus
 │   └── session.py
 ├── ai_worker/
-│   ├── main.py                        # 폴링 메인 루프
+│   ├── main.py                        # 폴링 메인 루프 + Fish Speech 헬스체크
 │   ├── processor.py                   # asyncio 파이프라인 오케스트레이터
 │   ├── llm.py                         # 쇼츠 대본 생성 (hook/body/closer JSON)
-│   ├── video.py                       # FFmpeg 렌더러 (xfade, BGM 믹싱)
+│   ├── llm_chunker.py                 # Phase 2: LLM 의미 단위 청킹
+│   ├── resource_analyzer.py           # Phase 1: 이미지:텍스트 비율 분석
+│   ├── scene_director.py              # Phase 4: 씬 배분 + 감정 태그 자동 할당
+│   ├── text_validator.py              # Phase 3: max_chars 검증 + 한국어 분할
+│   ├── content_processor.py           # Phase 1~5 통합 진입점
+│   ├── layout_renderer.py             # FFmpeg 렌더러 (Figma 기반)
+│   ├── tts_worker.py                  # Fish Speech 1.5 HTTP 클라이언트
+│   ├── video.py                       # 레거시 렌더러 (프리뷰용)
 │   ├── subtitle.py                    # ASS 동적 자막
 │   ├── thumbnail.py                   # 썸네일 자동 생성
 │   ├── gpu_manager.py
-│   └── tts/                           # edge_tts, kokoro, gptsovits
+│   └── tts/                           # 레거시 TTS (edge_tts, kokoro, gptsovits)
 ├── uploaders/
-│   ├── base.py                        # BaseUploader
+│   ├── base.py
 │   ├── youtube.py
 │   └── uploader.py
 ├── analytics/
-│   └── collector.py                   # YouTube Analytics 수집
+│   └── collector.py
 ├── assets/
 │   ├── backgrounds/                   # 9:16 배경 영상
 │   ├── fonts/
-│   └── bgm/                           # funny/ serious/ shocking/ heartwarming/
+│   ├── bgm/                           # funny/ serious/ shocking/ heartwarming/
+│   └── voices/                        # Fish Speech 참조 오디오 (WAV)
+├── checkpoints/
+│   └── fish-speech-1.5/               # Fish Speech 모델 파일
 ├── config/
-│   └── settings.py
+│   ├── settings.py                    # 전역 설정 + TTS/Fish Speech 상수
+│   └── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
+├── scripts/
+│   ├── setup_docker_gpu.sh
+│   └── download_fish_speech.sh        # 모델 다운로드
+├── test/
+│   └── test_tts.py                    # Fish Speech 단독 테스트
 ├── monitoring/
 │   ├── alerting.py
 │   └── daemon.py
@@ -206,8 +266,20 @@ WaggleBot/
 ```bash
 # 항상 --tail 옵션 사용 (토큰/메모리 낭비 방지)
 docker compose logs --tail 50 ai_worker
+docker compose logs --tail 50 fish-speech
 docker compose logs --tail 50 crawler
 
 # GPU 사용 현황
 nvidia-smi
 ```
+
+---
+
+## 환경별 TTS 동작
+
+| 환경 | Fish Speech | TTS 동작 |
+|------|-------------|---------|
+| GPU PC (`docker-compose.yml`) | 컨테이너 포함 | 정상 클로닝 생성 |
+| 갤럭시북 (`docker-compose.galaxybook.yml`) | 제외 | 연결 실패 → 씬별 무음 처리 |
+
+갤럭시북 환경에서 TTS 없이도 영상 렌더링은 정상 완료됩니다 (해당 씬 audio=None → 무음).
