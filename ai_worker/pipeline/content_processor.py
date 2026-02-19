@@ -12,11 +12,11 @@ import collections
 import logging
 from pathlib import Path
 
-from ai_worker.llm_chunker import chunk_with_llm
-from ai_worker.resource_analyzer import ResourceProfile, analyze_resources
-from ai_worker.scene_director import SceneDecision, SceneDirector
-from ai_worker.text_validator import validate_and_fix
-from ai_worker.tts_worker import synthesize
+from ai_worker.pipeline.llm_chunker import chunk_with_llm
+from ai_worker.pipeline.resource_analyzer import ResourceProfile, analyze_resources
+from ai_worker.pipeline.scene_director import SceneDecision, SceneDirector
+from ai_worker.pipeline.text_validator import validate_and_fix
+from ai_worker.tts.fish_client import synthesize
 
 logger = logging.getLogger(__name__)
 

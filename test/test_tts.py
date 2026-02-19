@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import VOICE_PRESETS, VOICE_REFERENCE_TEXTS
-from ai_worker.tts_worker import synthesize, wait_for_fish_speech
+from ai_worker.tts.fish_client import synthesize, wait_for_fish_speech
 
 # 모든 음성에 공통으로 합성할 테스트 문장 (4가지 scene_type 각 1개)
 _TEST_CASES: list[tuple[str, str]] = [

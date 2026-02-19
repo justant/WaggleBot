@@ -49,7 +49,7 @@ _LAYOUT_CONFIG: dict | None = None
 def _load_layout() -> dict:
     global _LAYOUT_CONFIG
     if _LAYOUT_CONFIG is None:
-        cfg_path = Path(__file__).resolve().parent.parent / "config" / "layout.json"
+        cfg_path = Path(__file__).resolve().parent.parent.parent / "config" / "layout.json"
         with open(cfg_path, encoding="utf-8") as f:
             _LAYOUT_CONFIG = json.load(f)
     return _LAYOUT_CONFIG
@@ -184,7 +184,7 @@ def _run_async(coro) -> object:
 
 
 def _resolve_codec() -> str:
-    from ai_worker.video import _check_nvenc
+    from ai_worker.renderer.video import _check_nvenc
     return "h264_nvenc" if _check_nvenc() else "libx264"
 
 
@@ -274,7 +274,7 @@ def _create_base_frame(
     ch = layout["canvas"]["height"]
 
     # 1. 배경 템플릿 로드
-    _proj_root = Path(__file__).resolve().parent.parent
+    _proj_root = Path(__file__).resolve().parent.parent.parent
     tpl_path = _proj_root / g.get("base_layout", "assets/backgrounds/base_layout.png")
     if tpl_path.exists():
         base = Image.open(tpl_path).convert("RGB")
@@ -558,7 +558,7 @@ async def _tts_chunk_async(
     """
     import asyncio
     import shutil
-    from ai_worker.tts_worker import synthesize as fish_synthesize
+    from ai_worker.tts.fish_client import synthesize as fish_synthesize
 
     out_path = output_dir / f"chunk_{idx:03d}.wav"
     if not text or not text.strip():
@@ -817,7 +817,7 @@ def _render_pipeline(
         else:
             logger.info("[layout] TTS 생성 시작")
             # Fish Speech 재웜업 — LLM 처리 시간(수 분) 동안 모델이 언로드됐을 수 있음
-            from ai_worker.tts_worker import _warmup_model
+            from ai_worker.tts.fish_client import _warmup_model
             _run_async(_warmup_model())
             t0 = time.time()
             durations = _run_async(  # type: ignore[assignment]

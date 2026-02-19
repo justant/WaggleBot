@@ -217,19 +217,24 @@ WaggleBot/
 ├── ai_worker/
 │   ├── main.py                        # 폴링 메인 루프 + Fish Speech 헬스체크
 │   ├── processor.py                   # asyncio 파이프라인 오케스트레이터
-│   ├── llm.py                         # 쇼츠 대본 생성 (hook/body/closer JSON)
-│   ├── llm_chunker.py                 # Phase 2: LLM 의미 단위 청킹
-│   ├── resource_analyzer.py           # Phase 1: 이미지:텍스트 비율 분석
-│   ├── scene_director.py              # Phase 4: 씬 배분 + 감정 태그 자동 할당
-│   ├── text_validator.py              # Phase 3: max_chars 검증 + 한국어 분할
-│   ├── content_processor.py           # Phase 1~5 통합 진입점
-│   ├── layout_renderer.py             # FFmpeg 렌더러 (Figma 기반)
-│   ├── tts_worker.py                  # Fish Speech 1.5 HTTP 클라이언트
-│   ├── video.py                       # 레거시 렌더러 (프리뷰용)
-│   ├── subtitle.py                    # ASS 동적 자막
-│   ├── thumbnail.py                   # 썸네일 자동 생성
 │   ├── gpu_manager.py
-│   └── tts/                           # 레거시 TTS (edge_tts, kokoro, gptsovits)
+│   ├── pipeline/                      # 5-Phase 콘텐츠 파이프라인
+│   │   ├── content_processor.py       # Phase 1~5 통합 진입점
+│   │   ├── resource_analyzer.py       # Phase 1: 이미지:텍스트 비율 분석
+│   │   ├── llm_chunker.py             # Phase 2: LLM 의미 단위 청킹
+│   │   ├── text_validator.py          # Phase 3: max_chars 검증 + 한국어 분할
+│   │   └── scene_director.py          # Phase 4: 씬 배분 + 감정 태그 자동 할당
+│   ├── llm/                           # LLM 호출 / 로깅
+│   │   ├── client.py                  # 쇼츠 대본 생성 (hook/body/closer JSON)
+│   │   └── logger.py                  # LLM 호출 이력 DB 저장
+│   ├── tts/                           # TTS 엔진
+│   │   ├── fish_client.py             # Fish Speech 1.5 HTTP 클라이언트
+│   │   └── base.py / edge_tts.py / kokoro.py / gptsovits.py  # 레거시 엔진
+│   └── renderer/                      # 영상 / 이미지 렌더링
+│       ├── layout.py                  # FFmpeg 렌더러 (Figma 기반)
+│       ├── video.py                   # 레거시 렌더러 (프리뷰용)
+│       ├── subtitle.py                # ASS 동적 자막
+│       └── thumbnail.py               # 썸네일 자동 생성
 ├── uploaders/
 │   ├── base.py
 │   ├── youtube.py

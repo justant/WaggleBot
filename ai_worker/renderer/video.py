@@ -84,8 +84,8 @@ def render_preview(
     ass_path: Path | None = None
     comment_timings: list[tuple[float, float]] = []
     try:
-        from ai_worker.llm import ScriptData
-        from ai_worker.subtitle import get_comment_timings, write_ass_file
+        from ai_worker.llm.client import ScriptData
+        from ai_worker.renderer.subtitle import get_comment_timings, write_ass_file
         script = ScriptData.from_json(summary_text)
         ass_path = _TEMP_DIR / f"sub_preview_{post.id}.ass"
         write_ass_file(
@@ -398,7 +398,7 @@ def _compose_final(
 
     if ass_path and ass_path.exists():
         # ASS 동적 자막 필터
-        font_dir = str(Path(font).parent) if font else str(Path(__file__).parent.parent / "assets" / "fonts")
+        font_dir = str(Path(font).parent) if font else str(Path(__file__).parent.parent.parent / "assets" / "fonts")
         ass_str      = str(ass_path).replace("\\", "/")
         font_dir_str = font_dir.replace("\\", "/")
         sub_filter = (

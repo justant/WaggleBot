@@ -184,7 +184,7 @@ def generate_script(
         extra_instructions: 프롬프트 끝에 추가할 보조 지시사항 (스타일, 톤 등).
         post_id:            LLM 로그 연결용 게시글 ID (선택).
     """
-    from ai_worker.llm_logger import LLMCallTimer, log_llm_call
+    from ai_worker.llm.logger import LLMCallTimer, log_llm_call
 
     model = model or OLLAMA_MODEL
     prompt = _SCRIPT_PROMPT_V2.format(

@@ -25,7 +25,7 @@ from config.settings import (
 
 logger = logging.getLogger(__name__)
 
-VOICES_DIR = Path(__file__).parent.parent / "assets" / "voices"
+VOICES_DIR = Path(__file__).parent.parent.parent / "assets" / "voices"
 
 # ── 선택적 라이브러리 (미설치 시 내장 구현으로 폴백) ──
 try:
@@ -36,7 +36,7 @@ except ImportError:
     _SOYNLP_AVAILABLE = False
 
 # ── 인터넷 축약어 → 표준어 사전 ──
-_SLANG_MAP_PATH = Path(__file__).parent.parent / "assets" / "slang_map.json"
+_SLANG_MAP_PATH = Path(__file__).parent.parent.parent / "assets" / "slang_map.json"
 
 # 내장 사전 (slang_map.json 없을 때 폴백)
 _SLANG_MAP_BUILTIN: dict[str, str] = {

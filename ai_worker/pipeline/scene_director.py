@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ai_worker.resource_analyzer import ResourceProfile
+from ai_worker.pipeline.resource_analyzer import ResourceProfile
 from config.settings import EMOTION_TAGS
 
 logger = logging.getLogger(__name__)

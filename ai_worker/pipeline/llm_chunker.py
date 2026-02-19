@@ -15,7 +15,7 @@ import logging
 
 import requests
 
-from ai_worker.resource_analyzer import ResourceProfile
+from ai_worker.pipeline.resource_analyzer import ResourceProfile
 from config.settings import OLLAMA_MODEL, MAX_BODY_CHARS, get_llm_constraints_prompt, get_ollama_host
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ async def chunk_with_llm(
         ValueError: 필수 키 누락
     """
     import asyncio
-    from ai_worker.llm_logger import LLMCallTimer, log_llm_call
+    from ai_worker.llm.logger import LLMCallTimer, log_llm_call
 
     prompt = create_chunking_prompt(post_content, profile, extended=extended)
     logger.info("LLM 청킹 요청: 전략=%s, 본문=%d자, extended=%s", profile.strategy, len(post_content), extended)

@@ -21,10 +21,10 @@ COLLECTED → (수신함 승인) → EDITING → (편집실 저장/건너뛰기)
 |------|------|
 | 크롤러 | `crawlers/base.py`, `nate_pann.py`, `nate_tok.py`, `plugin_manager.py` |
 | DB | `db/models.py` (Post/Comment/Content + PostStatus), `db/session.py` |
-| AI 워커 | `ai_worker/processor.py`, `llm.py`, `video.py`, `gpu_manager.py` |
-| TTS | `ai_worker/tts/` (edge_tts, kokoro, gptsovits) |
-| 자막 | `ai_worker/subtitle.py` (ASS 동적 자막) |
-| 썸네일 | `ai_worker/thumbnail.py` |
+| AI 워커 | `ai_worker/processor.py`, `ai_worker/llm/client.py`, `ai_worker/renderer/video.py`, `ai_worker/gpu_manager.py` |
+| TTS | `ai_worker/tts/` (fish_client, edge_tts, kokoro, gptsovits) |
+| 자막 | `ai_worker/renderer/subtitle.py` (ASS 동적 자막) |
+| 썸네일 | `ai_worker/renderer/thumbnail.py` |
 | 업로더 | `uploaders/base.py`, `youtube.py`, `uploader.py` |
 | 대시보드 | `dashboard.py` (수신함/편집실/갤러리/분석/설정 탭) |
 | 분석 | `analytics/collector.py` |

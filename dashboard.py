@@ -53,10 +53,10 @@ def _run_hd_render(post_id: int) -> None:
     출력 파일명을 _FHD.mp4로 지정한다. GPU(_resolve_codec) 자동 선택.
     """
     try:
-        from ai_worker.layout_renderer import render_layout_video_from_scenes
-        from ai_worker.resource_analyzer import analyze_resources
-        from ai_worker.scene_director import SceneDirector
-        from ai_worker.text_validator import validate_and_fix
+        from ai_worker.renderer.layout import render_layout_video_from_scenes
+        from ai_worker.pipeline.resource_analyzer import analyze_resources
+        from ai_worker.pipeline.scene_director import SceneDirector
+        from ai_worker.pipeline.text_validator import validate_and_fix
         from ai_worker.llm import ScriptData
         from config.settings import MEDIA_DIR as _MEDIA_DIR
 

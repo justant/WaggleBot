@@ -14,7 +14,7 @@ class FishSpeechTTS(BaseTTS):
     """
 
     async def synthesize(self, text: str, voice_id: str, output_path: Path) -> Path:
-        from ai_worker.tts_worker import synthesize as _synthesize
+        from ai_worker.tts.fish_client import synthesize as _synthesize
         return await _synthesize(text=text, voice_key=voice_id, output_path=output_path)
 
 
