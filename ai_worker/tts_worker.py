@@ -314,15 +314,53 @@ async def synthesize(
     return output_path
 
 
+async def _warmup_model() -> None:
+    """Fish Speech TTS 모델 + 음성 클로닝 모듈 웜업.
+
+    Fish Speech는 첫 번째 TTS 요청이 들어올 때 모델을 lazy-load 한다.
+    로딩 중에 들어온 요청은 voice cloning이 적용되지 않아 기본 중국어
+    음성으로 출력될 수 있으므로, 실제 합성 전에 짧은 웜업 요청을 보내
+    모델을 완전히 로드시킨다.
+    """
+    ref_filename = VOICE_PRESETS.get(VOICE_DEFAULT, "")
+    ref_audio = VOICES_DIR / ref_filename
+    if ref_audio.exists():
+        ref_text = VOICE_REFERENCE_TEXTS.get(VOICE_DEFAULT, "")
+        audio_b64 = base64.b64encode(ref_audio.read_bytes()).decode()
+        references = [{"audio": audio_b64, "text": ref_text}]
+    else:
+        references = []
+
+    _timeout = httpx.Timeout(
+        connect=10.0,
+        write=FISH_SPEECH_TIMEOUT,
+        read=FISH_SPEECH_TIMEOUT,
+        pool=5.0,
+    )
+    async with httpx.AsyncClient(timeout=_timeout) as client:
+        try:
+            await client.post(
+                f"{FISH_SPEECH_URL}/v1/tts",
+                json={"text": "안녕하세요.", "format": TTS_OUTPUT_FORMAT, "references": references},
+            )
+            logger.info("Fish Speech 모델 웜업 완료")
+        except Exception as exc:
+            logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
+
+
 async def wait_for_fish_speech(retries: int = 10, delay: float = 5.0) -> bool:
     """Fish Speech 서버 기동 대기 (컨테이너 시작 직후 호출).
+
+    HTTP 연결 확인 후 모델 웜업까지 완료해야 True를 반환한다.
+    웜업 없이 첫 TTS 요청이 들어오면 모델 lazy-load 중에 voice cloning이
+    적용되지 않아 중국어 음성이 출력될 수 있다.
 
     Args:
         retries: 최대 재시도 횟수
         delay:   재시도 간격 (초)
 
     Returns:
-        True if 서버 준비 완료, False if 최종 실패
+        True if 서버 준비 완료 + 웜업 완료, False if 최종 실패
     """
     async with httpx.AsyncClient(timeout=5) as client:
         for i in range(retries):
@@ -330,6 +368,7 @@ async def wait_for_fish_speech(retries: int = 10, delay: float = 5.0) -> bool:
                 r = await client.get(f"{FISH_SPEECH_URL}/")
                 if r.status_code < 400:
                     logger.info("Fish Speech 서버 준비 완료 (%s)", FISH_SPEECH_URL)
+                    await _warmup_model()
                     return True
             except httpx.ConnectError:
                 logger.warning(
