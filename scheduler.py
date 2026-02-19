@@ -10,7 +10,8 @@ import threading
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from config.settings import CRAWL_INTERVAL_HOURS, ENABLED_CRAWLERS
-from crawlers.plugin_manager import CrawlerRegistry, auto_discover
+import crawlers  # noqa: F401 — 크롤러 자동 등록
+from crawlers.plugin_manager import CrawlerRegistry
 from db.session import SessionLocal
 
 log = logging.getLogger(__name__)
@@ -73,10 +74,6 @@ def start_scheduler():
     Returns:
         None
     """
-    # 코드 기반 크롤러 자동 발견
-    discovered_count = auto_discover('crawlers')
-    log.info("Discovered %d code-based crawlers", discovered_count)
-
     # 등록된 크롤러 목록
     crawlers = CrawlerRegistry.list_crawlers()
     log.info("Available crawlers:")

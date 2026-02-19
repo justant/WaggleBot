@@ -8,30 +8,39 @@ load_dotenv()
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# ---------------------------------------------------------------------------
+# re-export — 기존 import 경로 호환
+# ---------------------------------------------------------------------------
+from config.crawler import (  # noqa: E402
+    CRAWL_INTERVAL_HOURS,
+    ENABLED_CRAWLERS,
+    REQUEST_HEADERS,
+    REQUEST_TIMEOUT,
+    USER_AGENTS,
+)
+from config.monitoring import (  # noqa: E402
+    MONITORING_ENABLED,
+    HEALTH_CHECK_INTERVAL,
+    GPU_TEMP_WARNING,
+    GPU_TEMP_CRITICAL,
+    DISK_USAGE_WARNING,
+    DISK_USAGE_CRITICAL,
+    MEMORY_USAGE_WARNING,
+    MEMORY_USAGE_CRITICAL,
+    EMAIL_ALERTS_ENABLED,
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_USER,
+    SMTP_PASSWORD,
+    ALERT_EMAIL_TO,
+    SLACK_ALERTS_ENABLED,
+    SLACK_WEBHOOK_URL,
+)
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "mysql+pymysql://wagglebot:wagglebot@localhost/wagglebot",
 )
-
-CRAWL_INTERVAL_HOURS = int(os.getenv("CRAWL_INTERVAL_HOURS", "1"))
-
-# 크롤러 설정
-ENABLED_CRAWLERS = os.getenv("ENABLED_CRAWLERS", "nate_pann").split(",")
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-]
-
-REQUEST_HEADERS = {
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-}
-
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
 
 STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 
@@ -52,6 +61,15 @@ ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
 # TTS 엔진별 목소리 프리셋
 TTS_VOICES: dict[str, list[dict[str, str]]] = {
+    "fish-speech": [
+        {"id": "default", "name": "기본 남성 내레이터"},
+        {"id": "anna",    "name": "Anna (여, 친근한 내레이션)"},
+        {"id": "han",     "name": "Han (남, 자연스러운 대화체)"},
+        {"id": "krys",    "name": "Krys (여, 뉴스/정보 전달형)"},
+        {"id": "sunny",   "name": "Sunny (여, 따뜻한 내레이션)"},
+        {"id": "yohan",   "name": "Yohan (남, 깊이 있는 내레이션)"},
+        {"id": "yura",    "name": "Yura (여, 활기찬 대화체)"},
+    ],
     "edge-tts": [
         {"id": "ko-KR-SunHiNeural",   "name": "선히 (여, 밝음)"},
         {"id": "ko-KR-InJoonNeural",   "name": "인준 (남, 차분)"},
@@ -83,8 +101,8 @@ FEEDBACK_CONFIG_PATH = _PROJECT_ROOT / "config" / "feedback_config.json"
 AB_TEST_CONFIG_PATH  = _PROJECT_ROOT / "config" / "ab_tests.json"
 
 _PIPELINE_DEFAULTS: dict[str, str] = {
-    "tts_engine": "edge-tts",
-    "tts_voice": "ko-KR-SunHiNeural",
+    "tts_engine": "fish-speech",
+    "tts_voice": "default",
     "llm_model": OLLAMA_MODEL,
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
@@ -165,6 +183,34 @@ FONT_BODY: Path = Path(os.getenv(
 # 효과음 타이밍 오프셋 (음수 = 앞당김)
 SFX_OFFSET: float = float(os.getenv("SFX_OFFSET", "-0.15"))
 
+# ==================== 썰 렌더러 v4 ====================
+
+# 폰트 크기 (대폭 확대 — 모바일 쇼츠 가독성)
+SSUL_FONT_SIZE_BODY: int = int(os.getenv("SSUL_FONT_SIZE_BODY", "85"))
+SSUL_FONT_SIZE_COMMENT: int = int(os.getenv("SSUL_FONT_SIZE_COMMENT", "70"))
+SSUL_FONT_SIZE_TITLE: int = int(os.getenv("SSUL_FONT_SIZE_TITLE", "52"))
+SSUL_FONT_SIZE_META: int = int(os.getenv("SSUL_FONT_SIZE_META", "32"))
+
+# 레이아웃
+SSUL_TEXT_Y_START: int = int(os.getenv("SSUL_TEXT_Y_START", "500"))
+SSUL_MAX_TEXT_WIDTH: int = int(os.getenv("SSUL_MAX_TEXT_WIDTH", "950"))
+
+# 페이지 넘김 (3줄 초과 시 화면 완전 Clear)
+SSUL_MAX_LINES_PER_PAGE: int = int(os.getenv("SSUL_MAX_LINES_PER_PAGE", "3"))
+
+# 색상
+SSUL_PREV_TEXT_COLOR: str = os.getenv("SSUL_PREV_TEXT_COLOR", "#666666")
+SSUL_NEW_TEXT_COLOR: str = os.getenv("SSUL_NEW_TEXT_COLOR", "#000000")
+
+# 댓글 스타일
+SSUL_COMMENT_BG_ENABLE: bool = os.getenv("SSUL_COMMENT_BG_ENABLE", "true").lower() == "true"
+SSUL_COMMENT_BG_COLOR: str = os.getenv("SSUL_COMMENT_BG_COLOR", "#F5F5F5")
+SSUL_COMMENT_BORDER_COLOR: str = os.getenv("SSUL_COMMENT_BORDER_COLOR", "#DDDDDD")
+SSUL_COMMENT_BORDER_RADIUS: int = int(os.getenv("SSUL_COMMENT_BORDER_RADIUS", "15"))
+
+# 효과음 타이밍 오프셋 (음수 = 앞당김)
+SSUL_SFX_OFFSET: float = float(os.getenv("SSUL_SFX_OFFSET", "-0.15"))
+
 # ---------------------------------------------------------------------------
 # Layout constraints (layout.json 단일 소스)
 # ---------------------------------------------------------------------------
@@ -191,45 +237,22 @@ def get_llm_constraints_prompt() -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Monitoring & Alerting
-# ---------------------------------------------------------------------------
-MONITORING_ENABLED = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
-HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5분
-
-# 임계값
-GPU_TEMP_WARNING = int(os.getenv("GPU_TEMP_WARNING", "75"))
-GPU_TEMP_CRITICAL = int(os.getenv("GPU_TEMP_CRITICAL", "80"))
-DISK_USAGE_WARNING = int(os.getenv("DISK_USAGE_WARNING", "80"))
-DISK_USAGE_CRITICAL = int(os.getenv("DISK_USAGE_CRITICAL", "90"))
-MEMORY_USAGE_WARNING = int(os.getenv("MEMORY_USAGE_WARNING", "85"))
-MEMORY_USAGE_CRITICAL = int(os.getenv("MEMORY_USAGE_CRITICAL", "95"))
-
-# 이메일 알림 설정
-EMAIL_ALERTS_ENABLED = os.getenv("EMAIL_ALERTS_ENABLED", "false").lower() == "true"
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").split(",") if os.getenv("ALERT_EMAIL_TO") else []
-
-# 슬랙 알림 설정
-SLACK_ALERTS_ENABLED = os.getenv("SLACK_ALERTS_ENABLED", "false").lower() == "true"
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
-
 # ────────────────────────────────────────────
 # TTS — Fish Speech 1.5
 # ────────────────────────────────────────────
 FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
-FISH_SPEECH_TIMEOUT = 60  # seconds (4B 모델 첫 생성 느림)
+FISH_SPEECH_TIMEOUT = 120  # seconds (4B 모델 첫 생성 느림, 동시 요청 시 write 대기 포함)
 
 # 참조 오디오 프리셋
-# key: 씬 용도, value: assets/voices/ 내 파일명
+# key: voice_key, value: assets/voices/ 내 파일명
 VOICE_PRESETS: dict[str, str] = {
     "default": "korean_man_default.wav",
-    # 향후 추가 예시:
-    # "female":   "korean_female.wav",
-    # "energetic":"korean_energetic.wav",
+    "anna":    "voice_preview_anna.mp3",
+    "han":     "voice_preview_han.mp3",
+    "krys":    "voice_preview_krys.mp3",
+    "sunny":   "voice_preview_sunny.mp3",
+    "yohan":   "voice_preview_yohan.mp3",
+    "yura":    "voice_preview_yura.mp3",
 }
 VOICE_DEFAULT = "default"
 
@@ -238,14 +261,21 @@ VOICE_DEFAULT = "default"
 # 정확한 스크립트를 모를 경우 한국어 샘플 텍스트라도 반드시 입력 (빈 문자열 → 중국어 출력)
 VOICE_REFERENCE_TEXTS: dict[str, str] = {
     "default": "안녕하세요. 반갑습니다. 오늘도 좋은 하루 되세요.",
+    "anna":  "안녕하세요, 오늘 여러분과 나눌 이야기는 그 누구에게도 들어볼 수 없었던 신기한 이야기입니다. 이야기를 들어보시기 전에 먼저 구독과 좋아요 부탁드립니다.",
+    "han":   "떡볶이가 먹고 싶은 영감은 그냥 찾아와요. 내가 할 수 있는 건 자유의지라고 굳이 부르자면 떡볶이를 먹고 싶은 나를 받아들일까 말까 그게 내가 할 수 있는 유일한 것이고 내가 나를 보살피기 위한 유일한 게 그거 딱 하나라는 거를 요즘에 좀 실천하고 있습니다.",
+    "krys":  "안녕하세요. 유익하고 좋은 내용을 알기 쉽고 빠르게 전해드리겠습니다. 오늘 전해드릴 소식은요, 여러분들이 가장 필요한 정보들로 준비해 보았는데요. 먼저 구독과 좋아요 부탁드립니다.",
+    "sunny": "인생은 늘 예측할 수 없는 방향으로 흐르지만 그 속에서 희망과 기회를 찾을 수 있습니다. 행복은 거창한 순간에만 있는 것이 아니라 매일의 작은 순간 속에서 피어납니다. 오늘도 감사하는 마음으로 하루를 보냅니다.",
+    "yohan": "여러분, 우리가 하루를 살면서 수많은 생각과 경험을 합니다. 그런데 그 중 몇 가지를 진짜로 기억하고 있나요? 기록은 단순히 정보를 적는 행위가 아닙니다. 삶의 흔적을 남기는 일입니다. 지나간 시간의 소중한 순간, 깨달음, 감정을 미래의 나에게 전달하는 다리입니다.",
+    "yura":  "제가 요즘 매일 쓰고 있는 게 바로 이거예요. 처음엔 그냥 궁금해서 써봤는데 왜 이렇게 인기인지 알겠더라고요. 아침에 바쁘잖아요, 그냥 툭 사용하면 끝. 아래 링크에서 확인해 보세요. 할인도 들어가 있어서 놓치면 후회할 수도 있어요. 다음 영상에서 또 꿀템 들고 올게요.",
 }
 
-# 감정 태그 매핑 (scene type → Fish Speech control tag)
+# 감정 태그 매핑 — Fish Speech 1.5는 (tag) 형식 미지원, 참조 오디오로 톤 결정
+# 향후 지원 모델 전환 시 재활성화 예정
 EMOTION_TAGS: dict[str, str] = {
-    "intro":     "(excited)",
-    "img_text":  "",           # 태그 없음 = 자연체
+    "intro":     "",
+    "img_text":  "",
     "text_only": "",
-    "outro":     "(friendly)",
+    "outro":     "",
 }
 
 # 오디오 출력 설정

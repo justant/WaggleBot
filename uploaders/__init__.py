@@ -1,13 +1,6 @@
-from uploaders.base import BaseUploader
-from uploaders.youtube import YouTubeUploader
-
-UPLOADERS: dict[str, type[BaseUploader]] = {
-    "youtube": YouTubeUploader,
-}
+from uploaders.base import BaseUploader, UploaderRegistry
+from uploaders.youtube import YouTubeUploader  # noqa: F401 — 레지스트리 등록
 
 
 def get_uploader(name: str) -> BaseUploader:
-    cls = UPLOADERS.get(name)
-    if cls is None:
-        raise ValueError(f"Unknown uploader: {name!r}  (available: {list(UPLOADERS)})")
-    return cls()
+    return UploaderRegistry.get_uploader(name)

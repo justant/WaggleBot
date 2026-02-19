@@ -1,46 +1,13 @@
-import dataclasses
 import json
 import logging
 import re
-from dataclasses import dataclass
 
 import requests
 
 from config.settings import get_ollama_host, OLLAMA_MODEL
+from db.models import ScriptData  # re-export — 기존 import 경로 호환
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# ScriptData — 구조화 대본
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ScriptData:
-    hook: str
-    body: list[str]
-    closer: str
-    title_suggestion: str
-    tags: list[str]
-    mood: str = "funny"  # funny | serious | shocking | heartwarming (레거시 호환용)
-
-    def to_plain_text(self) -> str:
-        return " ".join([self.hook] + self.body + [self.closer])
-
-    def to_json(self) -> str:
-        return json.dumps(dataclasses.asdict(self), ensure_ascii=False)
-
-    @classmethod
-    def from_json(cls, s: str) -> "ScriptData":
-        d = json.loads(s)
-        # 레거시 JSON에 mood 없을 수 있으므로 기본값 처리
-        return cls(
-            hook=d["hook"],
-            body=d["body"],
-            closer=d["closer"],
-            title_suggestion=d["title_suggestion"],
-            tags=d["tags"],
-            mood=d.get("mood", "funny"),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +211,25 @@ def summarize(
     """하위 호환: ScriptData.to_plain_text() 반환."""
     script = generate_script(title, body, comments, model=model)
     return script.to_plain_text()
+
+
+def call_ollama_raw(
+    prompt: str,
+    model: str | None = None,
+    max_tokens: int = 512,
+    temperature: float = 0.5,
+) -> str:
+    """범용 Ollama API 호출. JSON 파싱 없이 원시 응답 반환.
+
+    Args:
+        prompt: 프롬프트 전체 텍스트
+        model: Ollama 모델명 (None이면 기본값)
+        max_tokens: 최대 토큰 수
+        temperature: 샘플링 온도
+
+    Returns:
+        LLM 원시 응답 텍스트
+    """
+    _model = model or OLLAMA_MODEL
+    raw = _call_ollama(prompt, _model, num_predict=max_tokens)
+    return raw
