@@ -779,6 +779,8 @@ def _render_pipeline(
     max_slots: int,
     font_dir: Path,
     audio_dir: Path,
+    save_tts_cache: Path | None = None,
+    tts_audio_cache: Path | None = None,
 ) -> Path:
     """sentences / plan / images 를 받아 mp4를 생성한다.
 
@@ -800,20 +802,36 @@ def _render_pipeline(
                 url = images[img_idx] if img_idx < len(images) else None
                 img_cache[img_idx] = _load_image(url, tmp_dir) if url else None
 
-        # ── Step 5: TTS 생성 ───────────────────────────────────
-        logger.info("[layout] TTS 생성 시작")
-        t0 = time.time()
-        durations: list[float] = _run_async(  # type: ignore[assignment]
-            _generate_tts_chunks(plan, sentences, tmp_dir, voice, rate)
-        )
-        total_dur = sum(durations)
-        logger.info("[layout] TTS 완료: %d프레임, 총 %.1fs (%.2fs)",
-                    len(durations), total_dur, time.time() - t0)
-
-        # ── Step 6: TTS concat ─────────────────────────────────
-        chunk_paths = [tmp_dir / f"chunk_{i:03d}.wav" for i in range(len(plan))]
+        # ── Steps 5~6: TTS 생성 또는 캐시 로드 ───────────────────
         merged_tts = tmp_dir / "merged_tts.wav"
-        _merge_chunks(chunk_paths, merged_tts)
+        if tts_audio_cache and (tts_audio_cache / "durations.json").exists():
+            durations: list[float] = json.loads(
+                (tts_audio_cache / "durations.json").read_text(encoding="utf-8")
+            )
+            shutil.copy2(tts_audio_cache / "merged_tts.wav", merged_tts)
+            total_dur = sum(durations)
+            logger.info("[layout] TTS 캐시 사용: post_id=%d (%d프레임, 총 %.1fs)",
+                        post_id, len(durations), total_dur)
+        else:
+            logger.info("[layout] TTS 생성 시작")
+            t0 = time.time()
+            durations = _run_async(  # type: ignore[assignment]
+                _generate_tts_chunks(plan, sentences, tmp_dir, voice, rate)
+            )
+            total_dur = sum(durations)
+            logger.info("[layout] TTS 완료: %d프레임, 총 %.1fs (%.2fs)",
+                        len(durations), total_dur, time.time() - t0)
+
+            chunk_paths = [tmp_dir / f"chunk_{i:03d}.wav" for i in range(len(plan))]
+            _merge_chunks(chunk_paths, merged_tts)
+
+            if save_tts_cache:
+                save_tts_cache.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(merged_tts, save_tts_cache / "merged_tts.wav")
+                (save_tts_cache / "durations.json").write_text(
+                    json.dumps(durations), encoding="utf-8"
+                )
+                logger.info("[layout] TTS 캐시 저장: %s", save_tts_cache)
 
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]
@@ -985,6 +1003,8 @@ def render_layout_video_from_scenes(
     post,
     scenes: list,
     output_path: Path | None = None,
+    save_tts_cache: Path | None = None,
+    tts_audio_cache: Path | None = None,
 ) -> Path:
     """SceneDirector 출력(SceneDecision 목록)으로 직접 렌더링.
 
@@ -1021,4 +1041,6 @@ def render_layout_video_from_scenes(
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
+        save_tts_cache=save_tts_cache,
+        tts_audio_cache=tts_audio_cache,
     )
