@@ -20,14 +20,16 @@ import requests as _http
 import streamlit as st
 from sqlalchemy import func, or_
 
+from ai_worker.llm import call_ollama_raw
 from config.settings import (
     TTS_VOICES, MEDIA_DIR, ASSETS_DIR,
     PLATFORM_CREDENTIAL_FIELDS,
-    get_ollama_host, OLLAMA_MODEL,
+    OLLAMA_MODEL,
     load_pipeline_config, save_pipeline_config,
     load_credentials_config, save_credentials_config,
 )
-from db.models import Post, PostStatus, Comment, Content, LLMLog
+from crawlers.plugin_manager import list_crawlers
+from db.models import Post, PostStatus, Comment, Content, LLMLog, ScriptData
 from db.session import SessionLocal
 
 log = logging.getLogger(__name__)
@@ -56,7 +58,6 @@ def _run_hd_render(post_id: int) -> None:
         from ai_worker.resource_analyzer import analyze_resources
         from ai_worker.scene_director import SceneDirector
         from ai_worker.text_validator import validate_and_fix
-        from ai_worker.llm import ScriptData
         from config.settings import MEDIA_DIR as _MEDIA_DIR
 
         with SessionLocal() as _s:
@@ -333,13 +334,7 @@ def run_ai_fit_analysis(post: Post, model: str) -> dict:
         "문제 없으면 issues는 [] 로 작성"
     )
     try:
-        resp = _http.post(
-            f"{get_ollama_host()}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=40,
-        )
-        resp.raise_for_status()
-        raw = resp.json().get("response", "")
+        raw = call_ollama_raw(prompt=prompt, model=model)
         m = re.search(r"\{.*?\}", raw, re.DOTALL)
         if m:
             return json.loads(m.group())
@@ -477,7 +472,7 @@ with tab_inbox:
     filter_col1, filter_col2, filter_col3 = st.columns(3)
     with filter_col1:
         site_filter = st.multiselect(
-            "사이트 필터", ["nate_pann", "bobaedream", "dcinside", "fmkorea"], default=[], placeholder="전체"
+            "사이트 필터", list(list_crawlers().keys()), default=[], placeholder="전체"
         )
     with filter_col2:
         image_filter = st.selectbox(
@@ -811,7 +806,6 @@ with tab_editor:
             script_data = None
             if existing_content and existing_content.summary_text:
                 try:
-                    from ai_worker.llm import ScriptData
                     script_data = ScriptData.from_json(existing_content.summary_text)
                 except Exception:
                     pass
@@ -887,7 +881,7 @@ with tab_editor:
                     ):
                         with st.spinner("LLM 대본 생성 중..."):
                             try:
-                                from ai_worker.llm import generate_script, ScriptData
+                                from ai_worker.llm import generate_script
                                 best_list = sorted(
                                     selected_post.comments,
                                     key=lambda c: c.likes,
@@ -1055,7 +1049,6 @@ with tab_editor:
                         key=f"save_{selected_post_id}",
                     ):
                         try:
-                            from ai_worker.llm import ScriptData
                             tags_list = [t.strip() for t in tags_input.split(",") if t.strip()]
                             confirmed = ScriptData(
                                 hook=hook,
@@ -1254,7 +1247,6 @@ with tab_gallery:
                         if content.summary_text:
                             with st.expander("📝 대본"):
                                 try:
-                                    from ai_worker.llm import ScriptData
                                     script = ScriptData.from_json(content.summary_text)
                                     st.write(f"**후킹:** {script.hook}")
                                     for line in script.body:
@@ -1522,7 +1514,6 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
             else:
                 with st.spinner("LLM 분석 중..."):
                     try:
-                        import requests as _req
                         _data_summary = "\n".join(
                             f"- {r['title'][:60]}: 조회수 {r['views']:,}, 좋아요 {r['likes']:,}"
                             + (f", 시청유지율 {r['analytics']['avg_watch_pct']:.1f}%" if r['analytics'].get('avg_watch_pct') else "")
@@ -1543,18 +1534,12 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
 - 다음 {period_days}일 운영 전략 제안
 각 항목은 "- " 로 시작하는 한 줄 문장으로 작성하세요."""
 
-                        _resp = _req.post(
-                            f"{get_ollama_host()}/api/generate",
-                            json={
-                                "model": load_pipeline_config().get("llm_model", OLLAMA_MODEL),
-                                "prompt": _prompt,
-                                "stream": False,
-                                "options": {"num_predict": 512, "temperature": 0.7},
-                            },
-                            timeout=120,
-                        )
-                        _resp.raise_for_status()
-                        _insight_text = _resp.json().get("response", "").strip()
+                        _insight_text = call_ollama_raw(
+                            prompt=_prompt,
+                            model=load_pipeline_config().get("llm_model", OLLAMA_MODEL),
+                            max_tokens=512,
+                            temperature=0.7,
+                        ).strip()
                         st.session_state[_insight_key] = _insight_text
                     except Exception as _ex:
                         st.error(f"인사이트 생성 실패: {_ex}")
