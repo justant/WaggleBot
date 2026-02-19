@@ -577,8 +577,8 @@ async def _tts_chunk_async(
             break
         except Exception:
             if attempt == 0:
-                logger.warning("[layout] TTS 청크 %d 실패 — 재시도", idx, exc_info=True)
-                await asyncio.sleep(0.5)
+                logger.warning("[layout] TTS 청크 %d 실패 — 5초 후 재시도", idx, exc_info=True)
+                await asyncio.sleep(5.0)  # Fish Speech 부하 완화 대기
             else:
                 logger.error("[layout] TTS 청크 %d 최종 실패", idx)
                 return 0.0

@@ -269,7 +269,7 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 # TTS — Fish Speech 1.5
 # ────────────────────────────────────────────
 FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
-FISH_SPEECH_TIMEOUT = 60  # seconds (4B 모델 첫 생성 느림)
+FISH_SPEECH_TIMEOUT = 120  # seconds (4B 모델 첫 생성 느림, 동시 요청 시 write 대기 포함)
 
 # 참조 오디오 프리셋
 # key: 씬 용도, value: assets/voices/ 내 파일명
@@ -288,12 +288,13 @@ VOICE_REFERENCE_TEXTS: dict[str, str] = {
     "default": "안녕하세요. 반갑습니다. 오늘도 좋은 하루 되세요.",
 }
 
-# 감정 태그 매핑 (scene type → Fish Speech control tag)
+# 감정 태그 매핑 — Fish Speech 1.5는 (tag) 형식 미지원, 참조 오디오로 톤 결정
+# 향후 지원 모델 전환 시 재활성화 예정
 EMOTION_TAGS: dict[str, str] = {
-    "intro":     "(excited)",
-    "img_text":  "",           # 태그 없음 = 자연체
+    "intro":     "",
+    "img_text":  "",
     "text_only": "",
-    "outro":     "(friendly)",
+    "outro":     "",
 }
 
 # 오디오 출력 설정

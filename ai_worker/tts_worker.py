@@ -6,6 +6,7 @@
 import asyncio
 import base64
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -23,6 +24,23 @@ from config.settings import (
 logger = logging.getLogger(__name__)
 
 VOICES_DIR = Path(__file__).parent.parent / "assets" / "voices"
+
+
+def _normalize_for_tts(text: str) -> str:
+    """TTS 전달 전 한국어 인터넷 슬랭/이모티콘 정규화.
+
+    Fish Speech 토크나이저가 처리하지 못하는 비표준 문자를 제거해
+    중국어 폴백 발음과 어색한 합성을 방지한다.
+    """
+    # 화자 접두어 제거: "ㅇㅇ: ", "댓글: " 등 (최대 8자 + 콜론)
+    text = re.sub(r'^[가-힣ㄱ-ㅎㅏ-ㅣ\w]{1,8}:\s+', '', text)
+    # 자음 반복 이모티콘 제거 (ㅋ, ㅎ, ㄷ, ㅠ, ㅜ 2회 이상 연속)
+    text = re.sub(r'[ㅋㅎㄷㅠㅜ]{2,}', '', text)
+    # ^ 이모티콘 제거 (^^, ^^^)
+    text = re.sub(r'\^+', '', text)
+    # 연속 물결 축약 (~~~~ → ~)
+    text = re.sub(r'~{2,}', '~', text)
+    return text.strip()
 
 
 async def synthesize(
@@ -45,9 +63,11 @@ async def synthesize(
     Raises:
         httpx.HTTPStatusError: Fish Speech 서버 오류 (5xx)
     """
-    # 감정 태그 prefix 부착
+    # 텍스트 전처리: 슬랭/이모티콘 제거
+    normalized = _normalize_for_tts(text)
+    # 감정 태그 prefix (EMOTION_TAGS 모두 빈 문자열 → 현재 no-op)
     emotion = EMOTION_TAGS.get(scene_type, "")
-    final_text = f"{emotion} {text}".strip() if emotion else text
+    final_text = f"{emotion} {normalized}".strip() if emotion else normalized
 
     # 참조 오디오 경로
     ref_filename = VOICE_PRESETS.get(voice_key, VOICE_PRESETS[VOICE_DEFAULT])
@@ -66,7 +86,15 @@ async def synthesize(
         logger.warning("참조 오디오 없음 — 기본 음성으로 폴백: %s", ref_audio)
         references = []
 
-    async with httpx.AsyncClient(timeout=FISH_SPEECH_TIMEOUT) as client:
+    # write timeout 을 read 와 별도 지정 — 대형 base64 참조 오디오 전송 중
+    # Fish Speech 가 앞선 요청을 처리 중일 때 write phase 에서 타임아웃 방지
+    _timeout = httpx.Timeout(
+        connect=10.0,
+        write=FISH_SPEECH_TIMEOUT,
+        read=FISH_SPEECH_TIMEOUT,
+        pool=5.0,
+    )
+    async with httpx.AsyncClient(timeout=_timeout) as client:
         resp = await client.post(
             f"{FISH_SPEECH_URL}/v1/tts",
             json={
@@ -79,8 +107,8 @@ async def synthesize(
         output_path.write_bytes(resp.content)
 
     logger.info(
-        "TTS 생성 완료: scene=%s text=%d자 → %s (%dKB)",
-        scene_type, len(text), output_path.name, len(resp.content) // 1024,
+        "TTS 생성 완료: scene=%s text=%d자→%d자 → %s (%dKB)",
+        scene_type, len(text), len(final_text), output_path.name, len(resp.content) // 1024,
     )
     return output_path
 
