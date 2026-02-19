@@ -33,7 +33,15 @@ class BaseCrawler(ABC):
                 log.exception("Failed to parse %s", item["url"])
                 continue
 
-            self._upsert(session, origin_id, detail)
+            try:
+                with session.begin_nested():
+                    self._upsert(session, origin_id, detail)
+            except Exception as e:
+                # 중복 키 등 제약 위반 — 해당 포스트만 건너뜀, 배치 계속 진행
+                log.warning(
+                    "[%s] upsert 건너뜀: origin_id=%s — %s",
+                    self.site_code, origin_id, e,
+                )
 
         session.commit()
         log.info("[%s] Crawl batch committed", self.site_code)
@@ -113,6 +121,7 @@ class BaseCrawler(ABC):
 
     def _sync_comments(self, session: Session, post: Post, raw_comments: list[dict]):
         existing = {c.content_hash: c for c in post.comments}
+        seen_in_batch: set[str] = set()  # 이번 raw_comments 내 중복 방지
 
         for rc in raw_comments:
             chash = hashlib.sha256(
@@ -120,7 +129,14 @@ class BaseCrawler(ABC):
             ).hexdigest()[:32]
 
             if chash in existing:
+                # 기존 댓글: 공감수만 최신화
                 existing[chash].likes = rc.get("likes", 0)
+            elif chash in seen_in_batch:
+                # 크롤링된 raw 데이터 내 중복 댓글 — 건너뜀
+                log.debug(
+                    "중복 댓글 건너뜀 (raw 중복): post_id=%s hash=%.8s…",
+                    post.id, chash,
+                )
             else:
                 session.add(Comment(
                     post_id=post.id,
@@ -129,3 +145,4 @@ class BaseCrawler(ABC):
                     content_hash=chash,
                     likes=rc.get("likes", 0),
                 ))
+                seen_in_batch.add(chash)

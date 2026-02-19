@@ -423,6 +423,8 @@ def generate_thumbnail(
     return output_path
 
 
-def get_thumbnail_path(post_id: int) -> Path:
-    """게시글 ID에 대한 기본 썸네일 경로 반환."""
-    return MEDIA_DIR / "thumbnails" / f"post_{post_id}.jpg"
+def get_thumbnail_path(site_code: str, origin_id: str) -> Path:
+    """썸네일 경로 반환. media/thumbnails/{site_code}/post_{origin_id}.jpg"""
+    thumb_dir = MEDIA_DIR / "thumbnails" / site_code
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    return thumb_dir / f"post_{origin_id}.jpg"

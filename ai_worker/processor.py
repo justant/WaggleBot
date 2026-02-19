@@ -101,7 +101,9 @@ class RobustProcessor:
                 # ===== Step 2: TTS 생성 =====
                 logger.info("[Step 2/3] TTS 음성 생성 중...")
                 with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                    audio_path = await self._safe_generate_tts(script.to_plain_text(), post.id)
+                    audio_path = await self._safe_generate_tts(
+                        script.to_plain_text(), post.id, post.site_code, post.origin_id
+                    )
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
                 # ===== Step 3: 렌더링 (render_style에 따라 분기) =====
@@ -144,7 +146,7 @@ class RobustProcessor:
                 # ===== 썸네일 생성 =====
                 try:
                     images = post.images if isinstance(post.images, list) else []
-                    thumb_path = get_thumbnail_path(post.id)
+                    thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
                     _MOOD_TO_STYLE = {
                         "funny": "funny",
                         "shocking": "dramatic",
@@ -291,13 +293,17 @@ class RobustProcessor:
             logger.exception("LLM 대본 생성 실패")
             raise
 
-    async def _safe_generate_tts(self, text: str, post_id: int) -> Path:
+    async def _safe_generate_tts(
+        self, text: str, post_id: int, site_code: str, origin_id: str
+    ) -> Path:
         """
         안전하게 TTS 음성 생성
 
         Args:
             text: 요약 텍스트
-            post_id: 게시글 ID
+            post_id: 게시글 DB ID (캐시 로그용)
+            site_code: 커뮤니티 코드
+            origin_id: 원본 게시글 ID
 
         Returns:
             음성 파일 경로
@@ -309,9 +315,9 @@ class RobustProcessor:
             tts_engine = get_tts_engine(self.cfg["tts_engine"])
             voice_id = self.cfg["tts_voice"]
 
-            audio_dir = MEDIA_DIR / "audio"
+            audio_dir = MEDIA_DIR / "audio" / site_code
             audio_dir.mkdir(parents=True, exist_ok=True)
-            audio_path = audio_dir / f"post_{post_id}.mp3"
+            audio_path = audio_dir / f"post_{origin_id}.mp3"
 
             # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
             tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
@@ -568,7 +574,9 @@ class RobustProcessor:
             logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
             with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                audio_path = await self._safe_generate_tts(script.to_plain_text(), post_id)
+                audio_path = await self._safe_generate_tts(
+                    script.to_plain_text(), post_id, post.site_code, post.origin_id
+                )
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
             # 중간 결과 저장 (렌더 단계에서 재사용)
@@ -651,7 +659,7 @@ class RobustProcessor:
             # 썸네일 생성
             try:
                 images = post.images if isinstance(post.images, list) else []
-                thumb_path = get_thumbnail_path(post_id)
+                thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
                 thumb_style = _MOOD_TO_STYLE.get(script.mood, "dramatic")
                 generate_thumbnail(script.hook, images, thumb_path, style=thumb_style)
                 content = session.query(Content).filter_by(post_id=post_id).first()

@@ -106,7 +106,12 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
 
 async def upload_once() -> bool:
     """RENDERED 상태 포스트를 찾아 업로드 실행."""
+    from config.settings import load_pipeline_config
     from uploaders.uploader import upload_post
+
+    cfg = load_pipeline_config()
+    if cfg.get("auto_upload", "false") != "true":
+        return False  # 자동 업로드 비활성화 시 건너뜀
 
     with SessionLocal() as session:
         post = (

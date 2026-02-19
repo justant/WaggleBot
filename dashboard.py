@@ -9,13 +9,14 @@ Streamlit 기반 웹 UI
 
 import json
 import logging
+import queue as _queue
 import re
+import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests as _http
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 from sqlalchemy import func, or_
 
 from config.settings import (
@@ -29,6 +30,127 @@ from db.models import Post, PostStatus, Comment, Content, LLMLog
 from db.session import SessionLocal
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# HD 렌더 큐 & 상태 추적 (프로세스 레벨 — 재런 간 유지)
+# ---------------------------------------------------------------------------
+# 큐 대기 중 또는 렌더 중인 post_id 집합 (UI 버튼 상태 판별용)
+_hd_render_pending: set[int] = set()
+# post_id → 에러 메시지 (렌더 실패 시)
+_hd_render_errors: dict[int, str] = {}
+# FIFO 렌더 요청 큐 — 워커 스레드가 순서대로 소비
+_hd_render_queue: _queue.Queue[int] = _queue.Queue()
+_hd_worker_lock = threading.Lock()
+_hd_worker_started = False
+
+
+def _run_hd_render(post_id: int) -> None:
+    """HD 렌더 실행 (워커 스레드 내부에서 호출)."""
+    try:
+        from ai_worker.video import render_video
+        from config.settings import load_pipeline_config, MEDIA_DIR as _MEDIA_DIR
+        with SessionLocal() as _s:
+            _post = _s.get(Post, post_id)
+            _content = _s.query(Content).filter_by(post_id=post_id).first()
+            _cfg = load_pipeline_config()
+            _audio = Path(_content.audio_path)
+            _preview_path = (
+                _MEDIA_DIR / _content.video_path if _content.video_path else None
+            )
+            _video = render_video(_post, _audio, _content.summary_text, _cfg)
+            _content.video_path = str(_video.relative_to(_MEDIA_DIR))
+            _post.status = PostStatus.RENDERED
+            _s.commit()
+        # SD 프리뷰 삭제 (_SD.mp4 vs _FHD.mp4로 항상 다른 파일)
+        if _preview_path and _preview_path.exists():
+            _preview_path.unlink()
+            log.info("SD 프리뷰 삭제: %s", _preview_path)
+        log.info("HD 렌더링 완료: post_id=%d", post_id)
+    except Exception as _e:
+        log.exception("HD 렌더링 실패: post_id=%d", post_id)
+        _hd_render_errors[post_id] = str(_e)
+    finally:
+        _hd_render_pending.discard(post_id)
+
+
+def _hd_render_worker() -> None:
+    """HD 렌더 큐를 순서대로 소비하는 영구 워커 스레드."""
+    while True:
+        post_id = _hd_render_queue.get()
+        try:
+            log.info("HD 렌더 워커 시작: post_id=%d (대기 중=%d)", post_id, _hd_render_queue.qsize())
+            _run_hd_render(post_id)
+        finally:
+            _hd_render_queue.task_done()
+
+
+def _enqueue_hd_render(post_id: int) -> None:
+    """HD 렌더 요청을 큐에 추가. 워커 스레드가 없으면 생성."""
+    global _hd_worker_started
+    _hd_render_pending.add(post_id)
+    _hd_render_queue.put(post_id)
+    with _hd_worker_lock:
+        if not _hd_worker_started:
+            _hd_worker_started = True
+            threading.Thread(
+                target=_hd_render_worker, daemon=True, name="hd-render-worker"
+            ).start()
+            log.info("HD 렌더 워커 스레드 시작")
+
+
+@st.fragment(run_every="3s")
+def _gallery_action_btn(post_id: int, content_id: int) -> None:
+    """갤러리 btn_col1 fragment.
+
+    3초마다 DB를 재조회하여 렌더 완료 즉시 버튼을 자동 전환:
+      PREVIEW_RENDERED + pending  →  🎬 렌더링 중… (disabled)
+      PREVIEW_RENDERED             →  🎬 고화질
+      RENDERED                     →  📤 업로드
+    버튼 클릭 시 fragment만 재실행 → 전체 페이지 lock 없음.
+    """
+    with SessionLocal() as _s:
+        _post = _s.get(Post, post_id)
+        if _post is None:
+            return
+
+    _hd_err = _hd_render_errors.pop(post_id, None)
+    if _hd_err:
+        st.error(f"렌더링 실패: {_hd_err}")
+
+    if post_id in _hd_render_pending:
+        st.button(
+            "🎬렌더링 중",
+            key=f"hd_{content_id}",
+            width="stretch",
+            disabled=True,
+            help="고화질 렌더링이 대기 중이거나 진행 중입니다.",
+        )
+    elif _post.status == PostStatus.RENDERED:
+        if st.button("📤 업로드", key=f"upload_{content_id}", width="stretch"):
+            try:
+                from uploaders.uploader import upload_post
+                with SessionLocal() as upload_session:
+                    _up = upload_session.get(Post, post_id)
+                    _uc = upload_session.query(Content).filter_by(post_id=post_id).first()
+                    ok = upload_post(_up, _uc, upload_session)
+                    if ok:
+                        _up.status = PostStatus.UPLOADED
+                        upload_session.commit()
+                        st.success("업로드 완료!")
+                        st.rerun()
+                    else:
+                        st.error("일부 플랫폼 업로드 실패. 로그를 확인하세요.")
+            except Exception as _e:
+                st.error(f"업로드 오류: {_e}")
+    elif _post.status == PostStatus.PREVIEW_RENDERED:
+        if st.button(
+            "🎬 고화질",
+            key=f"hd_{content_id}",
+            width="stretch",
+            help="1080×1920 고화질로 재렌더링",
+        ):
+            _enqueue_hd_render(post_id)
+
 
 # ---------------------------------------------------------------------------
 # 페이지 설정
@@ -580,6 +702,13 @@ with tab_inbox:
 with tab_editor:
     import pandas as pd
 
+    _ed_hdr, _ed_ref = st.columns([5, 1])
+    with _ed_hdr:
+        st.header("✏️ 편집실")
+    with _ed_ref:
+        if st.button("🔄 새로고침", key="editor_refresh_btn", width="stretch"):
+            st.rerun()
+
     # ---------------------------------------------------------------------------
     # session_state 초기화
     # ---------------------------------------------------------------------------
@@ -932,9 +1061,13 @@ with tab_editor:
 # ===========================================================================
 
 with tab_progress:
-    st_autorefresh(interval=15000, key="progress_refresh")
-    st.header("⚙️ 진행 현황")
-    st.caption("AI 워커 처리 상태 및 실시간 모니터링 (15초 자동 갱신)")
+    _prog_hdr, _prog_ref = st.columns([5, 1])
+    with _prog_hdr:
+        st.header("⚙️ 진행 현황")
+        st.caption("AI 워커 처리 상태 모니터링")
+    with _prog_ref:
+        if st.button("🔄 새로고침", key="progress_refresh_btn", width="stretch"):
+            st.rerun()
 
     progress_statuses = [
         PostStatus.EDITING,
@@ -1017,8 +1150,13 @@ with tab_progress:
 # ===========================================================================
 
 with tab_gallery:
-    st.header("🎬 갤러리")
-    st.caption("렌더링 완료 및 업로드된 영상 (썸네일 있는 경우 표시)")
+    _gal_hdr, _gal_ref = st.columns([5, 1])
+    with _gal_hdr:
+        st.header("🎬 갤러리")
+        st.caption("렌더링 완료 및 업로드된 영상 (썸네일 있는 경우 표시)")
+    with _gal_ref:
+        if st.button("🔄 새로고침", key="gallery_refresh_btn", width="stretch"):
+            st.rerun()
 
     with SessionLocal() as session:
         # 영상이 있는 게시글 조회
@@ -1090,86 +1228,11 @@ with tab_gallery:
                         btn_col1, btn_col2 = st.columns(2)
 
                         with btn_col1:
-                            if post.status == PostStatus.PREVIEW_RENDERED:
-                                _hd_key     = f"hd_rendering_{content.id}"
-                                _hd_err_key = f"hd_error_{content.id}"
-                                _is_rendering = st.session_state.get(_hd_key, False)
-
-                                # 이전 렌더링 실패 메시지 표시
-                                if _hd_err_key in st.session_state:
-                                    st.error(f"렌더링 실패: {st.session_state.pop(_hd_err_key)}")
-
-                                _hd_pulsing_html = f"""<style>
-@keyframes hd-pulse-{content.id}{{0%,100%{{opacity:1}}50%{{opacity:0.35}}}}
-.hd-rnd-{content.id}{{animation:hd-pulse-{content.id} 1.1s ease-in-out infinite;
-width:100%;padding:0.4rem 0.8rem;background:#4a4a6a;color:#ccc;
-border:1px solid #666;border-radius:6px;cursor:not-allowed;
-font-size:0.875rem;text-align:center;}}</style>
-<div class="hd-rnd-{content.id}">🎬 렌더링</div>"""
-
-                                _hd_placeholder = st.empty()
-                                _do_render = False
-
-                                if _is_rendering:
-                                    # autorefresh 등 rerun에서도 항상 pulsing 유지
-                                    _hd_placeholder.markdown(_hd_pulsing_html, unsafe_allow_html=True)
-                                    _do_render = True
-                                else:
-                                    if _hd_placeholder.button(
-                                        "🎬 고화질",
-                                        key=f"hd_{content.id}",
-                                        width="stretch",
-                                        help="1080×1920 고화질로 재렌더링",
-                                    ):
-                                        st.session_state[_hd_key] = True
-                                        _hd_placeholder.markdown(_hd_pulsing_html, unsafe_allow_html=True)
-                                        _do_render = True
-
-                                if _do_render:
-                                    try:
-                                        from ai_worker.video import render_video
-                                        from config.settings import load_pipeline_config
-                                        with SessionLocal() as hd_session:
-                                            _post = hd_session.get(Post, post.id)
-                                            _content = hd_session.query(Content).filter_by(post_id=post.id).first()
-                                            _cfg = load_pipeline_config()
-                                            _audio = Path(_content.audio_path)
-                                            _preview_path = MEDIA_DIR / _content.video_path if _content.video_path else None
-                                            _video = render_video(_post, _audio, _content.summary_text, _cfg)
-                                            _content.video_path = str(_video.relative_to(MEDIA_DIR))
-                                            _post.status = PostStatus.RENDERED
-                                            hd_session.commit()
-                                        if _preview_path and _preview_path.exists():
-                                            _preview_path.unlink()
-                                            log.info("프리뷰 파일 삭제: %s", _preview_path)
-                                        st.session_state.pop(_hd_key, None)
-                                        st.rerun()
-                                    except Exception as _e:
-                                        st.session_state.pop(_hd_key, None)
-                                        st.session_state[_hd_err_key] = str(_e)
-                                        st.rerun()
-
-                            elif post.status == PostStatus.RENDERED:
-                                if st.button(
-                                    "📤 업로드",
-                                    key=f"upload_{content.id}",
-                                    width="stretch"
-                                ):
-                                    try:
-                                        from uploaders.uploader import upload_post
-                                        with SessionLocal() as upload_session:
-                                            _post = upload_session.get(Post, post.id)
-                                            _content = upload_session.query(Content).filter_by(post_id=post.id).first()
-                                            ok = upload_post(_post, _content, upload_session)
-                                            if ok:
-                                                _post.status = PostStatus.UPLOADED
-                                                upload_session.commit()
-                                                st.success("업로드 완료!")
-                                                st.rerun()
-                                            else:
-                                                st.error("일부 플랫폼 업로드 실패. 로그를 확인하세요.")
-                                    except Exception as _e:
-                                        st.error(f"업로드 오류: {_e}")
+                            if post.status in (
+                                PostStatus.PREVIEW_RENDERED,
+                                PostStatus.RENDERED,
+                            ) or post.id in _hd_render_pending:
+                                _gallery_action_btn(post.id, content.id)
 
                         with btn_col2:
                             if st.button(
@@ -1644,7 +1707,12 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
 # ===========================================================================
 
 with tab_settings:
-    st.header("⚙️ 파이프라인 설정")
+    _set_hdr, _set_ref = st.columns([5, 1])
+    with _set_hdr:
+        st.header("⚙️ 파이프라인 설정")
+    with _set_ref:
+        if st.button("🔄 새로고침", key="settings_refresh_btn", width="stretch"):
+            st.rerun()
 
     cfg = load_pipeline_config()
 
@@ -1778,6 +1846,18 @@ with tab_settings:
 
     st.divider()
 
+    # 자동 업로드 설정
+    st.subheader("📤 자동 업로드")
+    st.caption("RENDERED 상태 영상을 AI 워커가 자동으로 업로드합니다. 비활성화 시 갤러리의 '업로드' 버튼으로만 업로드합니다.")
+
+    auto_upload_on = st.checkbox(
+        "자동 업로드 활성화",
+        value=cfg.get("auto_upload", "false") == "true",
+        help="활성화 시 고화질 렌더링 완료 즉시 자동으로 플랫폼에 업로드됩니다.",
+    )
+
+    st.divider()
+
     # 자동 승인 설정
     st.subheader("🤖 자동 승인")
     st.caption("점수 임계값 이상의 게시글을 수신함 진입 즉시 자동으로 승인합니다.")
@@ -1820,6 +1900,7 @@ with tab_settings:
             "llm_model": llm_model,
             "upload_platforms": json.dumps(selected_platforms),
             "upload_privacy": selected_privacy,
+            "auto_upload": "true" if auto_upload_on else "false",
             "auto_approve_enabled": "true" if auto_approve_on else "false",
             "auto_approve_threshold": str(auto_approve_thresh),
             "use_content_processor": "true" if use_content_processor else "false",
@@ -1837,7 +1918,12 @@ with tab_settings:
 # ===========================================================================
 
 with tab_llm_log:
-    st.header("🔬 LLM 호출 이력")
+    _llm_hdr, _llm_ref = st.columns([5, 1])
+    with _llm_hdr:
+        st.header("🔬 LLM 호출 이력")
+    with _llm_ref:
+        if st.button("🔄 새로고침", key="llm_refresh_btn", width="stretch"):
+            st.rerun()
 
     # 필터 컨트롤
     col_f1, col_f2, col_f3 = st.columns(3)
