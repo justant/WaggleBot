@@ -1,13 +1,10 @@
 import logging
-import random
 import re
 import time
-from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import BOBAEDREAM_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from crawlers.base import BaseCrawler
 from crawlers.plugin_manager import CrawlerRegistry
 
@@ -23,13 +20,10 @@ BASE_URL = "https://m.bobaedream.co.kr"
 )
 class BobaedrreamCrawler(BaseCrawler):
     site_code = "bobaedream"
-
-    def __init__(self) -> None:
-        self._session = requests.Session()
-        self._session.headers.update(REQUEST_HEADERS)
-
-    def _rotate_ua(self) -> None:
-        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+    SECTIONS = [
+        {"name": "자유게시판 베스트", "url": "https://m.bobaedream.co.kr/board/best/freeb"},
+        {"name": "전체 베스트", "url": "https://m.bobaedream.co.kr/board/new_writing/best"},
+    ]
 
     # ------------------------------------------------------------------
     # Listing
@@ -39,11 +33,9 @@ class BobaedrreamCrawler(BaseCrawler):
         posts: list[dict] = []
         seen: set[str] = set()
 
-        for section in BOBAEDREAM_SECTIONS:
-            self._rotate_ua()
+        for section in self.SECTIONS:
             try:
-                resp = self._session.get(section["url"], timeout=REQUEST_TIMEOUT)
-                resp.raise_for_status()
+                resp = self._get(section["url"])
             except requests.RequestException:
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
@@ -90,9 +82,7 @@ class BobaedrreamCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     def parse_post(self, url: str) -> dict:
-        self._rotate_ua()
-        resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        resp = self._get(url)
         soup = BeautifulSoup(resp.content, "html.parser")
 
         title_el = (
@@ -163,9 +153,7 @@ class BobaedrreamCrawler(BaseCrawler):
         )
 
         try:
-            self._rotate_ua()
-            resp = self._session.get(comment_url, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
+            resp = self._get(comment_url)
         except requests.RequestException:
             log.warning("Failed to fetch comments from %s", comment_url)
             return []
@@ -222,15 +210,3 @@ class BobaedrreamCrawler(BaseCrawler):
         # [이미지] 등 브래킷 형태 및 비브래킷 미디어 레이블 제거
         text = re.sub(r"\[?(?:이미지|동영상|캡처|영상|링크|사진)\]?", "", text)
         return text.strip()
-
-    @staticmethod
-    def _parse_stat(text: str, pattern: str) -> int:
-        m = re.search(pattern, text)
-        if not m:
-            return 0
-        return int(m.group(1).replace(",", ""))
-
-    @staticmethod
-    def _parse_int(s: str) -> int:
-        digits = re.sub(r"[^\d]", "", s)
-        return int(digits) if digits else 0

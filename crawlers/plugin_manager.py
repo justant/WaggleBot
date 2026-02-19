@@ -27,7 +27,7 @@ class CrawlerRegistry:
         크롤러 등록 데코레이터
 
         Args:
-            site_code: 사이트 코드 (예: 'nate_pann', 'nate_tok')
+            site_code: 사이트 코드 (예: 'nate_pann', 'bobaedream')
             **metadata: 추가 메타데이터 (description, enabled 등)
 
         Example:

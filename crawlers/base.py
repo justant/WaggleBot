@@ -1,10 +1,14 @@
 import hashlib
 import logging
+import random
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
+import requests
 from sqlalchemy.orm import Session
 
+from config.settings import REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from db.models import Post, Comment, PostStatus
 
 log = logging.getLogger(__name__)
@@ -12,6 +16,43 @@ log = logging.getLogger(__name__)
 
 class BaseCrawler(ABC):
     site_code: str = ""
+
+    def __init__(self) -> None:
+        self._session = requests.Session()
+        self._session.headers.update(REQUEST_HEADERS)
+
+    def _rotate_ua(self) -> None:
+        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+
+    def _get(self, url: str, **kwargs) -> requests.Response:
+        self._rotate_ua()
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        resp = self._session.get(url, **kwargs)
+        resp.raise_for_status()
+        return resp
+
+    def _post(self, url: str, **kwargs) -> requests.Response:
+        self._rotate_ua()
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        resp = self._session.post(url, **kwargs)
+        resp.raise_for_status()
+        return resp
+
+    @staticmethod
+    def _parse_int(s: str) -> int:
+        digits = re.sub(r"[^\d]", "", s)
+        return int(digits) if digits else 0
+
+    @staticmethod
+    def _parse_stat(text: str, pattern: str) -> int:
+        m = re.search(pattern, text)
+        if not m:
+            return 0
+        return int(m.group(1).replace(",", ""))
+
+    @staticmethod
+    def _text(el) -> str:
+        return el.get_text(strip=True) if el else ""
 
     @abstractmethod
     def fetch_listing(self) -> list[dict]:

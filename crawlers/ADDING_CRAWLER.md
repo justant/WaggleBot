@@ -41,53 +41,49 @@ class BaseCrawler(ABC):
 
 ```python
 import logging
-from typing import Optional
+import re
 
 import requests
 from bs4 import BeautifulSoup
 
-from config import settings
 from crawlers.base import BaseCrawler
 
 log = logging.getLogger(__name__)
 
-SITE_CODE = "yoursite"
 BASE_URL = "https://yoursite.com"
 
 
 class YourSiteCrawler(BaseCrawler):
-    site_code = SITE_CODE
+    site_code = "yoursite"
+    SECTIONS = [
+        {"name": "인기글", "url": f"{BASE_URL}/popular"},
+    ]
 
     def fetch_listing(self) -> list[dict]:
         """인기글 목록 반환."""
-        resp = requests.get(
-            f"{BASE_URL}/popular",
-            headers=self._headers(),
-            timeout=settings.REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
         results = []
-        for item in soup.select("ul.post-list li"):
-            link = item.select_one("a.post-link")
-            if not link:
+        for section in self.SECTIONS:
+            try:
+                resp = self._get(section["url"])
+            except requests.RequestException:
+                log.exception("Failed to fetch listing: %s", section["url"])
                 continue
-            results.append({
-                "origin_id": link["href"].split("/")[-1],
-                "title": link.get_text(strip=True),
-                "url": BASE_URL + link["href"],
-            })
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for item in soup.select("ul.post-list li"):
+                link = item.select_one("a.post-link")
+                if not link:
+                    continue
+                results.append({
+                    "origin_id": link["href"].split("/")[-1],
+                    "title": self._text(link),
+                    "url": BASE_URL + link["href"],
+                })
         return results
 
     def parse_post(self, url: str) -> dict:
         """상세 페이지 파싱."""
-        resp = requests.get(
-            url,
-            headers=self._headers(),
-            timeout=settings.REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
+        resp = self._get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
         comments = []
@@ -96,38 +92,22 @@ class YourSiteCrawler(BaseCrawler):
             content = c.select_one("p.content")
             if author and content:
                 comments.append({
-                    "author": author.get_text(strip=True),
-                    "content": content.get_text(strip=True),
-                    "likes": self._parse_int(c.select_one("span.likes")),
+                    "author": self._text(author),
+                    "content": self._text(content),
+                    "likes": self._parse_int(self._text(c.select_one("span.likes"))),
                 })
 
+        page_text = soup.get_text()
         return {
-            "title": soup.select_one("h1.post-title").get_text(strip=True),
-            "content": soup.select_one("div.post-content").get_text(strip=True),
+            "title": self._text(soup.select_one("h1.post-title")),
+            "content": self._text(soup.select_one("div.post-content")),
             "stats": {
-                "views": self._parse_int(soup.select_one("span.view-count")),
-                "likes": self._parse_int(soup.select_one("span.like-count")),
+                "views": self._parse_stat(page_text, r"조회\s*([\d,]+)"),
+                "likes": self._parse_stat(page_text, r"추천\s*([\d,]+)"),
                 "comments_count": len(comments),
             },
             "comments": comments,
         }
-
-    # -------------------------------------------------------------------------
-    # Helpers
-    # -------------------------------------------------------------------------
-    def _headers(self) -> dict:
-        import random
-        return {
-            "User-Agent": random.choice(settings.USER_AGENTS),
-            **settings.REQUEST_HEADERS,
-        }
-
-    def _parse_int(self, tag: Optional[object]) -> int:
-        if not tag:
-            return 0
-        import re
-        m = re.search(r"\d+", tag.get_text())
-        return int(m.group()) if m else 0
 ```
 
 ### 2. .env에 활성화
@@ -170,5 +150,5 @@ python main.py --once
 
 ## 기존 크롤러 참고
 
-- [crawlers/nate.py](nate.py) — 네이트판 크롤러 (실제 구현 예시)
+- [crawlers/nate_pann.py](nate_pann.py) — 네이트판 크롤러 (실제 구현 예시)
 - [crawlers/base.py](base.py) — BaseCrawler 전체 코드

@@ -481,7 +481,7 @@ with tab_inbox:
     filter_col1, filter_col2, filter_col3 = st.columns(3)
     with filter_col1:
         site_filter = st.multiselect(
-            "사이트 필터", ["nate_pann", "nate_tok"], default=[], placeholder="전체"
+            "사이트 필터", ["nate_pann", "bobaedream", "dcinside", "fmkorea"], default=[], placeholder="전체"
         )
     with filter_col2:
         image_filter = st.selectbox(

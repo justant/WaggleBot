@@ -1,12 +1,10 @@
 import logging
-import random
 import re
 import time
 
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import DCINSIDE_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from crawlers.base import BaseCrawler
 from crawlers.plugin_manager import CrawlerRegistry
 
@@ -24,16 +22,14 @@ COMMENT_API_URL = "https://m.dcinside.com/ajax/response-comment"
 )
 class DcInsideCrawler(BaseCrawler):
     site_code = "dcinside"
+    SECTIONS = [
+        {"name": "실시간 베스트 (실베)", "url": "https://gall.dcinside.com/board/lists/?id=dcbest"},
+        {"name": "HIT 갤러리 (힛갤)",   "url": "https://gall.dcinside.com/board/lists/?id=hit"},
+    ]
 
     def __init__(self) -> None:
-        self._session = requests.Session()
-        self._session.headers.update({
-            **REQUEST_HEADERS,
-            "Referer": "https://www.dcinside.com/",
-        })
-
-    def _rotate_ua(self) -> None:
-        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+        super().__init__()
+        self._session.headers["Referer"] = "https://www.dcinside.com/"
 
     # ------------------------------------------------------------------
     # Listing
@@ -43,11 +39,9 @@ class DcInsideCrawler(BaseCrawler):
         posts: list[dict] = []
         seen: set[str] = set()
 
-        for section in DCINSIDE_SECTIONS:
-            self._rotate_ua()
+        for section in self.SECTIONS:
             try:
-                resp = self._session.get(section["url"], timeout=REQUEST_TIMEOUT)
-                resp.raise_for_status()
+                resp = self._get(section["url"])
             except requests.RequestException:
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
@@ -124,9 +118,7 @@ class DcInsideCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     def parse_post(self, url: str) -> dict:
-        self._rotate_ua()
-        resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        resp = self._get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
         # 제목
@@ -208,8 +200,7 @@ class DcInsideCrawler(BaseCrawler):
             return []
 
         try:
-            self._rotate_ua()
-            resp = self._session.post(
+            resp = self._post(
                 COMMENT_API_URL,
                 data={
                     "id": gall_id,
@@ -220,9 +211,7 @@ class DcInsideCrawler(BaseCrawler):
                     "csort": "",
                 },
                 headers={"X-Requested-With": "XMLHttpRequest"},
-                timeout=REQUEST_TIMEOUT,
             )
-            resp.raise_for_status()
         except requests.RequestException:
             log.warning("Failed to fetch comments for %s/%s", gall_id, post_no)
             return []
@@ -265,19 +254,3 @@ class DcInsideCrawler(BaseCrawler):
             })
 
         return results
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_stat(text: str, pattern: str) -> int:
-        m = re.search(pattern, text)
-        if not m:
-            return 0
-        return int(m.group(1).replace(",", ""))
-
-    @staticmethod
-    def _parse_int(s: str) -> int:
-        digits = re.sub(r"[^\d]", "", s)
-        return int(digits) if digits else 0
