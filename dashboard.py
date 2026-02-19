@@ -18,7 +18,8 @@ from pathlib import Path
 
 import requests as _http
 import streamlit as st
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, update as sa_update
+from sqlalchemy.orm import joinedload
 
 from config.settings import (
     TTS_VOICES, MEDIA_DIR, ASSETS_DIR,
@@ -137,7 +138,7 @@ def _enqueue_hd_render(post_id: int) -> None:
             log.info("HD 렌더 워커 스레드 시작")
 
 
-@st.fragment(run_every="3s")
+@st.fragment
 def _gallery_action_btn(post_id: int, content_id: int) -> None:
     """갤러리 btn_col1 fragment.
 
@@ -242,13 +243,16 @@ def top_comments(post_id: int, session, limit: int = 2) -> list[Comment]:
 
 
 def update_status(post_id: int, new_status: PostStatus):
-    """게시글 상태 업데이트"""
+    """게시글 상태 업데이트 (직접 UPDATE — SELECT 없이 원자적 실행으로 경쟁 조건 방지)"""
     with SessionLocal() as session:
-        post = session.get(Post, post_id)
-        if post:
-            post.status = new_status
-            session.commit()
-            log.info(f"Post {post_id} status changed to {new_status.value}")
+        result = session.execute(
+            sa_update(Post)
+            .where(Post.id == post_id)
+            .values(status=new_status, updated_at=datetime.now(timezone.utc))
+        )
+        session.commit()
+        if result.rowcount:
+            log.info("Post %d status changed to %s", post_id, new_status.value)
 
 
 def delete_post(post_id: int):
@@ -738,7 +742,9 @@ with tab_inbox:
 # Tab 2: 편집실 (Editor) — 개선된 대본 편집기
 # ===========================================================================
 
-with tab_editor:
+@st.fragment
+def _editor_tab() -> None:
+    """편집실 fragment — 게시글 전환 시 이 fragment만 재실행, 전체 페이지 lock 없음."""
     import pandas as pd
 
     _ed_hdr, _ed_ref = st.columns([5, 1])
@@ -758,6 +764,7 @@ with tab_editor:
         approved_posts = (
             session.query(Post)
             .filter(Post.status == PostStatus.EDITING)
+            .options(joinedload(Post.comments))
             .order_by(Post.created_at.desc())
             .all()
         )
@@ -919,7 +926,14 @@ with tab_editor:
                                 st.success("대본 생성 완료!")
                                 st.rerun()
                             except Exception as exc:
-                                st.error(f"대본 생성 실패: {exc}")
+                                _exc_s = str(exc).lower()
+                                if "timeout" in _exc_s or "timed out" in _exc_s:
+                                    st.error(
+                                        "⏱️ Ollama 응답 시간 초과 — GPU가 렌더링 중이면 "
+                                        "완료 후 다시 시도하세요."
+                                    )
+                                else:
+                                    st.error(f"대본 생성 실패: {exc}")
 
                 st.divider()
 
@@ -1094,6 +1108,10 @@ with tab_editor:
                         update_status(selected_post_id, PostStatus.APPROVED)
                         st.session_state["editor_idx"] = max(0, idx - 1)
                         st.rerun()
+
+with tab_editor:
+    _editor_tab()
+
 
 # ===========================================================================
 # Tab 3: 진행현황 (Progress)
