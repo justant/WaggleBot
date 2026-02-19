@@ -469,6 +469,16 @@ with tab_inbox:
         if st.button("🔄 새로고침", width="stretch"):
             st.rerun()
 
+    # 처리 현황 progress bar
+    with SessionLocal() as _psess:
+        _total_ever = _psess.query(func.count(Post.id)).scalar() or 0
+        _total_decided = _psess.query(func.count(Post.id)).filter(
+            Post.status.notin_([PostStatus.COLLECTED])
+        ).scalar() or 0
+    if _total_ever:
+        _pct = _total_decided / _total_ever
+        st.progress(_pct, text=f"전체 처리율: {_total_decided}/{_total_ever} ({_pct*100:.1f}%)")
+
     filter_col1, filter_col2, filter_col3 = st.columns(3)
     with filter_col1:
         site_filter = st.multiselect(
@@ -516,7 +526,14 @@ with tab_inbox:
         # 글로벌 배치 액션 바
         # ---------------------------------------------------------------------------
         n_selected = len(st.session_state["selected_posts"])
-        bc1, bc2 = st.columns(2)
+        bc0, bc1, bc2 = st.columns([1, 1, 1])
+        with bc0:
+            if st.button("☑️ 전체 선택", width="stretch"):
+                st.session_state["selected_posts"] = {p.id for p in posts}
+                st.rerun()
+            if st.button("⬜ 전체 해제", width="stretch"):
+                st.session_state["selected_posts"] = set()
+                st.rerun()
         with bc1:
             if st.button(
                 f"✅ 선택 ({n_selected}건) 일괄 승인",
@@ -1048,6 +1065,19 @@ with tab_editor:
                         type="primary",
                         key=f"save_{selected_post_id}",
                     ):
+                        # 유효성 검증
+                        if not hook.strip():
+                            st.error("🎣 후킹(Hook)을 입력하세요.")
+                            st.stop()
+                        if not body_lines:
+                            st.error("📝 본문 항목을 1개 이상 입력하세요.")
+                            st.stop()
+                        if not closer.strip():
+                            st.error("🔚 마무리(Closer)를 입력하세요.")
+                            st.stop()
+                        if est_seconds < 15:
+                            st.error("⏱️ 대본이 너무 짧습니다 (최소 15초 이상).")
+                            st.stop()
                         try:
                             tags_list = [t.strip() for t in tags_input.split(",") if t.strip()]
                             confirmed = ScriptData(
@@ -1111,25 +1141,26 @@ with tab_progress:
         PostStatus.FAILED,
     ]
 
-    with SessionLocal() as session:
-        # 상태별 카운트
-        counts = dict(
-            session.query(Post.status, func.count(Post.id))
-            .filter(Post.status.in_(progress_statuses))
-            .group_by(Post.status)
-            .all()
-        )
-
-        # 메트릭 표시
+    @st.fragment(run_every="5s")
+    def _progress_metrics():
+        """진행현황 메트릭 자동 갱신 (5초 간격)."""
+        with SessionLocal() as _ms:
+            _counts = dict(
+                _ms.query(Post.status, func.count(Post.id))
+                .filter(Post.status.in_(progress_statuses))
+                .group_by(Post.status)
+                .all()
+            )
         metric_cols = st.columns(len(progress_statuses))
         for col, status in zip(metric_cols, progress_statuses):
             emoji = STATUS_EMOJI.get(status, "")
-            col.metric(
-                f"{emoji} {status.value}",
-                counts.get(status, 0)
-            )
+            col.metric(f"{emoji} {status.value}", _counts.get(status, 0))
 
-        st.divider()
+    _progress_metrics()
+
+    st.divider()
+
+    with SessionLocal() as session:
 
         # 상태별 상세 정보
         for status in progress_statuses:
@@ -1190,12 +1221,25 @@ with tab_gallery:
         if st.button("🔄 새로고침", key="gallery_refresh_btn", width="stretch"):
             st.rerun()
 
+    _gal_filter = st.multiselect(
+        "상태 필터",
+        ["PREVIEW_RENDERED", "RENDERED", "UPLOADED"],
+        default=["PREVIEW_RENDERED", "RENDERED", "UPLOADED"],
+        key="gallery_status_filter",
+        label_visibility="collapsed",
+    )
+    _gal_statuses = (
+        [PostStatus(s) for s in _gal_filter]
+        if _gal_filter
+        else [PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED]
+    )
+
     with SessionLocal() as session:
         # 영상이 있는 게시글 조회
         contents = (
             session.query(Content)
             .join(Post)
-            .filter(Post.status.in_([PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED]))
+            .filter(Post.status.in_(_gal_statuses))
             .order_by(Content.created_at.desc())
             .limit(20)  # 최대 20개
             .all()
@@ -1266,18 +1310,16 @@ with tab_gallery:
                                 _gallery_action_btn(post.id, content.id)
 
                         with btn_col2:
-                            if st.button(
-                                "🗑️ 삭제",
-                                key=f"delete_{content.id}",
-                                width="stretch"
-                            ):
-                                if st.session_state.get(f"confirm_delete_{content.id}"):
+                            with st.popover("🗑️ 삭제", use_container_width=True):
+                                st.warning(f"**{post.title[:30]}** 게시글과 영상이 영구 삭제됩니다.")
+                                if st.button(
+                                    "⚠️ 삭제 확인",
+                                    key=f"confirm_del_{content.id}",
+                                    type="primary",
+                                ):
                                     delete_post(post.id)
                                     st.success("삭제됨")
                                     st.rerun()
-                                else:
-                                    st.session_state[f"confirm_delete_{content.id}"] = True
-                                    st.warning("한 번 더 클릭하면 삭제됩니다.")
 
 # ===========================================================================
 # Tab 5: 분석 (Analytics)
@@ -1759,6 +1801,21 @@ with tab_settings:
     # LLM 설정
     st.subheader("🧠 LLM 설정")
     llm_model = st.text_input("LLM 모델 (Ollama)", value=cfg.get("llm_model", "qwen2.5:14b"))
+    if st.button("🔍 연결 확인", key="check_ollama", width="content"):
+        from config.settings import get_ollama_host
+        try:
+            _r = _http.get(f"{get_ollama_host()}/api/tags", timeout=5)
+            _r.raise_for_status()
+            _models = [m["name"] for m in _r.json().get("models", [])]
+            if llm_model in _models:
+                st.success(f"✅ Ollama 연결 정상 — `{llm_model}` 모델 사용 가능")
+            else:
+                st.warning(
+                    f"⚠️ Ollama 연결 정상, 모델 `{llm_model}` 미발견.\n"
+                    f"사용 가능: {', '.join(_models[:10])}"
+                )
+        except Exception as _e:
+            st.error(f"❌ Ollama 서버 연결 실패: {_e}")
 
     st.divider()
 
@@ -1950,7 +2007,7 @@ with tab_llm_log:
             st.rerun()
 
     # 필터 컨트롤
-    col_f1, col_f2, col_f3 = st.columns(3)
+    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
         filter_call_type = st.selectbox(
             "호출 유형", ["전체", "chunk", "generate_script"], key="llm_filter_type"
@@ -1965,6 +2022,15 @@ with tab_llm_log:
             [7, 30, 90],
             format_func=lambda d: f"최근 {d}일",
             key="llm_filter_days",
+        )
+    with col_f4:
+        filter_post_id = st.number_input(
+            "Post ID",
+            min_value=0,
+            value=0,
+            step=1,
+            key="llm_filter_post_id",
+            help="0이면 전체 표시",
         )
 
     with SessionLocal() as _db:
@@ -1989,6 +2055,8 @@ with tab_llm_log:
             _fq = _fq.filter(LLMLog.success == True)  # noqa: E712
         elif filter_success == "실패":
             _fq = _fq.filter(LLMLog.success == False)  # noqa: E712
+        if filter_post_id > 0:
+            _fq = _fq.filter(LLMLog.post_id == filter_post_id)
 
         _logs = _fq.order_by(LLMLog.created_at.desc()).limit(200).all()
 
