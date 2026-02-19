@@ -4,10 +4,8 @@ AI Worker Processor with Robust Error Handling
 견고한 에러 핸들링 및 재시도 메커니즘
 """
 
-import hashlib
 import json
 import logging
-import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -20,8 +18,6 @@ from sqlalchemy.orm import Session
 from ai_worker.gpu_manager import get_gpu_manager, ModelType
 from ai_worker.llm import ScriptData, generate_script, summarize
 from ai_worker.thumbnail import generate_thumbnail, get_thumbnail_path
-from ai_worker.tts import get_tts_engine
-from ai_worker.video import render_preview
 from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
 from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
@@ -36,7 +32,6 @@ logger = logging.getLogger(__name__)
 class FailureType(Enum):
     """처리 실패 타입"""
     LLM_ERROR = "llm_error"              # LLM 요약 실패 (재시도 불가)
-    TTS_ERROR = "tts_error"              # TTS 생성 실패 (재시도 가능)
     RENDER_ERROR = "render_error"        # 영상 렌더링 실패 (재시도 가능)
     NETWORK_ERROR = "network_error"      # 네트워크 오류 (재시도 가능)
     RESOURCE_ERROR = "resource_error"    # 리소스 부족 (VRAM 등, 재시도 가능)
@@ -92,56 +87,40 @@ class RobustProcessor:
                 # GPU 메모리 상태 로그
                 self.gpu_manager.log_memory_status()
 
-                # ===== Step 1: LLM 대본 생성 =====
-                logger.info("[Step 1/3] LLM 대본 생성 중...")
+                # ===== Step 1/2: LLM 대본 생성 =====
+                logger.info("[Step 1/2] LLM 대본 생성 중...")
                 with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
                     script = self._safe_generate_summary(post, session)
-                logger.info("[Step 1/3] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
+                logger.info("[Step 1/2] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
-                # ===== Step 2: TTS 생성 =====
-                logger.info("[Step 2/3] TTS 음성 생성 중...")
-                with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                    audio_path = await self._safe_generate_tts(
-                        script.to_plain_text(), post.id, post.site_code, post.origin_id
-                    )
-                logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
+                # ===== Step 2/2: 렌더링 =====
+                logger.info("[Step 2/2] 렌더링 중...")
+                from ai_worker.layout_renderer import render_layout_video_from_scenes
+                from ai_worker.resource_analyzer import analyze_resources
+                from ai_worker.scene_director import SceneDirector
+                from ai_worker.text_validator import validate_and_fix
 
-                # ===== Step 3: 렌더링 (render_style에 따라 분기) =====
-                render_style = json.loads(script.to_json()).get("render_style", "layout")
-                logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
-                if render_style == "layout":
-                    from ai_worker.layout_renderer import render_layout_video_from_scenes
-                    from ai_worker.resource_analyzer import analyze_resources
-                    from ai_worker.scene_director import SceneDirector
-                    from ai_worker.text_validator import validate_and_fix
+                _images: list[str] = post.images if isinstance(post.images, list) else []
 
-                    _images: list[str] = post.images if isinstance(post.images, list) else []
+                _profile = analyze_resources(post, _images)
+                logger.info(
+                    "[Step 2/2] 전략=%s 이미지=%d",
+                    _profile.strategy, _profile.image_count,
+                )
 
-                    # Phase 1: 자원 분석
-                    _profile = analyze_resources(post, _images)
-                    logger.info(
-                        "[Step 3/3] 전략=%s 이미지=%d",
-                        _profile.strategy, _profile.image_count,
-                    )
+                _script_dict = validate_and_fix(
+                    {"hook": script.hook, "body": list(script.body), "closer": script.closer}
+                )
 
-                    # Phase 3: 대본 검증/보정 (max_chars)
-                    _script_dict = validate_and_fix(
-                        {"hook": script.hook, "body": list(script.body), "closer": script.closer}
-                    )
+                _director = SceneDirector(_profile, _images, _script_dict)
+                _scenes = _director.direct()
+                logger.info("[Step 2/2] 씬=%d개", len(_scenes))
 
-                    # Phase 4: 씬 배분
-                    _director = SceneDirector(_profile, _images, _script_dict)
-                    _scenes = _director.direct()
-                    logger.info("[Step 3/3] 씬=%d개", len(_scenes))
-
-                    # Phase 5: 렌더링
-                    video_path = render_layout_video_from_scenes(post, _scenes)
-                else:
-                    video_path = self._safe_render_video(post, audio_path, script.to_json())
-                logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
+                video_path = render_layout_video_from_scenes(post, _scenes)
+                logger.info("[Step 2/2] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 =====
-                self._save_content(post, session, script, audio_path, video_path)
+                self._save_content(post, session, script, video_path)
 
                 # ===== 썸네일 생성 =====
                 try:
@@ -238,7 +217,7 @@ class RobustProcessor:
                 try:
                     script = ScriptData.from_json(existing.summary_text)
                     if script.hook and len(script.hook) >= 5:
-                        logger.info("[Step 1/3] 기존 대본 재사용 (LLM 스킵): post_id=%d", post.id)
+                        logger.info("[Step 1/2] 기존 대본 재사용 (LLM 스킵): post_id=%d", post.id)
                         return script
                 except Exception:
                     logger.debug("기존 summary_text JSON 파싱 실패 — 새로 생성")
@@ -293,95 +272,6 @@ class RobustProcessor:
             logger.exception("LLM 대본 생성 실패")
             raise
 
-    async def _safe_generate_tts(
-        self, text: str, post_id: int, site_code: str, origin_id: str
-    ) -> Path:
-        """
-        안전하게 TTS 음성 생성
-
-        Args:
-            text: 요약 텍스트
-            post_id: 게시글 DB ID (캐시 로그용)
-            site_code: 커뮤니티 코드
-            origin_id: 원본 게시글 ID
-
-        Returns:
-            음성 파일 경로
-
-        Raises:
-            Exception: TTS 에러
-        """
-        try:
-            tts_engine = get_tts_engine(self.cfg["tts_engine"])
-            voice_id = self.cfg["tts_voice"]
-
-            audio_dir = MEDIA_DIR / "audio" / site_code
-            audio_dir.mkdir(parents=True, exist_ok=True)
-            audio_path = audio_dir / f"post_{origin_id}.mp3"
-
-            # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
-            tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
-            tts_cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_hash = hashlib.md5(f"{voice_id}:{text}".encode()).hexdigest()
-            cached_audio = tts_cache_dir / f"{cache_hash}.mp3"
-            if cached_audio.exists():
-                shutil.copy2(cached_audio, audio_path)
-                logger.info("[TTS 캐시 히트] post_id=%d", post_id)
-            else:
-                # TTS 생성
-                await tts_engine.synthesize(text, voice_id, audio_path)
-                shutil.copy2(audio_path, cached_audio)  # 캐시 저장
-
-            # 파일 존재 확인
-            if not audio_path.exists():
-                raise FileNotFoundError(f"음성 파일 생성 실패: {audio_path}")
-
-            # 파일 크기 확인 (최소 1KB)
-            if audio_path.stat().st_size < 1024:
-                raise ValueError(f"음성 파일이 너무 작습니다: {audio_path.stat().st_size} bytes")
-
-            return audio_path
-
-        except Exception as e:
-            logger.exception("TTS 생성 실패")
-            raise
-
-    def _safe_render_video(
-        self, post: Post, audio_path: Path, summary_text: str
-    ) -> Path:
-        """
-        안전하게 프리뷰 영상 렌더링 (480×854, libx264 CPU)
-
-        Args:
-            post: 게시글
-            audio_path: 음성 파일 경로
-            summary_text: 요약 텍스트 JSON
-
-        Returns:
-            프리뷰 영상 파일 경로
-
-        Raises:
-            Exception: 렌더링 에러
-        """
-        try:
-            video_path = render_preview(post, audio_path, summary_text, self.cfg)
-
-            # 파일 존재 확인
-            if not video_path.exists():
-                raise FileNotFoundError(f"영상 파일 생성 실패: {video_path}")
-
-            # 파일 크기 확인 (최소 100KB)
-            if video_path.stat().st_size < 100 * 1024:
-                raise ValueError(
-                    f"영상 파일이 너무 작습니다: {video_path.stat().st_size / 1024:.1f}KB"
-                )
-
-            return video_path
-
-        except Exception as e:
-            logger.exception("영상 렌더링 실패")
-            raise
-
     def _classify_error(self, error: Exception) -> FailureType:
         """
         에러 분류
@@ -398,10 +288,6 @@ class RobustProcessor:
         # LLM 에러 (재시도 불가)
         if "ollama" in error_msg or "llm" in error_msg:
             return FailureType.LLM_ERROR
-
-        # TTS 에러
-        if "tts" in error_msg or "synthesize" in error_msg or "audio" in error_msg:
-            return FailureType.TTS_ERROR
 
         # 렌더링 에러
         if "render" in error_msg or "video" in error_msg or "ffmpeg" in error_msg:
@@ -457,7 +343,6 @@ class RobustProcessor:
         post: Post,
         session: Session,
         script: ScriptData,
-        audio_path: Path,
         video_path: Path
     ):
         """
@@ -467,7 +352,6 @@ class RobustProcessor:
             post: 게시글
             session: DB 세션
             script: 구조화 대본
-            audio_path: 음성 파일 경로
             video_path: 영상 파일 경로
         """
         content = session.query(Content).filter(Content.post_id == post.id).first()
@@ -476,7 +360,6 @@ class RobustProcessor:
             session.add(content)
 
         content.summary_text = script.to_json()
-        content.audio_path = str(audio_path)
         content.video_path = str(video_path)
         session.flush()
 
@@ -514,11 +397,11 @@ class RobustProcessor:
     # 파이프라인 분리 스테이지 (병렬 처리용)
     # ===========================================================================
 
-    async def llm_tts_stage(self, post_id: int) -> tuple[ScriptData, Path]:
-        """LLM 대본 생성 + TTS 합성 (CUDA/GPU 단계).
+    async def llm_tts_stage(self, post_id: int) -> ScriptData:
+        """LLM 대본 생성 (CUDA/GPU 단계).
 
         파이프라인 병렬화에서 독립적으로 호출되는 1단계.
-        완료 시 Content에 script/audio 중간 저장 후 (ScriptData, audio_path) 반환.
+        완료 시 Content에 script 중간 저장 후 ScriptData 반환.
         """
         with SessionLocal() as session:
             post = session.query(Post).filter_by(id=post_id).first()
@@ -528,7 +411,7 @@ class RobustProcessor:
             post.status = PostStatus.PROCESSING
             post.retry_count = (post.retry_count or 0) + 1
             session.commit()
-            logger.info("[Pipeline LLM+TTS] 시작: post_id=%d", post_id)
+            logger.info("[Pipeline LLM] 시작: post_id=%d", post_id)
 
             # A/B 테스트 변형 배정 (활성 테스트 있을 경우)
             try:
@@ -548,7 +431,7 @@ class RobustProcessor:
                 _images: list[str] = post.images if isinstance(post.images, list) else []
                 _profile = analyze_resources(post, _images)
                 logger.info(
-                    "[Pipeline LLM+TTS] content_processor 모드: 전략=%s 이미지=%d",
+                    "[Pipeline LLM] content_processor 모드: 전략=%s 이미지=%d",
                     _profile.strategy, _profile.image_count,
                 )
                 with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
@@ -571,13 +454,7 @@ class RobustProcessor:
                 with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
                     script = self._safe_generate_summary(post, session)
 
-            logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
-
-            with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                audio_path = await self._safe_generate_tts(
-                    script.to_plain_text(), post_id, post.site_code, post.origin_id
-                )
-            logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
+            logger.info("[Pipeline LLM] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
             # 중간 결과 저장 (렌더 단계에서 재사용)
             content = session.query(Content).filter_by(post_id=post_id).first()
@@ -585,18 +462,14 @@ class RobustProcessor:
                 content = Content(post_id=post_id)
                 session.add(content)
             content.summary_text = script.to_json()
-            content.audio_path = str(audio_path)
             session.commit()
 
-        return script, audio_path
+        return script
 
-    def render_stage(self, post_id: int, script: ScriptData, audio_path: Path) -> Path:
+    def render_stage(self, post_id: int, script: ScriptData) -> Path:
         """영상 렌더링 + 썸네일 생성 (CPU 단계).
 
-        render_style에 따라 렌더러를 선택한다:
-        - "layout" (기본): SceneDirector → render_layout_video_from_scenes()
-        - 기타: 레거시 render_preview()
-
+        SceneDirector → render_layout_video_from_scenes() 로 렌더링.
         파이프라인 병렬화에서 독립적으로 호출되는 2단계.
         완료 시 post.status → PREVIEW_RENDERED.
         """
@@ -612,49 +485,33 @@ class RobustProcessor:
             if post is None:
                 raise ValueError(f"Post {post_id} 없음")
 
-            # render_style 확인: DB에 저장된 summary_text JSON에서 읽는다
-            render_style = "layout"
-            try:
-                existing = session.query(Content).filter_by(post_id=post_id).first()
-                if existing and existing.summary_text:
-                    _d = json.loads(existing.summary_text)
-                    render_style = _d.get("render_style", "layout")
-            except Exception:
-                logger.debug("render_style 파싱 실패 — layout 기본값 사용")
+            logger.info("[Pipeline Render] 시작: post_id=%d", post_id)
 
-            logger.info("[Pipeline Render] 시작: post_id=%d render_style=%s", post_id, render_style)
+            from ai_worker.layout_renderer import render_layout_video_from_scenes
+            from ai_worker.resource_analyzer import analyze_resources
+            from ai_worker.scene_director import SceneDirector
+            from ai_worker.text_validator import validate_and_fix
 
-            if render_style == "layout":
-                from ai_worker.layout_renderer import render_layout_video_from_scenes
-                from ai_worker.resource_analyzer import analyze_resources
-                from ai_worker.scene_director import SceneDirector
-                from ai_worker.text_validator import validate_and_fix
+            images: list[str] = post.images if isinstance(post.images, list) else []
 
-                images: list[str] = post.images if isinstance(post.images, list) else []
+            profile = analyze_resources(post, images)
+            logger.info(
+                "[Pipeline Render] 전략=%s 이미지=%d",
+                profile.strategy, profile.image_count,
+            )
 
-                # Phase 1: 자원 분석
-                profile = analyze_resources(post, images)
-                logger.info(
-                    "[Pipeline Render] 전략=%s 이미지=%d",
-                    profile.strategy, profile.image_count,
-                )
+            script_dict = validate_and_fix(
+                {"hook": script.hook, "body": list(script.body), "closer": script.closer}
+            )
 
-                # Phase 3: 대본 검증/보정 (max_chars)
-                script_dict = validate_and_fix(
-                    {"hook": script.hook, "body": list(script.body), "closer": script.closer}
-                )
+            director = SceneDirector(profile, images, script_dict)
+            scenes = director.direct()
+            logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
-                # Phase 4: 씬 배분
-                director = SceneDirector(profile, images, script_dict)
-                scenes = director.direct()
-                logger.info("[Pipeline Render] 씬=%d개", len(scenes))
+            _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
+            video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
 
-                _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
-                video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
-            else:
-                video_path = self._safe_render_video(post, audio_path, script.to_json())
-
-            self._save_content(post, session, script, audio_path, video_path)
+            self._save_content(post, session, script, video_path)
             logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)
 
             # 썸네일 생성

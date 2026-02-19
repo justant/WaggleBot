@@ -47,11 +47,6 @@ def test_error_classification():
     assert processor._classify_error(llm_error) == FailureType.LLM_ERROR
     log.info("✓ LLM 에러 분류 성공")
 
-    # TTS 에러
-    tts_error = Exception("TTS synthesize error")
-    assert processor._classify_error(tts_error) == FailureType.TTS_ERROR
-    log.info("✓ TTS 에러 분류 성공")
-
     # 렌더링 에러
     render_error = Exception("FFmpeg render failed")
     assert processor._classify_error(render_error) == FailureType.RENDER_ERROR
@@ -131,39 +126,6 @@ async def test_llm_error_no_retry():
         log.info("✓ LLM 에러 시 즉시 중단 확인\n")
 
 
-async def test_tts_error_retry():
-    """TTS 에러 시 재시도 테스트"""
-    log.info("=== TTS 에러 재시도 테스트 ===")
-
-    mock_post = create_mock_post()
-    mock_session = Mock()
-
-    processor = RobustProcessor(
-        retry_policy=RetryPolicy(max_attempts=2, initial_delay=0.1)
-    )
-
-    call_count = 0
-
-    async def mock_tts(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count < 2:
-            raise Exception("TTS error - will retry")
-        return "/fake/audio.mp3"
-
-    # TTS 첫 시도 실패, 두 번째 성공
-    with patch.object(processor, '_safe_generate_summary', return_value="요약 텍스트"), \
-         patch.object(processor, '_safe_generate_tts', side_effect=mock_tts), \
-         patch.object(processor, '_safe_render_video', return_value="/fake/video.mp4"), \
-         patch.object(processor, '_save_content'):
-
-        success = await processor.process_with_retry(mock_post, mock_session)
-
-        # 재시도 후 성공
-        log.info("TTS 호출 횟수: %d", call_count)
-        # Note: 실제로는 2번 호출되어야 하지만 Mock 환경에서는 1번만 호출됨
-        log.info("✓ TTS 에러 재시도 로직 확인\n")
-
 
 def test_failure_logging():
     """에러 로그 기록 테스트"""
@@ -174,7 +136,7 @@ def test_failure_logging():
     # 로그 기록
     processor._log_failure(
         post_id=12345,
-        failure_type=FailureType.TTS_ERROR,
+        failure_type=FailureType.RENDER_ERROR,
         error_msg="Test error message",
         attempt=2
     )
@@ -198,7 +160,6 @@ def run_all_tests():
 
         # 비동기 테스트
         asyncio.run(test_llm_error_no_retry())
-        asyncio.run(test_tts_error_retry())
 
         log.info("========================================")
         log.info("✅ 모든 테스트 통과!")

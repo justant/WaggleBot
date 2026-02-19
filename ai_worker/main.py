@@ -1,11 +1,11 @@
 """AI Worker 메인 루프 — 파이프라인 병렬 처리.
 
 구조:
-  _llm_tts_worker  : APPROVED 폴링 → LLM+TTS (CUDA) → render_queue에 적재
-  _render_worker   : render_queue 소비 → 프리뷰 렌더링 (CPU) → PREVIEW_RENDERED
+  _llm_tts_worker  : APPROVED 폴링 → LLM (CUDA) → render_queue에 적재
+  _render_worker   : render_queue 소비 → layout 렌더링 (CPU) → PREVIEW_RENDERED
 
 두 워커가 asyncio.gather로 동시 실행되므로
-Post A가 CPU로 렌더링되는 동안 Post B는 GPU로 LLM+TTS를 처리할 수 있다.
+Post A가 CPU로 렌더링되는 동안 Post B는 GPU로 LLM을 처리할 수 있다.
 """
 import asyncio
 import logging
@@ -47,7 +47,7 @@ def _get_cuda_sem() -> asyncio.Semaphore:
 # ---------------------------------------------------------------------------
 
 async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
-    """APPROVED 게시글을 폴링해 LLM+TTS 처리 후 render_queue에 적재."""
+    """APPROVED 게시글을 폴링해 LLM 처리 후 render_queue에 적재."""
     from ai_worker.processor import RobustProcessor
     processor = RobustProcessor()
     cuda_sem = _get_cuda_sem()
@@ -70,9 +70,9 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
 
         async with cuda_sem:
             try:
-                script, audio_path = await processor.llm_tts_stage(post_id)
-                await render_queue.put((post_id, script, audio_path))
-                logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
+                script = await processor.llm_tts_stage(post_id)
+                await render_queue.put((post_id, script))
+                logger.info("LLM 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
                             post_id, render_queue.qsize())
             except Exception:
                 logger.exception("LLM+TTS 실패: post_id=%d", post_id)
@@ -86,12 +86,12 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
     processor = RobustProcessor()
 
     while True:
-        post_id, script, audio_path = await render_queue.get()
+        post_id, script = await render_queue.get()
         try:
             # render_stage는 동기 CPU 작업 — event loop를 블록하지 않도록 executor 사용
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
-                None, processor.render_stage, post_id, script, audio_path
+                None, processor.render_stage, post_id, script
             )
         except Exception:
             logger.exception("렌더링 실패: post_id=%d", post_id)
