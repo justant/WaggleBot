@@ -14,7 +14,7 @@
 
 ### 주요 기능
 
-- **자동 크롤링**: 네이트판 등 커뮤니티 인기 게시글 수집 + 인기도 스코어링
+- **자동 크롤링**: 네이트판·뽐뿌·DC인사이드·FM코리아 인기 게시글 수집 + 시간감쇠 인기도 스코어링
 - **AI 대본**: Ollama LLM 기반 쇼츠 특화 3막 구조 대본 (hook/body/closer)
 - **TTS**: Fish Speech 1.5 (zero-shot 음성 클로닝, 감정 태그 지원)
 - **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 장면 전환, 썸네일 자동 생성
@@ -207,22 +207,28 @@ WaggleBot/
 ├── docker-compose.yml                 # GPU 환경 (fish-speech 포함)
 ├── docker-compose.galaxybook.yml      # No-GPU 환경 (fish-speech 제외, TTS 무음)
 ├── arch/
-│   ├── 1. dev_spec.md                 # 1차 개발 명세
-│   ├── 2. next_spec_by_claude.md      # 2차 개발 명세 (Phase 3A/B/C)
-│   ├── 3. renderer_from_figma.md      # Figma 기반 렌더러 아키텍처
-│   ├── 4. llm_optimization.md         # LLM 최적화 5-Phase 파이프라인
-│   ├── 5. tts_inhancement.md          # Fish Speech 1.5 교체 전체 기록
+│   ├── 4. llm_optimization.md         # LLM 최적화 5-Phase 파이프라인 (미실행)
+│   ├── done/                          # 완료된 명세 (1~3, 5번)
 │   └── env/
 │       ├── ENV_GPU.md
 │       └── ENV_NOGPU.md
 ├── crawlers/
-│   ├── base.py                        # BaseCrawler (스코어링 포함)
-│   ├── nate_pann.py / nate_tok.py
-│   ├── plugin_manager.py
-│   └── ADDING_CRAWLER.md
+│   ├── __init__.py                    # 크롤러 자동 등록 (explicit imports)
+│   ├── base.py                        # BaseCrawler (공통 헬퍼 + retry + 스코어링)
+│   ├── nate_pann.py                   # 네이트판
+│   ├── bobaedream.py                  # 뽐뿌
+│   ├── dcinside.py                    # DC인사이드
+│   ├── fmkorea.py                     # FM코리아
+│   ├── plugin_manager.py              # CrawlerRegistry (등록/조회)
+│   └── ADDING_CRAWLER.md             # 신규 크롤러 추가 가이드
 ├── db/
-│   ├── models.py                      # Post/Comment/Content + PostStatus
-│   └── session.py
+│   ├── models.py                      # Post/Comment/Content/ScriptData + PostStatus
+│   ├── session.py
+│   └── migrations/
+│       ├── runner.py                  # 통합 마이그레이션 러너 (schema_migrations 추적)
+│       ├── 001_images_contents.sql
+│       ├── 002_add_llm_logs.sql
+│       └── 003_add_variant_fields.sql
 ├── ai_worker/
 │   ├── main.py                        # 폴링 메인 루프 + Fish Speech 헬스체크
 │   ├── processor.py                   # asyncio 파이프라인 오케스트레이터
@@ -234,7 +240,7 @@ WaggleBot/
 │   │   ├── text_validator.py          # Phase 3: max_chars 검증 + 한국어 분할
 │   │   └── scene_director.py          # Phase 4: 씬 배분 + 감정 태그 자동 할당
 │   ├── llm/                           # LLM 호출 / 로깅
-│   │   ├── client.py                  # 쇼츠 대본 생성 (hook/body/closer JSON)
+│   │   ├── client.py                  # 쇼츠 대본 생성 + call_ollama_raw()
 │   │   └── logger.py                  # LLM 호출 이력 DB 저장
 │   ├── tts/                           # TTS 엔진
 │   │   ├── fish_client.py             # Fish Speech 1.5 HTTP 클라이언트
@@ -245,11 +251,13 @@ WaggleBot/
 │       ├── subtitle.py                # ASS 동적 자막
 │       └── thumbnail.py               # 썸네일 자동 생성
 ├── uploaders/
-│   ├── base.py
-│   ├── youtube.py
-│   └── uploader.py
+│   ├── base.py                        # BaseUploader + UploaderRegistry
+│   ├── youtube.py                     # YouTube Shorts 업로더
+│   ├── uploader.py
+│   └── ADDING_UPLOADER.md            # 신규 업로더 추가 가이드
 ├── analytics/
-│   └── collector.py
+│   ├── collector.py                   # YouTube Analytics 수집
+│   └── feedback.py                    # 성과 기반 LLM 피드백 루프
 ├── assets/
 │   ├── backgrounds/                   # 9:16 배경 영상
 │   ├── fonts/
@@ -258,7 +266,9 @@ WaggleBot/
 ├── checkpoints/
 │   └── fish-speech-1.5/               # Fish Speech 모델 파일
 ├── config/
-│   ├── settings.py                    # 전역 설정 + TTS/Fish Speech 상수
+│   ├── settings.py                    # 전역 설정 허브 (도메인별 모듈 re-export)
+│   ├── crawler.py                     # 크롤러 설정 (USER_AGENTS, REQUEST_HEADERS 등)
+│   ├── monitoring.py                  # 모니터링/알림 임계값
 │   └── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
 ├── scripts/
 │   ├── setup_docker_gpu.sh
