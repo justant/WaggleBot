@@ -34,15 +34,6 @@ try:
 except ImportError:
     _SOYNLP_AVAILABLE = False
 
-_G2PK_AVAILABLE = False
-_g2p_instance: object | None = None
-try:
-    import g2pk as _g2pk_module  # noqa: F401
-    _G2PK_AVAILABLE = True
-    logger.debug("g2pk 로드 완료")
-except ImportError:
-    pass
-
 # ── 인터넷 축약어 → 표준어 사전 ──
 _SLANG_MAP_PATH = Path(__file__).parent.parent / "assets" / "slang_map.json"
 
@@ -200,16 +191,6 @@ def _convert_standalone_number(match: re.Match) -> str:  # type: ignore[type-arg
         return match.group(0)
 
 
-def _get_g2p() -> object:
-    """g2pk G2p 인스턴스를 lazy-init으로 반환 (첫 호출 시 모델 로드)."""
-    global _g2p_instance
-    if _g2p_instance is None:
-        import g2pk  # noqa: PLC0415
-        _g2p_instance = g2pk.G2p()
-        logger.info("g2pk G2p 초기화 완료")
-    return _g2p_instance
-
-
 def _normalize_for_tts(text: str) -> str:
     """TTS 전달 전 한국어 인터넷 슬랭/이모티콘 정규화.
 
@@ -228,25 +209,25 @@ def _normalize_for_tts(text: str) -> str:
 
     # 1-2. soynlp: 반복 자모 정규화 — 삭제 전 반복 횟수 통일 (ㅋㅋㅋㅋ → ㅋ)
     if _SOYNLP_AVAILABLE:
-        text = _soynlp_repeat_normalize(text, num_repeats=1)
+        try:
+            text = _soynlp_repeat_normalize(text, num_repeats=1)
+        except Exception:
+            logger.warning("soynlp repeat_normalize 실패, 건너뜀")
 
     # 2. 자모 이모티콘 제거
     text = re.sub(r'[ㅋㅎㅠㅜㅡ]{2,}', '', text)  # 2회 이상 반복 자모 삭제
     text = re.sub(r'[ㄱ-ㅎㅏ-ㅣ]+', '', text)       # 나머지 단독 자모 삭제
     text = re.sub(r'\^+', '', text)                  # ^ 이모티콘 제거
 
-    # 3. 숫자 → 한국어 읽기 변환
-    if _G2PK_AVAILABLE:
-        # g2pk에 위임: 숫자 읽기 + 연음/경음화 발음 규칙 정규화 (to_syl=True 기본값)
-        text = _get_g2p()(text)  # type: ignore[operator]
-    else:
-        # 내장 변환: 단위별 수사 선택
-        all_counters = "|".join(
-            re.escape(c) for c in sorted(_NATIVE_COUNTERS | _SINO_COUNTERS, key=len, reverse=True)
-        )
-        text = re.sub(rf'(\d+)\s*({all_counters})', _convert_number_with_counter, text)
-        text = re.sub(r'(\d+)\s*%', lambda m: _sino_number(int(m.group(1))) + " 퍼센트", text)
-        text = re.sub(r'\d+', _convert_standalone_number, text)
+    # 3. 숫자 → 한국어 읽기 변환 (built-in만 사용)
+    # ⚠️ g2pk는 전체 텍스트를 발음형으로 변환하므로 Fish Speech와 이중 G2P 충돌 발생.
+    #    Fish Speech는 자체 G2P가 있으므로 표준 맞춤법 텍스트를 입력해야 한다.
+    all_counters = "|".join(
+        re.escape(c) for c in sorted(_NATIVE_COUNTERS | _SINO_COUNTERS, key=len, reverse=True)
+    )
+    text = re.sub(rf'(\d+)\s*({all_counters})', _convert_number_with_counter, text)
+    text = re.sub(r'(\d+)\s*%', lambda m: _sino_number(int(m.group(1))) + " 퍼센트", text)
+    text = re.sub(r'\d+', _convert_standalone_number, text)
 
     # 4. 특수문자 정리
     text = text.replace("。", ".").replace("、", ",")   # 중국어/일본어 구두점
