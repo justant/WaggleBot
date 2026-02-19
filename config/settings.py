@@ -8,30 +8,39 @@ load_dotenv()
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# ---------------------------------------------------------------------------
+# re-export — 기존 import 경로 호환
+# ---------------------------------------------------------------------------
+from config.crawler import (  # noqa: E402
+    CRAWL_INTERVAL_HOURS,
+    ENABLED_CRAWLERS,
+    REQUEST_HEADERS,
+    REQUEST_TIMEOUT,
+    USER_AGENTS,
+)
+from config.monitoring import (  # noqa: E402
+    MONITORING_ENABLED,
+    HEALTH_CHECK_INTERVAL,
+    GPU_TEMP_WARNING,
+    GPU_TEMP_CRITICAL,
+    DISK_USAGE_WARNING,
+    DISK_USAGE_CRITICAL,
+    MEMORY_USAGE_WARNING,
+    MEMORY_USAGE_CRITICAL,
+    EMAIL_ALERTS_ENABLED,
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_USER,
+    SMTP_PASSWORD,
+    ALERT_EMAIL_TO,
+    SLACK_ALERTS_ENABLED,
+    SLACK_WEBHOOK_URL,
+)
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "mysql+pymysql://wagglebot:wagglebot@localhost/wagglebot",
 )
-
-CRAWL_INTERVAL_HOURS = int(os.getenv("CRAWL_INTERVAL_HOURS", "1"))
-
-# 크롤러 설정
-ENABLED_CRAWLERS = os.getenv("ENABLED_CRAWLERS", "nate_pann").split(",")
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-]
-
-REQUEST_HEADERS = {
-    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-}
-
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
 
 STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 
@@ -227,32 +236,6 @@ def get_llm_constraints_prompt() -> str:
         f"\n**초과 시 화면에서 잘립니다.**"
     )
 
-
-# ---------------------------------------------------------------------------
-# Monitoring & Alerting
-# ---------------------------------------------------------------------------
-MONITORING_ENABLED = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
-HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5분
-
-# 임계값
-GPU_TEMP_WARNING = int(os.getenv("GPU_TEMP_WARNING", "75"))
-GPU_TEMP_CRITICAL = int(os.getenv("GPU_TEMP_CRITICAL", "80"))
-DISK_USAGE_WARNING = int(os.getenv("DISK_USAGE_WARNING", "80"))
-DISK_USAGE_CRITICAL = int(os.getenv("DISK_USAGE_CRITICAL", "90"))
-MEMORY_USAGE_WARNING = int(os.getenv("MEMORY_USAGE_WARNING", "85"))
-MEMORY_USAGE_CRITICAL = int(os.getenv("MEMORY_USAGE_CRITICAL", "95"))
-
-# 이메일 알림 설정
-EMAIL_ALERTS_ENABLED = os.getenv("EMAIL_ALERTS_ENABLED", "false").lower() == "true"
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "").split(",") if os.getenv("ALERT_EMAIL_TO") else []
-
-# 슬랙 알림 설정
-SLACK_ALERTS_ENABLED = os.getenv("SLACK_ALERTS_ENABLED", "false").lower() == "true"
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 
 # ────────────────────────────────────────────
 # TTS — Fish Speech 1.5

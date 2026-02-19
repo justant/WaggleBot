@@ -1,4 +1,6 @@
 import enum
+import json as _json
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -93,7 +95,7 @@ class Content(Base):
 
     post = relationship("Post", backref="content_item")
 
-    def get_script(self) -> "ScriptData | None":  # type: ignore[return]
+    def get_script(self) -> "ScriptData | None":
         """
         summary_text에서 ScriptData 반환.
 
@@ -103,9 +105,6 @@ class Content(Base):
         """
         if not self.summary_text:
             return None
-
-        import json as _json
-        from ai_worker.llm import ScriptData
 
         try:
             return ScriptData.from_json(self.summary_text)
@@ -160,3 +159,49 @@ class LLMLog(Base):
     duration_ms   = Column(Integer, nullable=True)   # 밀리초
 
     created_at = Column(DateTime, nullable=False, default=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# ScriptData — 구조화 대본 (ai_worker/llm/client.py에서 이동)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ScriptData:
+    """구조화된 쇼츠 대본 데이터.
+
+    ai_worker/llm.py에서 생성하고 Content.summary_text에 JSON으로 저장.
+    """
+    hook: str
+    body: list[str]
+    closer: str
+    title_suggestion: str
+    tags: list[str]
+    mood: str = "funny"
+
+    def to_plain_text(self) -> str:
+        return " ".join([self.hook] + self.body + [self.closer])
+
+    def to_json(self) -> str:
+        return _json.dumps(
+            {
+                "hook": self.hook,
+                "body": self.body,
+                "closer": self.closer,
+                "title_suggestion": self.title_suggestion,
+                "tags": self.tags,
+                "mood": self.mood,
+            },
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> "ScriptData":
+        d = _json.loads(raw)
+        return cls(
+            hook=d["hook"],
+            body=d["body"],
+            closer=d["closer"],
+            title_suggestion=d["title_suggestion"],
+            tags=d["tags"],
+            mood=d.get("mood", "funny"),
+        )

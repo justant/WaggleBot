@@ -2,8 +2,11 @@ import hashlib
 import logging
 import random
 import re
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from functools import wraps
+from typing import Callable, TypeVar
 
 import requests
 from sqlalchemy.orm import Session
@@ -12,6 +15,45 @@ from config.settings import REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from db.models import Post, Comment, PostStatus
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def retry(
+    max_attempts: int = 3,
+    delay: float = 1.0,
+    backoff: float = 2.0,
+    exceptions: tuple = (requests.RequestException,),
+) -> Callable:
+    """HTTP 요청 재시도 데코레이터.
+
+    Args:
+        max_attempts: 최대 시도 횟수
+        delay: 첫 대기 시간 (초)
+        backoff: 대기 시간 배수
+        exceptions: 재시도할 예외 타입
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            current_delay = delay
+            last_exception: Exception | None = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt < max_attempts:
+                        log.warning(
+                            "%s 재시도 %d/%d (%.1f초 후): %s",
+                            func.__name__, attempt, max_attempts,
+                            current_delay, e,
+                        )
+                        time.sleep(current_delay)
+                        current_delay *= backoff
+            raise last_exception  # type: ignore[misc]
+        return wrapper
+    return decorator
 
 
 class BaseCrawler(ABC):
@@ -24,6 +66,7 @@ class BaseCrawler(ABC):
     def _rotate_ua(self) -> None:
         self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
+    @retry(max_attempts=3, delay=1.0)
     def _get(self, url: str, **kwargs) -> requests.Response:
         self._rotate_ua()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
@@ -31,6 +74,7 @@ class BaseCrawler(ABC):
         resp.raise_for_status()
         return resp
 
+    @retry(max_attempts=3, delay=1.0)
     def _post(self, url: str, **kwargs) -> requests.Response:
         self._rotate_ua()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)

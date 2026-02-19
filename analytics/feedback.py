@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config.settings import FEEDBACK_CONFIG_PATH, get_ollama_host, OLLAMA_MODEL
+from config.settings import FEEDBACK_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +148,11 @@ def generate_structured_insights(
     Returns:
         {"extra_instructions": str, "mood_weights": dict, "subtitle_style": str}
     """
-    import requests
+    from ai_worker.llm import call_ollama_raw
 
     if not performance_data:
         logger.warning("성과 데이터 없음 — 인사이트 생성 불가")
         return {}
-
-    model = llm_model or OLLAMA_MODEL
 
     data_lines = []
     for i, r in enumerate(performance_data[:15], 1):
@@ -168,18 +166,7 @@ def generate_structured_insights(
 
     prompt = _STRUCTURED_PROMPT.format(data="\n".join(data_lines))
 
-    resp = requests.post(
-        f"{get_ollama_host()}/api/generate",
-        json={
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_predict": 512, "temperature": 0.5},
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    raw = resp.json().get("response", "").strip()
+    raw = call_ollama_raw(prompt, model=llm_model, max_tokens=512, temperature=0.5)
 
     # JSON 파싱
     cleaned = re.sub(r"```json\s*", "", raw)

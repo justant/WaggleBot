@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from uploaders.base import BaseUploader
+from uploaders.base import BaseUploader, UploaderRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2
 
 
+@UploaderRegistry.register("youtube")
 class YouTubeUploader(BaseUploader):
     platform = "youtube"
 
