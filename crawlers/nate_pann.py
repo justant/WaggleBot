@@ -1,12 +1,10 @@
 import logging
-import random
 import re
 import time
 
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import NATE_PANN_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from crawlers.base import BaseCrawler
 from crawlers.plugin_manager import CrawlerRegistry
 
@@ -22,13 +20,10 @@ POST_BASE = "https://pann.nate.com/talk/"
 )
 class NatePannCrawler(BaseCrawler):
     site_code = "nate_pann"
-
-    def __init__(self):
-        self._session = requests.Session()
-        self._session.headers.update(REQUEST_HEADERS)
-
-    def _rotate_ua(self):
-        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+    SECTIONS = [
+        {"name": "톡톡 베스트", "url": "https://pann.nate.com/talk/ranking"},
+        {"name": "톡커들의 선택", "url": "https://pann.nate.com/talk/ranking/best"},
+    ]
 
     # ------------------------------------------------------------------
     # Listing
@@ -38,11 +33,9 @@ class NatePannCrawler(BaseCrawler):
         posts = []
         seen = set()
 
-        for section in NATE_PANN_SECTIONS:
-            self._rotate_ua()
+        for section in self.SECTIONS:
             try:
-                resp = self._session.get(section["url"], timeout=REQUEST_TIMEOUT)
-                resp.raise_for_status()
+                resp = self._get(section["url"])
             except requests.RequestException:
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
@@ -84,9 +77,7 @@ class NatePannCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     def parse_post(self, url: str) -> dict:
-        self._rotate_ua()
-        resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        resp = self._get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
         title = self._text(soup.select_one("div.post-tit-info h1"))
@@ -100,7 +91,8 @@ class NatePannCrawler(BaseCrawler):
                 if src and src.startswith("http"):
                     images.append(src)
 
-        views = self._parse_stat(soup, "div.post-tit-info div.info span.count", prefix="조회")
+        views_el = soup.select_one("div.post-tit-info div.info span.count")
+        views = self._parse_int(self._text(views_el).replace("조회", ""))
         likes = self._parse_int(self._text(soup.select_one("div.btnbox.up span.count span")))
         comment_count = self._parse_int(
             self._text(soup.select_one("div#bepleDiv div.cmt_tit span.num strong"))
@@ -149,25 +141,3 @@ class NatePannCrawler(BaseCrawler):
             })
 
         return results
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _text(el) -> str:
-        return el.get_text(strip=True) if el else ""
-
-    @staticmethod
-    def _parse_int(s: str) -> int:
-        digits = re.sub(r"[^\d]", "", s)
-        return int(digits) if digits else 0
-
-    def _parse_stat(self, soup, selector: str, prefix: str = "") -> int:
-        el = soup.select_one(selector)
-        if not el:
-            return 0
-        text = el.get_text(strip=True)
-        if prefix:
-            text = text.replace(prefix, "")
-        return self._parse_int(text)

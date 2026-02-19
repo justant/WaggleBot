@@ -18,26 +18,6 @@ CRAWL_INTERVAL_HOURS = int(os.getenv("CRAWL_INTERVAL_HOURS", "1"))
 # 크롤러 설정
 ENABLED_CRAWLERS = os.getenv("ENABLED_CRAWLERS", "nate_pann").split(",")
 
-NATE_PANN_SECTIONS = [
-    {"name": "톡톡 베스트", "url": "https://pann.nate.com/talk/ranking"},
-    {"name": "톡커들의 선택", "url": "https://pann.nate.com/talk/ranking/best"},
-]
-
-BOBAEDREAM_SECTIONS = [
-    {"name": "자유게시판 베스트", "url": "https://m.bobaedream.co.kr/board/best/freeb"},
-    {"name": "전체 베스트", "url": "https://m.bobaedream.co.kr/board/new_writing/best"},
-]
-
-DCINSIDE_SECTIONS = [
-    {"name": "실시간 베스트 (실베)", "url": "https://gall.dcinside.com/board/lists/?id=dcbest"},
-    {"name": "HIT 갤러리 (힛갤)",   "url": "https://gall.dcinside.com/board/lists/?id=hit"},
-]
-
-FMKOREA_SECTIONS = [
-    {"name": "포텐 터짐 최신순", "url": "https://www.fmkorea.com/index.php?mid=best"},
-    {"name": "포텐 터짐 화제순", "url": "https://www.fmkorea.com/index.php?mid=best2&sort_index=pop&order_type=desc"},
-]
-
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",

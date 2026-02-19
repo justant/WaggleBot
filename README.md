@@ -126,6 +126,15 @@ docker compose exec dashboard python -c "from db.session import init_db; init_db
 
 생성되는 테이블: `posts`, `comments`, `contents`
 
+### 7. DB 마이그레이션 (스키마 변경 시)
+
+신규 마이그레이션이 추가된 경우 아래 명령을 실행합니다.
+이미 적용된 마이그레이션은 자동으로 건너뜁니다.
+
+```bash
+docker compose exec dashboard python -m db.migrations.runner
+```
+
 ---
 
 ## 사용법

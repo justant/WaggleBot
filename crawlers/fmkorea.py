@@ -1,12 +1,10 @@
 import logging
-import random
 import re
 import time
 
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import FMKOREA_SECTIONS, REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
 from crawlers.base import BaseCrawler
 from crawlers.plugin_manager import CrawlerRegistry
 
@@ -24,16 +22,14 @@ COMMENT_API = f"{BASE_URL}/index.php"
 )
 class FMKoreaCrawler(BaseCrawler):
     site_code = "fmkorea"
+    SECTIONS = [
+        {"name": "포텐 터짐 최신순", "url": "https://www.fmkorea.com/index.php?mid=best"},
+        {"name": "포텐 터짐 화제순", "url": "https://www.fmkorea.com/index.php?mid=best2&sort_index=pop&order_type=desc"},
+    ]
 
     def __init__(self) -> None:
-        self._session = requests.Session()
-        self._session.headers.update({
-            **REQUEST_HEADERS,
-            "Referer": BASE_URL + "/",
-        })
-
-    def _rotate_ua(self) -> None:
-        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+        super().__init__()
+        self._session.headers["Referer"] = BASE_URL + "/"
 
     # ------------------------------------------------------------------
     # Listing
@@ -43,11 +39,9 @@ class FMKoreaCrawler(BaseCrawler):
         posts: list[dict] = []
         seen: set[str] = set()
 
-        for section in FMKOREA_SECTIONS:
-            self._rotate_ua()
+        for section in self.SECTIONS:
             try:
-                resp = self._session.get(section["url"], timeout=REQUEST_TIMEOUT)
-                resp.raise_for_status()
+                resp = self._get(section["url"])
             except requests.RequestException:
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
@@ -96,9 +90,7 @@ class FMKoreaCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     def parse_post(self, url: str) -> dict:
-        self._rotate_ua()
-        resp = self._session.get(url, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        resp = self._get(url)
         soup = BeautifulSoup(resp.content, "html.parser")
 
         # 제목: h1 > span.np_18px_span 또는 h1 직접
@@ -189,8 +181,7 @@ class FMKoreaCrawler(BaseCrawler):
             return []
 
         try:
-            self._rotate_ua()
-            resp = self._session.get(
+            resp = self._get(
                 COMMENT_API,
                 params={
                     "act": "dispBoardGetMoreCommentList",
@@ -199,9 +190,7 @@ class FMKoreaCrawler(BaseCrawler):
                     "cpage": "1",
                 },
                 headers={"X-Requested-With": "XMLHttpRequest"},
-                timeout=REQUEST_TIMEOUT,
             )
-            resp.raise_for_status()
         except requests.RequestException:
             log.warning("Failed to fetch comments for srl=%s", document_srl)
             return []
@@ -255,19 +244,3 @@ class FMKoreaCrawler(BaseCrawler):
             })
 
         return results
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_stat(text: str, pattern: str) -> int:
-        m = re.search(pattern, text)
-        if not m:
-            return 0
-        return int(m.group(1).replace(",", ""))
-
-    @staticmethod
-    def _parse_int(s: str) -> int:
-        digits = re.sub(r"[^\d]", "", s)
-        return int(digits) if digits else 0
