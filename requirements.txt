@@ -14,3 +14,5 @@ google-auth-oauthlib
 psutil>=5.9.0
 gputil>=1.4.0
 pyyaml>=6.0
+g2pk>=0.0.6
+soynlp>=0.0.493
