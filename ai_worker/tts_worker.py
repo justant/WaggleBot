@@ -8,6 +8,7 @@ import base64
 import json
 import logging
 import re
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -244,6 +245,44 @@ def _normalize_for_tts(text: str) -> str:
     return text
 
 
+def _post_process_audio(path: Path) -> None:
+    """FFmpeg 후처리: 무음 단축 + 1.2배속 (피치 보존).
+
+    1. silenceremove — 단어 사이 200ms 이상 무음 구간 제거
+    2. atempo=1.2   — WSOLA 알고리즘으로 피치 변화 없이 배속만 1.2배
+                      (목소리 톤·음색 유지, 발화 속도만 빨라짐)
+
+    ffmpeg 미설치 환경은 조용히 건너뜀.
+    """
+    tmp = path.with_name(path.stem + "_proc.wav")
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(path),
+                "-af", "silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB,atempo=1.2",
+                str(tmp),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+            tmp.replace(path)
+            logger.debug("오디오 후처리 완료 (무음단축+1.2배속): %s", path.name)
+        else:
+            logger.warning(
+                "오디오 후처리 실패 (rc=%d): %s",
+                result.returncode,
+                result.stderr[-200:].decode(errors="replace") if result.stderr else "",
+            )
+    except FileNotFoundError:
+        logger.debug("ffmpeg 미설치 — 오디오 후처리 건너뜀")
+    except Exception as exc:
+        logger.warning("오디오 후처리 오류: %s", exc)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
 async def synthesize(
     text: str,
     scene_type: str = "img_text",
@@ -306,6 +345,8 @@ async def synthesize(
         )
         resp.raise_for_status()
         output_path.write_bytes(resp.content)
+
+    _post_process_audio(output_path)
 
     logger.info(
         "TTS 생성 완료: scene=%s text=%d자→%d자 → %s (%dKB)",

@@ -1,11 +1,11 @@
 {
-  "tts_engine": "edge-tts",
-  "tts_voice": "ko-KR-SunHiNeural",
-  "video_resolution": "1080x1920",
-  "video_codec": "h264_nvenc",
-  "bgm_volume": "0.15",
-  "subtitle_font": "NanumGothic",
+  "tts_engine": "fish-speech",
+  "tts_voice": "yura",
+  "llm_model": "qwen2.5:14b",
   "upload_platforms": "[\"youtube\"]",
   "upload_privacy": "unlisted",
-  "youtube_credentials_path": "config/youtube_credentials.json"
+  "auto_upload": "false",
+  "auto_approve_enabled": "false",
+  "auto_approve_threshold": "80",
+  "use_content_processor": "false"
 }

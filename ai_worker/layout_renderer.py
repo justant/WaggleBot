@@ -544,6 +544,7 @@ async def _tts_chunk_async(
     output_dir: Path,
     scene_type: str = "img_text",
     pre_audio: str | None = None,
+    voice_key: str = "default",
 ) -> float:
     """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Fish Speech 호출.
 
@@ -553,6 +554,7 @@ async def _tts_chunk_async(
         output_dir: TTS 청크 저장 디렉터리
         scene_type: 씬 타입 (Fish Speech 감정 태그 결정)
         pre_audio:  content_processor에서 사전 생성된 오디오 경로 (있으면 복사)
+        voice_key:  VOICE_PRESETS 키 (pipeline.json의 tts_voice)
     """
     import asyncio
     import shutil
@@ -573,7 +575,7 @@ async def _tts_chunk_async(
     # Fish Speech 신규 생성
     for attempt in range(2):
         try:
-            await fish_synthesize(text=text, scene_type=scene_type, output_path=out_path)
+            await fish_synthesize(text=text, scene_type=scene_type, voice_key=voice_key, output_path=out_path)
             break
         except Exception:
             if attempt == 0:
@@ -610,7 +612,7 @@ async def _generate_tts_chunks(
             text = sent["text"]
             pre_audio = sent.get("audio")          # 사전 생성 경로 (없으면 None)
             scene_type = entry.get("type", "img_text")
-            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio)
+            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, voice)
         else:
             out_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             subprocess.run(
@@ -814,6 +816,9 @@ def _render_pipeline(
                         post_id, len(durations), total_dur)
         else:
             logger.info("[layout] TTS 생성 시작")
+            # Fish Speech 재웜업 — LLM 처리 시간(수 분) 동안 모델이 언로드됐을 수 있음
+            from ai_worker.tts_worker import _warmup_model
+            _run_async(_warmup_model())
             t0 = time.time()
             durations = _run_async(  # type: ignore[assignment]
                 _generate_tts_chunks(plan, sentences, tmp_dir, voice, rate)
@@ -964,9 +969,11 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
         output_path: 최종 mp4 저장 경로
     """
     from config import settings as s
+    from config.settings import load_pipeline_config, VOICE_DEFAULT
 
     layout = _load_layout()
-    voice: str = getattr(s, "TTS_VOICE", "ko-KR-SunHiNeural")
+    _pipeline_cfg = load_pipeline_config()
+    voice: str = _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
     rate: str = getattr(s, "TTS_RATE", "+25%")
     sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
@@ -1017,9 +1024,11 @@ def render_layout_video_from_scenes(
         output_path: 최종 mp4 저장 경로
     """
     from config import settings as s
+    from config.settings import load_pipeline_config, VOICE_DEFAULT
 
     layout = _load_layout()
-    voice: str = getattr(s, "TTS_VOICE", "ko-KR-SunHiNeural")
+    _pipeline_cfg = load_pipeline_config()
+    voice: str = _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
     rate: str = getattr(s, "TTS_RATE", "+25%")
     sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
