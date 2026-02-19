@@ -649,7 +649,8 @@ class RobustProcessor:
                 scenes = director.direct()
                 logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
-                video_path = render_layout_video_from_scenes(post, scenes)
+                _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
+                video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
             else:
                 video_path = self._safe_render_video(post, audio_path, script.to_json())
 
