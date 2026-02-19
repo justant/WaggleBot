@@ -955,10 +955,10 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     font_dir: Path = ASSETS_DIR / "fonts"
     audio_dir: Path = getattr(s, "AUDIO_DIR", ASSETS_DIR / "audio")
 
-    video_dir = MEDIA_DIR / "video"
+    video_dir = MEDIA_DIR / "video" / post.site_code
     video_dir.mkdir(parents=True, exist_ok=True)
     if output_path is None:
-        output_path = video_dir / f"post_{post.id}.mp4"
+        output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
     # ── Step 1: 문장 구조화 ────────────────────────────────────
     sentences: list[dict] = []
@@ -1006,10 +1006,10 @@ def render_layout_video_from_scenes(
     font_dir: Path = ASSETS_DIR / "fonts"
     audio_dir: Path = getattr(s, "AUDIO_DIR", ASSETS_DIR / "audio")
 
-    video_dir = MEDIA_DIR / "video"
+    video_dir = MEDIA_DIR / "video" / post.site_code
     video_dir.mkdir(parents=True, exist_ok=True)
     if output_path is None:
-        output_path = video_dir / f"post_{post.id}.mp4"
+        output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
     # SceneDecision → 내부 렌더러 형식 변환
     sentences, plan, images = _scenes_to_plan_and_sentences(scenes)

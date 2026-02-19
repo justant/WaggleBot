@@ -56,8 +56,12 @@ def render_video(
     summary_text: str,
     cfg: dict[str, str],
 ) -> Path:
-    """메인 진입점. 쇼츠 영상을 생성하고 경로를 반환한다."""
-    _VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    """메인 진입점. 쇼츠 영상을 생성하고 경로를 반환한다.
+
+    출력 파일: media/video/{site_code}/post_{origin_id}_FHD.mp4
+    """
+    _site_video_dir = _VIDEO_DIR / post.site_code
+    _site_video_dir.mkdir(parents=True, exist_ok=True)
     _TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     resolution = cfg.get("video_resolution", "1080x1920")
@@ -69,7 +73,7 @@ def render_video(
     font_name = cfg.get("subtitle_font", "NanumGothic")
     font = _resolve_font_path(font_name)
 
-    output_path = _VIDEO_DIR / f"post_{post.id}.mp4"
+    output_path = _site_video_dir / f"post_{post.origin_id}_FHD.mp4"
     audio_path = Path(audio_path)
     duration = _probe_duration(audio_path)
 
@@ -147,9 +151,10 @@ def render_preview(
     """프리뷰 전용 렌더링 — 항상 480×854 libx264(CPU), GPU 점유 없음.
 
     고화질 렌더링(`render_video`) 전 운영자 확인용 저화질 영상 생성.
-    출력 파일: media/video/preview_{post.id}.mp4
+    출력 파일: media/video/{site_code}/post_{origin_id}_SD.mp4
     """
-    _VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    _site_video_dir = _VIDEO_DIR / post.site_code
+    _site_video_dir.mkdir(parents=True, exist_ok=True)
     _TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
     width, height = 480, 854
@@ -158,7 +163,7 @@ def render_preview(
     font_name = cfg.get("subtitle_font", "NanumGothic")
     font = _resolve_font_path(font_name)
 
-    output_path = _VIDEO_DIR / f"preview_{post.id}.mp4"
+    output_path = _site_video_dir / f"post_{post.origin_id}_SD.mp4"
     audio_path = Path(audio_path)
     duration = _probe_duration(audio_path)
 

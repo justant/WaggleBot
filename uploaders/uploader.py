@@ -44,6 +44,7 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
         "thumbnail_path": thumbnail_path,
     }
     all_ok = True
+    any_attempted = False  # 실제 업로드 시도 여부
 
     for platform_name in platforms:
         if platform_name in upload_meta:
@@ -54,10 +55,11 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
             uploader = get_uploader(platform_name)
 
             if not uploader.validate_credentials():
+                # 인증 미설정은 업로드 실패가 아님 — FAILED 처리 안 함
                 logger.warning("%s 인증 실패, 건너뜀 (post_id=%d)", platform_name, post.id)
-                all_ok = False
                 continue
 
+            any_attempted = True
             result = uploader.upload(video_path, metadata)
             upload_meta[platform_name] = result
             logger.info("업로드 성공: %s → %s (post_id=%d)", platform_name, result.get("url"), post.id)
@@ -68,6 +70,9 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
 
     content.upload_meta = upload_meta
     session.flush()
+    # 인증 미설정으로 모든 플랫폼이 건너뛰어진 경우: 실패로 처리하지 않음
+    if not any_attempted:
+        return True
     return all_ok
 
 
