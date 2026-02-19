@@ -127,6 +127,9 @@ def _hd_render_worker() -> None:
 def _enqueue_hd_render(post_id: int) -> None:
     """HD 렌더 요청을 큐에 추가. 워커 스레드가 없으면 생성."""
     global _hd_worker_started
+    if post_id in _hd_render_pending:
+        log.warning("HD 렌더 요청 중복 무시: post_id=%d", post_id)
+        return
     _hd_render_pending.add(post_id)
     _hd_render_queue.put(post_id)
     with _hd_worker_lock:
@@ -179,7 +182,17 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
                         st.success("업로드 완료!")
                         st.rerun()
                     else:
-                        st.error("일부 플랫폼 업로드 실패. 로그를 확인하세요.")
+                        upload_session.refresh(_uc)
+                        _fail_info = {
+                            k: v.get("error", "알 수 없는 오류")
+                            for k, v in (_uc.upload_meta or {}).items()
+                            if isinstance(v, dict) and v.get("error")
+                        }
+                        if _fail_info:
+                            for _plat, _err in _fail_info.items():
+                                st.error(f"❌ {_plat}: {_err}")
+                        else:
+                            st.error("일부 플랫폼 업로드 실패. 로그를 확인하세요.")
             except Exception as _e:
                 st.error(f"업로드 오류: {_e}")
     elif _post.status == PostStatus.PREVIEW_RENDERED:
@@ -266,6 +279,20 @@ def delete_post(post_id: int):
         log.info("Post %d deleted", post_id)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _fetch_image(url: str) -> bytes | None:
+    """이미지를 캐시하여 반복 요청 방지 (5분 TTL)."""
+    try:
+        resp = _http.get(
+            url, timeout=8,
+            headers={"Referer": url, "User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+        return resp.content
+    except Exception:
+        return None
+
+
 def render_image_slider(images_raw: "str | list | None", key_prefix: str, width: int = 320) -> None:
     """이미지 URL 목록을 슬라이드로 렌더링한다.
 
@@ -301,15 +328,21 @@ def render_image_slider(images_raw: "str | list | None", key_prefix: str, width:
                 st.session_state[slide_key] = cur + 1
                 st.rerun()
 
-    try:
-        resp = _http.get(
-            imgs[cur], timeout=8,
-            headers={"Referer": imgs[cur], "User-Agent": "Mozilla/5.0"},
-        )
-        resp.raise_for_status()
-        st.image(resp.content, width=width)
-    except Exception:
+    img_data = _fetch_image(imgs[cur])
+    if img_data:
+        st.image(img_data, width=width)
+    else:
         st.caption(f"이미지 로드 실패: {imgs[cur]}")
+
+
+def _check_ollama_health() -> bool:
+    """Ollama 서버 응답 여부를 빠르게 확인 (2초 타임아웃)."""
+    from config.settings import get_ollama_host
+    try:
+        _http.get(f"{get_ollama_host()}/api/tags", timeout=2)
+        return True
+    except Exception:
+        return False
 
 
 def run_ai_fit_analysis(post: Post, model: str) -> dict:
@@ -645,12 +678,15 @@ with tab_inbox:
                             st.warning("⚠️ " + " / ".join(issues))
                     else:
                         if st.button("🔍 AI 적합도 분석", key=ai_key, width="content"):
-                            with st.spinner("LLM 분석 중..."):
-                                result = run_ai_fit_analysis(
-                                    post, inbox_cfg.get("llm_model", OLLAMA_MODEL)
-                                )
-                                st.session_state["ai_analysis"][post.id] = result
-                                st.rerun()
+                            if not _check_ollama_health():
+                                st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+                            else:
+                                with st.spinner("LLM 분석 중..."):
+                                    result = run_ai_fit_analysis(
+                                        post, inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                                    )
+                                    st.session_state["ai_analysis"][post.id] = result
+                                    st.rerun()
 
                 with col_act:
                     st.write("")
@@ -896,41 +932,44 @@ with tab_editor:
                         type="primary",
                         key=f"gen_{selected_post_id}",
                     ):
-                        with st.spinner("LLM 대본 생성 중..."):
-                            try:
-                                from ai_worker.llm import generate_script
-                                best_list = sorted(
-                                    selected_post.comments,
-                                    key=lambda c: c.likes,
-                                    reverse=True,
-                                )[:5]
-                                comment_texts = [
-                                    f"{c.author}: {c.content[:100]}" for c in best_list
-                                ]
-                                script_data = generate_script(
-                                    title=selected_post.title,
-                                    body=selected_post.content or "",
-                                    comments=comment_texts,
-                                    model=cfg_editor.get("llm_model"),
-                                    extra_instructions=full_extra,
-                                )
-                                # 위젯 키 초기화 → 새 값 주입
-                                for _k, _v in [
-                                    (f"hook_{selected_post_id}", script_data.hook),
-                                    (f"closer_{selected_post_id}", script_data.closer),
-                                    (f"title_{selected_post_id}", script_data.title_suggestion),
-                                    (f"tags_{selected_post_id}", ", ".join(script_data.tags)),
-                                    (f"body_{selected_post_id}", script_data.body),
-                                ]:
-                                    st.session_state[_k] = _v
-                                # data_editor 강제 재초기화
-                                _de_key = f"body_editor_{selected_post_id}"
-                                if _de_key in st.session_state:
-                                    del st.session_state[_de_key]
-                                st.success("대본 생성 완료!")
-                                st.rerun()
-                            except Exception as exc:
-                                st.error(f"대본 생성 실패: {exc}")
+                        if not _check_ollama_health():
+                            st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+                        else:
+                            with st.spinner("LLM 대본 생성 중..."):
+                                try:
+                                    from ai_worker.llm import generate_script
+                                    best_list = sorted(
+                                        selected_post.comments,
+                                        key=lambda c: c.likes,
+                                        reverse=True,
+                                    )[:5]
+                                    comment_texts = [
+                                        f"{c.author}: {c.content[:100]}" for c in best_list
+                                    ]
+                                    script_data = generate_script(
+                                        title=selected_post.title,
+                                        body=selected_post.content or "",
+                                        comments=comment_texts,
+                                        model=cfg_editor.get("llm_model"),
+                                        extra_instructions=full_extra,
+                                    )
+                                    # 위젯 키 초기화 → 새 값 주입
+                                    for _k, _v in [
+                                        (f"hook_{selected_post_id}", script_data.hook),
+                                        (f"closer_{selected_post_id}", script_data.closer),
+                                        (f"title_{selected_post_id}", script_data.title_suggestion),
+                                        (f"tags_{selected_post_id}", ", ".join(script_data.tags)),
+                                        (f"body_{selected_post_id}", script_data.body),
+                                    ]:
+                                        st.session_state[_k] = _v
+                                    # data_editor 강제 재초기화
+                                    _de_key = f"body_editor_{selected_post_id}"
+                                    if _de_key in st.session_state:
+                                        del st.session_state[_de_key]
+                                    st.success("대본 생성 완료!")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"대본 생성 실패: {exc}")
 
                 st.divider()
 
@@ -1088,20 +1127,22 @@ with tab_editor:
                                 tags=tags_list,
                                 mood=mood,
                             )
-                            content_rec = (
-                                session.query(Content)
-                                .filter(Content.post_id == selected_post_id)
-                                .first()
-                            )
-                            if content_rec is None:
-                                content_rec = Content(post_id=selected_post_id)
-                                session.add(content_rec)
-                            content_rec.summary_text = confirmed.to_json()
-                            # 편집 완료 → AI 워커 대기 상태로 전환
-                            _edit_post = session.get(Post, selected_post_id)
-                            if _edit_post and _edit_post.status == PostStatus.EDITING:
-                                _edit_post.status = PostStatus.APPROVED
-                            session.commit()
+                            # 쓰기 전용 세션 분리 (읽기 세션과 identity map 충돌 방지)
+                            with SessionLocal() as write_session:
+                                content_rec = (
+                                    write_session.query(Content)
+                                    .filter(Content.post_id == selected_post_id)
+                                    .first()
+                                )
+                                if content_rec is None:
+                                    content_rec = Content(post_id=selected_post_id)
+                                    write_session.add(content_rec)
+                                content_rec.summary_text = confirmed.to_json()
+                                # 편집 완료 → AI 워커 대기 상태로 전환
+                                _edit_post = write_session.get(Post, selected_post_id)
+                                if _edit_post and _edit_post.status == PostStatus.EDITING:
+                                    _edit_post.status = PostStatus.APPROVED
+                                write_session.commit()
                             st.success("✅ 저장 완료! AI Worker 처리 대기열에 추가됩니다.")
                             st.session_state["editor_idx"] = max(0, idx - 1)
                             st.rerun()
@@ -1187,11 +1228,23 @@ with tab_progress:
                 with col1:
                     st.markdown(f"**{post.title}**")
                     st.caption(f"{stats_text} | 🕐 {to_kst(post.updated_at)}")
+                    if status == PostStatus.FAILED:
+                        _fail_content = session.query(Content).filter_by(post_id=post.id).first()
+                        _fail_meta = (_fail_content.upload_meta or {}) if _fail_content else {}
+                        _fail_error = _fail_meta.get("error") or _fail_meta.get("last_error")
+                        if _fail_error:
+                            st.caption(f"❌ 실패 원인: {str(_fail_error)[:200]}")
                 with col2:
                     if status == PostStatus.FAILED:
-                        if st.button("🔄 재시도", key=f"retry_{post.id}"):
-                            update_status(post.id, PostStatus.APPROVED)
-                            st.rerun()
+                        col_retry, col_del = st.columns(2)
+                        with col_retry:
+                            if st.button("🔄 재시도", key=f"retry_{post.id}"):
+                                update_status(post.id, PostStatus.APPROVED)
+                                st.rerun()
+                        with col_del:
+                            if st.button("🗑️", key=f"del_failed_{post.id}", help="삭제"):
+                                delete_post(post.id)
+                                st.rerun()
 
             st.divider()
 
@@ -1553,6 +1606,8 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
         if st.button("✨ 인사이트 생성", key="gen_insight", width="content", type="primary"):
             if not _ranked:
                 st.warning("업로드된 영상 데이터가 없습니다.")
+            elif not _check_ollama_health():
+                st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
             else:
                 with st.spinner("LLM 분석 중..."):
                     try:
@@ -1617,22 +1672,25 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                 type="primary",
                 help="LLM이 성과 데이터를 분석해 대본 프롬프트·mood 가중치를 자동 업데이트합니다.",
             ):
-                with st.spinner("성과 분석 + LLM 인사이트 생성 중..."):
-                    try:
-                        with SessionLocal() as _fb_s:
-                            _perf = build_performance_summary(_fb_s, days_back=period_days)
-                        if not _perf:
-                            st.warning("분석할 업로드 데이터가 없습니다.")
-                        else:
-                            _insights = generate_structured_insights(
-                                _perf,
-                                llm_model=load_pipeline_config().get("llm_model"),
-                            )
-                            apply_feedback(_insights)
-                            st.success("✅ 피드백이 파이프라인에 반영되었습니다.")
-                            st.rerun()
-                    except Exception as _ex:
-                        st.error(f"피드백 반영 실패: {_ex}")
+                if not _check_ollama_health():
+                    st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+                else:
+                    with st.spinner("성과 분석 + LLM 인사이트 생성 중..."):
+                        try:
+                            with SessionLocal() as _fb_s:
+                                _perf = build_performance_summary(_fb_s, days_back=period_days)
+                            if not _perf:
+                                st.warning("분석할 업로드 데이터가 없습니다.")
+                            else:
+                                _insights = generate_structured_insights(
+                                    _perf,
+                                    llm_model=load_pipeline_config().get("llm_model"),
+                                )
+                                apply_feedback(_insights)
+                                st.success("✅ 피드백이 파이프라인에 반영되었습니다.")
+                                st.rerun()
+                        except Exception as _ex:
+                            st.error(f"피드백 반영 실패: {_ex}")
 
         with _col_fb2:
             if st.button(
@@ -1948,6 +2006,11 @@ with tab_settings:
         value=cfg.get("auto_approve_enabled") == "true",
         help="활성화 시 수신함 로드마다 임계값 이상 게시글이 자동 승인됩니다.",
     )
+    if auto_approve_on:
+        st.info(
+            "ℹ️ 자동 승인은 수신함 탭 로드 시에만 실행됩니다. "
+            "백그라운드 자동 승인이 필요하면 AI 워커에 자동 승인 로직 추가를 고려하세요."
+        )
     auto_approve_thresh = st.number_input(
         "자동 승인 임계값 (Engagement Score)",
         min_value=0,
@@ -1988,6 +2051,28 @@ with tab_settings:
         }
         save_pipeline_config(new_cfg)
         st.success("✅ 설정이 저장되었습니다.")
+
+    st.divider()
+
+    # 시스템 정리
+    st.subheader("🧹 시스템 정리")
+    _tmp_dir = MEDIA_DIR / "tmp"
+    if _tmp_dir.exists():
+        _preview_files = list(_tmp_dir.glob("preview_*.mp3"))
+        _cache_root = _tmp_dir / "tts_scene_cache"
+        _cache_dirs = list(_cache_root.glob("*")) if _cache_root.exists() else []
+        st.caption(f"TTS 미리듣기 파일: {len(_preview_files)}개 | TTS 씬 캐시: {len(_cache_dirs)}개")
+        if st.button("🗑️ 임시 파일 정리", key="cleanup_tmp"):
+            for _f in _preview_files:
+                _f.unlink(missing_ok=True)
+            for _d in _cache_dirs:
+                shutil.rmtree(_d, ignore_errors=True)
+            st.success(f"✅ {len(_preview_files)}개 파일 + {len(_cache_dirs)}개 캐시 삭제 완료")
+            st.rerun()
+    else:
+        st.caption("임시 파일 디렉토리가 없습니다.")
+
+    st.divider()
 
     # 현재 설정 표시
     with st.expander("🔍 현재 저장된 설정 보기"):
