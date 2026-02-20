@@ -12,7 +12,7 @@
 3. 크로스 도메인 요청 중재 (Section 4-3 프로토콜)
 4. 공유 파일 변경이 필요하면 Proposal 작성 (Section 5 절차)
 5. Teammate 작업 완료 후 결과 취합·검증
-6. CEO에게 최종 보고 및 승인 요청
+6. CEO에게 최종 보고 및 승인 요청 (**필수**)
 
 ## Teammate 생성 지침
 Teammate를 생성할 때 반드시 spawn 프롬프트에 포함:
@@ -94,8 +94,6 @@ Teammate 간 크로스 도메인 수정이 필요할 경우:
 {type}({scope}): {한 줄 요약}
 
 {변경 내용 상세 — 필요한 경우만}
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ```
 
 > `type`: feat | fix | refactor | docs | chore | style

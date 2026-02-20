@@ -77,20 +77,6 @@ TTS_VOICES: dict[str, list[dict[str, str]]] = {
         {"id": "ko-KR-BongJinNeural",  "name": "봉진 (남, 따뜻)"},
         {"id": "ko-KR-GookMinNeural",  "name": "국민 (남, 밝음)"},
     ],
-    "kokoro": [
-        {"id": "af_heart",   "name": "Heart (여, 기본)"},
-        {"id": "af_bella",   "name": "Bella (여, 부드러움)"},
-        {"id": "af_sarah",   "name": "Sarah (여, 명랑)"},
-        {"id": "am_adam",    "name": "Adam (남, 차분)"},
-        {"id": "am_michael", "name": "Michael (남, 깊음)"},
-    ],
-    "gpt-sovits": [
-        {"id": "default_korean_f", "name": "한국어 여성 기본"},
-        {"id": "default_korean_m", "name": "한국어 남성 기본"},
-        {"id": "custom_1",         "name": "커스텀 음성 1"},
-        {"id": "custom_2",         "name": "커스텀 음성 2"},
-        {"id": "custom_3",         "name": "커스텀 음성 3"},
-    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -101,8 +87,8 @@ FEEDBACK_CONFIG_PATH = _PROJECT_ROOT / "config" / "feedback_config.json"
 AB_TEST_CONFIG_PATH  = _PROJECT_ROOT / "config" / "ab_tests.json"
 
 _PIPELINE_DEFAULTS: dict[str, str] = {
-    "tts_engine": "fish-speech",
-    "tts_voice": "default",
+    "tts_engine": "edge-tts",
+    "tts_voice": "ko-KR-SunHiNeural",
     "llm_model": OLLAMA_MODEL,
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
