@@ -17,12 +17,14 @@ checkpoints/*
 # --- Claude AI Agent Team (협업 설정) ---
 # 1. 임시 제안서 및 개인 로컬 보안 설정은 제외
 _proposals/
+_result/
 .claude/settings.local.json
 .claude/history/
 .claude/cache/
 .claude/sessions/
 
-# 2. 공통 프롬프트, 인터페이스 계약, 팀 활성화 설정은 공유 (Push)
+# 2. 공통 프롬프트, 인터페이스 계약, 팀 활성화 설정, 스킬은 공유 (Push)
 !.claude/prompts/
 !.claude/contracts/
 !.claude/settings.json
+!.claude/skills/
