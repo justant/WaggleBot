@@ -42,3 +42,8 @@ config/monitoring.py, config/pipeline.json.
 ## 작업 완료 검증
 python -c "from analytics.feedback import generate_structured_insights; print('OK')"
 python -c "from uploaders.base import UploaderRegistry; print('OK')"
+
+## 코드 수정 완료 후
+작업이 끝나면 Team Lead에게 "수정 완료 + 재시작 필요 서비스"를 반드시 보고한다.
+- 재시작 대상: `dashboard`, `monitoring`
+Team Lead가 해당 서비스를 재시작해야 변경사항이 반영된다. (직접 docker 명령 실행 금지)

@@ -43,3 +43,9 @@ Agent B(렌더러)가 소비하는 인터페이스.
 python -c "from ai_worker.llm import generate_script, call_ollama_raw; print('OK')"
 python -c "from ai_worker.scene_director import SceneDirector; print('OK')"
 python -c "from ai_worker.content_processor import process_content; print('OK')"
+
+## 코드 수정 완료 후
+작업이 끝나면 Team Lead에게 "수정 완료 + 재시작 필요 서비스"를 반드시 보고한다.
+- 기본 재시작 대상: `ai_worker`
+- TTS 관련 파일(fish_client.py 등) 수정 시: `ai_worker`, `fish-speech`
+Team Lead가 해당 서비스를 재시작해야 변경사항이 반영된다. (직접 docker 명령 실행 금지)

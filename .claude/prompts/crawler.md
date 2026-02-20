@@ -35,3 +35,8 @@ python -c "from crawlers.nate_pann import NatePannCrawler; print('OK')"
 python -c "from crawlers.bobaedream import BobaedreamCrawler; print('OK')"
 python -c "from crawlers.dcinside import DcInsideCrawler; print('OK')"
 python -c "from crawlers.fmkorea import FMKoreaCrawler; print('OK')"
+
+## 코드 수정 완료 후
+작업이 끝나면 Team Lead에게 "수정 완료 + 재시작 필요 서비스"를 반드시 보고한다.
+- 재시작 대상: `crawler`
+Team Lead가 해당 서비스를 재시작해야 변경사항이 반영된다. (직접 docker 명령 실행 금지)

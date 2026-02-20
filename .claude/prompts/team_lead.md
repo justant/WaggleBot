@@ -102,6 +102,23 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 > `scope`: crawler | dashboard | ai_worker | rendering | db | config | skills
 ```
 
+### 1.5단계 — 배포 (코드 변경이 있는 경우 필수)
+
+**[완료 후 배포 단계]** 모든 Teammate 보고를 취합한 뒤:
+
+1. 각 Teammate가 보고한 재시작 필요 서비스 목록을 수집
+2. **서비스 수에 따라 분기:**
+   - **1~2개:** 해당 서비스만 재시작
+     ```bash
+     docker compose restart <service1> [service2]
+     ```
+   - **3개 이상:** 전체 재시작
+     ```bash
+     docker compose down && docker compose up -d
+     ```
+3. `docker compose logs --tail 50 <service>`로 재시작된 서비스별 정상 기동 확인
+4. 이상 없으면 2단계(CEO 보고)로 진행
+
 ### 2단계 — CEO에게 요약 보고
 
 _result 파일 작성 후 채팅에 아래 형식으로 보고한다:
