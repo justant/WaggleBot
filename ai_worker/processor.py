@@ -18,10 +18,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ai_worker.gpu_manager import get_gpu_manager, ModelType
-from ai_worker.llm import ScriptData, generate_script, summarize
-from ai_worker.thumbnail import generate_thumbnail, get_thumbnail_path
+from ai_worker.llm.client import ScriptData, generate_script, summarize
+from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts import get_tts_engine
-from ai_worker.video import render_preview
+from ai_worker.renderer.video import render_preview
 from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
 from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
@@ -110,10 +110,10 @@ class RobustProcessor:
                 render_style = json.loads(script.to_json()).get("render_style", "layout")
                 logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
                 if render_style == "layout":
-                    from ai_worker.layout_renderer import render_layout_video_from_scenes
-                    from ai_worker.resource_analyzer import analyze_resources
-                    from ai_worker.scene_director import SceneDirector
-                    from ai_worker.text_validator import validate_and_fix
+                    from ai_worker.renderer.layout import render_layout_video_from_scenes
+                    from ai_worker.pipeline.resource_analyzer import analyze_resources
+                    from ai_worker.pipeline.scene_director import SceneDirector
+                    from ai_worker.pipeline.text_validator import validate_and_fix
 
                     _images: list[str] = post.images if isinstance(post.images, list) else []
 
@@ -542,8 +542,8 @@ class RobustProcessor:
 
             if use_cp:
                 # 5-Phase content_processor 파이프라인
-                from ai_worker.llm_chunker import chunk_with_llm
-                from ai_worker.resource_analyzer import analyze_resources
+                from ai_worker.pipeline.llm_chunker import chunk_with_llm
+                from ai_worker.pipeline.resource_analyzer import analyze_resources
 
                 _images: list[str] = post.images if isinstance(post.images, list) else []
                 _profile = analyze_resources(post, _images)
@@ -625,10 +625,10 @@ class RobustProcessor:
             logger.info("[Pipeline Render] 시작: post_id=%d render_style=%s", post_id, render_style)
 
             if render_style == "layout":
-                from ai_worker.layout_renderer import render_layout_video_from_scenes
-                from ai_worker.resource_analyzer import analyze_resources
-                from ai_worker.scene_director import SceneDirector
-                from ai_worker.text_validator import validate_and_fix
+                from ai_worker.renderer.layout import render_layout_video_from_scenes
+                from ai_worker.pipeline.resource_analyzer import analyze_resources
+                from ai_worker.pipeline.scene_director import SceneDirector
+                from ai_worker.pipeline.text_validator import validate_and_fix
 
                 images: list[str] = post.images if isinstance(post.images, list) else []
 

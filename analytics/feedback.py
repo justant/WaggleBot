@@ -148,7 +148,7 @@ def generate_structured_insights(
     Returns:
         {"extra_instructions": str, "mood_weights": dict, "subtitle_style": str}
     """
-    from ai_worker.llm import call_ollama_raw
+    from ai_worker.llm.client import call_ollama_raw
 
     if not performance_data:
         logger.warning("성과 데이터 없음 — 인사이트 생성 불가")

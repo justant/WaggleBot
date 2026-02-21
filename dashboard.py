@@ -20,7 +20,7 @@ import requests as _http
 import streamlit as st
 from sqlalchemy import func, or_
 
-from ai_worker.llm import call_ollama_raw
+from ai_worker.llm.client import call_ollama_raw
 from config.settings import (
     TTS_VOICES, MEDIA_DIR, ASSETS_DIR,
     PLATFORM_CREDENTIAL_FIELDS,
@@ -54,10 +54,10 @@ def _run_hd_render(post_id: int) -> None:
     출력 파일명을 _FHD.mp4로 지정한다. GPU(_resolve_codec) 자동 선택.
     """
     try:
-        from ai_worker.layout_renderer import render_layout_video_from_scenes
-        from ai_worker.resource_analyzer import analyze_resources
-        from ai_worker.scene_director import SceneDirector
-        from ai_worker.text_validator import validate_and_fix
+        from ai_worker.renderer.layout import render_layout_video_from_scenes
+        from ai_worker.pipeline.resource_analyzer import analyze_resources
+        from ai_worker.pipeline.scene_director import SceneDirector
+        from ai_worker.pipeline.text_validator import validate_and_fix
         from config.settings import MEDIA_DIR as _MEDIA_DIR
 
         with SessionLocal() as _s:
@@ -937,7 +937,7 @@ with tab_editor:
                         else:
                             with st.spinner("LLM 대본 생성 중..."):
                                 try:
-                                    from ai_worker.llm import generate_script
+                                    from ai_worker.llm.client import generate_script
                                     best_list = sorted(
                                         selected_post.comments,
                                         key=lambda c: c.likes,
