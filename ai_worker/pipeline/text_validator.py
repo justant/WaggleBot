@@ -84,10 +84,15 @@ def smart_split_korean(text: str, max_chars: int = MAX_BODY_CHARS) -> list[str]:
 
 
 def validate_and_fix(llm_output: dict) -> dict:
-    """LLM 출력을 검증하고, max_chars 초과 문장을 분할 보정한다.
+    """LLM 출력을 검증하고, max_chars 초과 lines를 분할 보정한다.
 
     Args:
-        llm_output: {"hook": str, "body": list[str], "closer": str}
+        llm_output: {
+            "hook": str,
+            "body": list[dict],  # [{"line_count": int, "lines": list[str]}, ...]
+            "closer": str
+        }
+        하위 호환: body 항목이 str이면 dict로 자동 변환.
 
     Returns:
         보정된 동일 구조 dict
@@ -102,20 +107,24 @@ def validate_and_fix(llm_output: dict) -> dict:
             logger.debug("validate_and_fix: %s 축약 %d→%d자", key, len(val), len(fixed))
             llm_output[key] = fixed
 
-    # body: 초과 문장은 분할해서 확장
-    fixed_body: list[str] = []
-    for sent in llm_output.get("body", []):
-        if len(sent) > MAX_BODY_CHARS:
-            parts = smart_split_korean(sent, MAX_BODY_CHARS)
-            logger.debug("validate_and_fix: body 문장 분할 %d자 → %d개", len(sent), len(parts))
-            fixed_body.extend(parts)
-        else:
-            fixed_body.append(sent)
+    # body: 각 항목의 lines 요소가 MAX_BODY_CHARS 초과 시 분할
+    fixed_body: list[dict] = []
+    for item in llm_output.get("body", []):
+        lines: list[str] = item.get("lines", []) if isinstance(item, dict) else [item]
+        fixed_lines: list[str] = []
+        for line in lines:
+            if len(line) > MAX_BODY_CHARS:
+                parts = smart_split_korean(line, MAX_BODY_CHARS)
+                logger.debug("validate_and_fix: body line 분할 %d자 → %d개", len(line), len(parts))
+                fixed_lines.extend(parts)
+            else:
+                fixed_lines.append(line)
+        fixed_body.append({"line_count": len(fixed_lines), "lines": fixed_lines})
     llm_output["body"] = fixed_body
 
     if len(fixed_body) != original_body_count:
         logger.info(
-            "validate_and_fix: body %d → %d문장 (분할 보정)",
+            "validate_and_fix: body %d → %d항목 (분할 보정)",
             original_body_count, len(fixed_body),
         )
 

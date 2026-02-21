@@ -27,11 +27,11 @@ _SCRIPT_PROMPT_V2 = """\
 {{
   "hook": "시청자가 스크롤을 멈출 한 줄 (15자 이내, 의문형 또는 감탄형)",
   "body": [
-    "핵심 내용 문장 1",
-    "핵심 내용 문장 2",
-    "핵심 내용 문장 3",
-    "베댓 'OOO' 1",
-    "베댓 'OOO' 2"
+    {{"line_count": 2, "lines": ["핵심 내용 문장 1 앞부분", "핵심 내용 문장 1 뒷부분"]}},
+    {{"line_count": 1, "lines": ["핵심 내용 문장 2 (21자 이하)"]}},
+    {{"line_count": 1, "lines": ["핵심 내용 문장 3"]}},
+    {{"line_count": 2, "lines": ["베댓 'OOO'", "계속되는 댓글 내용"]}},
+    {{"line_count": 1, "lines": ["베댓 'OOO' 2"]}}
   ],
   "closer": "여러분들의 생각은 어떤가요?",
   "title_suggestion": "YouTube 쇼츠 제목 (50자 이내, 이모지 포함)",
@@ -44,7 +44,8 @@ _SCRIPT_PROMPT_V2 = """\
 - 베스트 댓글 최소 1개 인용 필수 (따옴표로 표시)
 - body는 정확히 4개 항목
 - 한국어만 사용
-- 자극적이되 사실 왜곡 금지"""
+- 자극적이되 사실 왜곡 금지
+- body 각 항목의 lines 요소는 21자 이내. 21자 초과 시 자연스러운 어절 단위로 분리해 line_count 2로 설정"""
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +113,18 @@ def _parse_script_json(raw: str, fallback_text: str) -> ScriptData:
 
     try:
         d = json.loads(cleaned)
+        # body 정규화: str 항목 → dict 변환 (하위 호환)
+        body_raw = list(d.get("body", []))
+        body: list[dict] = []
+        for item in body_raw:
+            if isinstance(item, str):
+                body.append({"line_count": 1, "lines": [item]})
+            elif isinstance(item, dict):
+                lines = item.get("lines", [])
+                body.append({"line_count": len(lines), "lines": lines})
         return ScriptData(
             hook=str(d.get("hook", "")),
-            body=list(d.get("body", [])),
+            body=body,
             closer=str(d.get("closer", "")),
             title_suggestion=str(d.get("title_suggestion", "")),
             tags=list(d.get("tags", [])),

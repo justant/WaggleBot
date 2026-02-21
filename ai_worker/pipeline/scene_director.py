@@ -70,7 +70,15 @@ class SceneDirector:
         ))
 
         # ── Body ───────────────────────────────────────────────────────
-        body = list(self.script.get("body", []))
+        # body 항목이 dict(새 포맷)인 경우 lines를 join해 plain text로 변환
+        body_raw = list(self.script.get("body", []))
+        body: list[str] = []
+        for item in body_raw:
+            if isinstance(item, dict):
+                body.append(" ".join(item.get("lines", [])))
+            else:
+                body.append(str(item))
+
         while body:
             if self._images:
                 scenes.append(self._make_img_text(body))

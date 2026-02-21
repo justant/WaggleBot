@@ -42,7 +42,7 @@
       "font_weight": "bold",
       "align": "left",
       "color": "#000000",
-      "max_chars": 20
+      "max_chars": 19
     }
   },
   "scenes": {
@@ -64,7 +64,7 @@
         },
         "text_area": {
           "x": 540,
-          "y": 1550,
+          "y": 1570,
           "max_width": 900,
           "font_size": 60,
           "font_weight": "medium",
@@ -76,7 +76,7 @@
       }
     },
     "text_only": {
-      "description": "텍스트만, 3슬롯 고정 Y좌표 — text_only.svg",
+      "description": "텍스트만, 동적 Y좌표 — text_only.svg",
       "text_max_chars": 20,
       "elements": {
         "text_area": {
@@ -88,6 +88,7 @@
           "color": "#000000",
           "prev_text_color": "#888888",
           "line_height": 110,
+          "slot_gap": 5,
           "y_coords": [550, 700, 850],
           "max_slots": 3
         }

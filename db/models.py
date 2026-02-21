@@ -112,7 +112,7 @@ class Content(Base):
             # 레거시 평문 대본 — hook에 전체 텍스트 담아 반환
             return ScriptData(
                 hook=self.summary_text[:15],
-                body=[self.summary_text],
+                body=[{"line_count": 1, "lines": [self.summary_text]}],
                 closer="",
                 title_suggestion="",
                 tags=[],
@@ -170,16 +170,27 @@ class ScriptData:
     """구조화된 쇼츠 대본 데이터.
 
     ai_worker/llm.py에서 생성하고 Content.summary_text에 JSON으로 저장.
+
+    body 포맷 (v2): [{"line_count": int, "lines": list[str]}, ...]
+      - lines 요소는 각 21자 이내 (렌더러 슬롯 한 줄에 대응)
+      - 하위 호환: from_json에서 str 항목 → dict 자동 변환
     """
     hook: str
-    body: list[str]
+    body: list[dict]
     closer: str
     title_suggestion: str
     tags: list[str]
     mood: str = "funny"
 
     def to_plain_text(self) -> str:
-        return " ".join([self.hook] + self.body + [self.closer])
+        texts = [self.hook]
+        for item in self.body:
+            if isinstance(item, dict):
+                texts.append(" ".join(item.get("lines", [])))
+            else:
+                texts.append(str(item))
+        texts.append(self.closer)
+        return " ".join(texts)
 
     def to_json(self) -> str:
         return _json.dumps(
@@ -197,9 +208,17 @@ class ScriptData:
     @classmethod
     def from_json(cls, raw: str) -> "ScriptData":
         d = _json.loads(raw)
+        body_raw = d.get("body", [])
+        # 하위 호환: 기존 str 항목 → dict 변환
+        body: list[dict] = []
+        for item in body_raw:
+            if isinstance(item, str):
+                body.append({"line_count": 1, "lines": [item]})
+            else:
+                body.append(item)
         return cls(
             hook=d["hook"],
-            body=d["body"],
+            body=body,
             closer=d["closer"],
             title_suggestion=d["title_suggestion"],
             tags=d["tags"],

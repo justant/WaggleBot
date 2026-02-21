@@ -6,9 +6,15 @@ Ollama JSON 모드로 구어체 대본을 분절 생성한다.
 출력 형식:
     {
         "hook": "...",
-        "body": ["문장1", "문장2", ...],
+        "body": [
+            {"line_count": 2, "lines": ["문장1 앞", "문장1 뒤"]},
+            {"line_count": 1, "lines": ["문장2"]},
+            ...
+        ],
         "closer": "..."
     }
+    body 항목의 lines 요소는 각 21자 이내.
+    21자 초과 시 어절 단위로 분리해 line_count 2로 설정.
 """
 import json
 import logging
@@ -60,7 +66,10 @@ def create_chunking_prompt(
         "## 출력 형식 (JSON 만 출력)\n"
         "{\n"
         f'  "hook": "첫 3초 후킹 문장 (최대 {MAX_BODY_CHARS}자)",\n'
-        f'  "body": ["문장1 (최대 {MAX_BODY_CHARS}자)", "문장2", ...],\n'
+        '  "body": [\n'
+        '    {"line_count": 2, "lines": ["21자 이하 줄 1", "21자 이하 줄 2"]},\n'
+        '    {"line_count": 1, "lines": ["21자 이하 단일 줄"]}\n'
+        '  ],\n'
         f'  "closer": "마무리 멘트 (최대 {MAX_BODY_CHARS}자)",\n'
         f"{extended_fields}"
         "}\n\n"
@@ -68,8 +77,9 @@ def create_chunking_prompt(
         "1. 한 숨에 읽을 수 있는 호흡 단위로 끊기\n"
         "2. 반말 구어체 (~했어, ~인데, ~ㅋㅋ)\n"
         "3. 문장 중간 절대 끊지 말 것\n"
-        f"4. {MAX_BODY_CHARS}자 초과 금지\n"
-        "5. body는 최소 3개, 최대 8개 문장\n"
+        f"4. body 각 항목의 lines 요소는 21자 이내\n"
+        "5. 21자 초과 시 자연스러운 어절 단위로 분리해 line_count 2로 설정\n"
+        "6. body는 최소 3개, 최대 8개 항목\n"
     )
 
 
@@ -105,7 +115,8 @@ async def chunk_with_llm(
         extended:     True이면 title_suggestion/tags/mood 추가 필드도 반환
 
     Returns:
-        {"hook": str, "body": list[str], "closer": str}
+        {"hook": str, "body": list[dict], "closer": str}
+        body 항목: {"line_count": int, "lines": list[str]}
         extended=True 시 위에 더해 {"title_suggestion": str, "tags": list[str], "mood": str}
 
     Raises:

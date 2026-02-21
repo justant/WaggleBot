@@ -59,12 +59,34 @@ def _load_layout() -> dict:
 # 공통 유틸리티
 # ---------------------------------------------------------------------------
 
+def _apply_vf_weight(font: ImageFont.FreeTypeFont, filename: str) -> None:
+    """가변 폰트(Variable Font)의 굵기 축을 파일명에서 추론해 설정한다."""
+    name_upper = Path(filename).stem.upper()
+    if "BOLD" in name_upper:
+        weight_name = "Bold"
+    elif "MEDIUM" in name_upper:
+        weight_name = "Medium"
+    elif "LIGHT" in name_upper:
+        weight_name = "Light"
+    else:
+        return  # Regular: 기본값 유지
+    try:
+        font.set_variation_by_name(weight_name)
+    except Exception:
+        pass
+
+
 def _load_font(font_dir: Path, filename: str, size: int) -> ImageFont.FreeTypeFont:
-    """폰트 로드 (assets/fonts → 시스템 한글 → PIL 기본 폰트)."""
+    """폰트 로드 (assets/fonts → 시스템 한글 → PIL 기본 폰트).
+
+    Variable Font(VF)인 경우 파일명에서 Bold/Medium/Light를 감지해 굵기 축을 설정한다.
+    """
     font_path = font_dir / filename
     if font_path.exists():
         try:
-            return ImageFont.truetype(str(font_path), size)
+            font = ImageFont.truetype(str(font_path), size)
+            _apply_vf_weight(font, filename)
+            return font
         except Exception:
             pass
     try:
@@ -76,7 +98,9 @@ def _load_font(font_dir: Path, filename: str, size: int) -> ImageFont.FreeTypeFo
             p = line.strip()
             if p and Path(p).exists():
                 try:
-                    return ImageFont.truetype(p, size)
+                    font = ImageFont.truetype(p, size)
+                    _apply_vf_weight(font, filename)
+                    return font
                 except Exception:
                     continue
     except Exception:
@@ -294,7 +318,8 @@ def _create_base_frame(
     ht = g.get("header_title")
     if ht:
         font = _load_font(font_dir, "NotoSansKR-Bold.ttf", ht.get("font_size", 52))
-        display = _truncate(title, ht.get("max_chars", 18))
+        max_chars = ht.get("max_chars", 22)
+        display = title[:max_chars] + "..." if len(title) > max_chars else title
         lines = _wrap_korean(display, font, ht.get("max_width", 860))
         lh = int(ht.get("font_size", 52) * 1.3)
         draw = ImageDraw.Draw(base)
@@ -360,8 +385,7 @@ def _render_img_text_frame(
             draw.rectangle([(ia["x"], ia["y"]), (ia["x"] + iw, ia["y"] + ih)], fill="#CCCCCC")
 
     # ── 텍스트 영역 ───────────────────────────────────────────
-    display_text = _truncate(text, max_chars)
-    lines = _wrap_korean(display_text, font, ta["max_width"])[:max_lines]
+    lines = _wrap_korean(text, font, ta["max_width"])
     total_h = len(lines) * lh
     y_start = ta["y"] - total_h // 2
     _draw_centered_text(draw, lines, font, y_start, lh, ta["color"], layout["canvas"]["width"])
@@ -377,33 +401,29 @@ def _render_text_only_frame(
     font_dir: Path,
     out_path: Path,
 ) -> Path:
-    """씬 3: text_only — 슬롯별 고정 Y좌표에 텍스트 배치.
+    """씬 3: text_only — 동적 Y좌표로 텍스트 배치.
 
-    text_history[0] → y_coords[0]
-    text_history[1] → y_coords[1]
-    text_history[2] → y_coords[2]
-
-    각 슬롯 안에서 줄이 2개 이상이면 line_height씩 아래로 쌓인다.
+    슬롯 간격은 len(lines) × (line_height + slot_gap)으로 동적 계산.
+    1줄 슬롯: 150px 전진, 2줄 슬롯: 300px 전진.
     """
     sc = layout["scenes"]["text_only"]
     ta = sc["elements"]["text_area"]
 
     font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
     lh: int = ta.get("line_height", 120)
+    slot_gap: int = ta.get("slot_gap", 5)
     new_color: str = ta.get("color", "#000000")
     prev_color: str = ta.get("prev_text_color", "#888888")
-    y_coords: list[int] = ta.get("y_coords", [500, 750, 1000])
+    y_start: int = ta.get("y_coords", [550])[0]  # 첫 번째 y만 기준점으로 사용
     cw = layout["canvas"]["width"]
 
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
 
-    for slot_idx, entry in enumerate(text_history):
-        if slot_idx >= len(y_coords):
-            break  # 슬롯 초과 방어
-
+    current_y = y_start
+    for entry in text_history:
         color = new_color if entry.get("is_new") else prev_color
-        slot_y = y_coords[slot_idx]
+        slot_y = current_y
 
         for line_text in entry["lines"]:
             try:
@@ -412,7 +432,10 @@ def _render_text_only_frame(
                 lw = font.getbbox(line_text)[2]
             cx = int((cw - lw) / 2)
             draw.text((cx, slot_y), line_text, font=font, fill=color)
-            slot_y += lh   # 래핑된 줄은 슬롯 내에서 아래로 쌓임
+            slot_y += lh   # 슬롯 내 래핑 줄은 line_height씩 아래로 쌓임
+
+        # 다음 슬롯 시작 y: 줄 수 × (line_height + slot_gap)
+        current_y += len(entry["lines"]) * (lh + slot_gap)
 
     img.save(str(out_path), "PNG")
     return out_path
@@ -846,10 +869,9 @@ def _render_pipeline(
         to_max_chars = sc_to.get("text_max_chars", 0)
 
         for sent in sentences:
-            text_content = sent["text"]
-            if to_max_chars > 0:
-                text_content = _truncate(text_content, to_max_chars)
-            sent["lines"] = _wrap_korean(text_content, to_font, to_max_w)
+            if "lines" in sent:
+                continue  # LLM에서 미리 분리된 경우 재계산 스킵
+            sent["lines"] = _wrap_korean(sent["text"], to_font, to_max_w)
 
         # ── Step 8: PIL 프레임 생성 ────────────────────────────
         logger.info("[layout] 프레임 생성 시작")
@@ -988,9 +1010,20 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     # ── Step 1: 문장 구조화 ────────────────────────────────────
     sentences: list[dict] = []
     sentences.append({"text": script.hook, "section": "hook"})
-    for body_text in script.body:
+    for body_item in script.body:
+        if isinstance(body_item, dict):
+            # 새 포맷: {"line_count": N, "lines": [...]}
+            pre_split_lines: list[str] | None = body_item.get("lines")
+            body_text = " ".join(pre_split_lines) if pre_split_lines else ""
+        else:
+            # 하위 호환: str 항목
+            body_text = str(body_item)
+            pre_split_lines = None
         is_quote = any(q in body_text for q in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d"))
-        sentences.append({"text": body_text, "section": "comment" if is_quote else "body"})
+        sent: dict = {"text": body_text, "section": "comment" if is_quote else "body"}
+        if pre_split_lines:
+            sent["lines"] = pre_split_lines  # Step 7에서 재계산 스킵
+        sentences.append(sent)
     sentences.append({"text": script.closer, "section": "closer"})
 
     images: list[str] = post.images if isinstance(post.images, list) else []
