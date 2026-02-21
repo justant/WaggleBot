@@ -345,18 +345,31 @@ async def synthesize(
     # 획득을 이벤트 루프 밖으로 위임해 직렬화한다.
     _loop = asyncio.get_running_loop()
     await _loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
+    _MAX_TTS_RETRIES = 2
     try:
-        async with httpx.AsyncClient(timeout=_timeout) as client:
-            resp = await client.post(
-                f"{FISH_SPEECH_URL}/v1/tts",
-                json={
-                    "text": final_text,
-                    "format": TTS_OUTPUT_FORMAT,
-                    "references": references,
-                },
-            )
-            resp.raise_for_status()
-            output_path.write_bytes(resp.content)
+        for _attempt in range(_MAX_TTS_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=_timeout) as client:
+                    resp = await client.post(
+                        f"{FISH_SPEECH_URL}/v1/tts",
+                        json={
+                            "text": final_text,
+                            "format": TTS_OUTPUT_FORMAT,
+                            "references": references,
+                        },
+                    )
+                    resp.raise_for_status()
+                    output_path.write_bytes(resp.content)
+                break  # 성공 시 재시도 루프 탈출
+            except httpx.ReadTimeout:
+                if _attempt < _MAX_TTS_RETRIES:
+                    logger.warning(
+                        "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
+                        _attempt + 1, _MAX_TTS_RETRIES + 1,
+                    )
+                else:
+                    logger.error("Fish Speech ReadTimeout — 최대 재시도 횟수(%d) 초과", _MAX_TTS_RETRIES + 1)
+                    raise
     finally:
         _FISH_SPEECH_LOCK.release()
 
