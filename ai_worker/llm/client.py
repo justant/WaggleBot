@@ -96,8 +96,69 @@ def _fix_control_chars(s: str) -> str:
     return "".join(result)
 
 
-def _parse_script_json(raw: str, fallback_text: str) -> ScriptData:
-    """LLM 응답에서 JSON 파싱. 실패 시 fallback ScriptData 반환."""
+def _repair_json(s: str) -> str:
+    """LLM이 자주 생성하는 JSON 오류를 보정한다."""
+    # "value"}}, → "value"]},  (lines 배열을 ] 없이 }} 로 닫은 LLM 오류)
+    s = re.sub(r'"(\s*)\}\}(\s*[,\n\r])', r'"\1]}\2', s)
+    # ]] → ]} (body 항목 lines 배열 닫기 오류)
+    s = re.sub(r"\]\]\s*([,\n\r])", r"]}\1", s)
+    s = re.sub(r"\]\]\s*\}", r"]}\n}", s)
+    # trailing comma before } or ]
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+    # leading comma inside array: [, "text"] → ["text"]
+    s = re.sub(r"\[\s*,", "[", s)
+    # missing value before comma or closing brace/bracket: ": ," → ": ""," / ": }" → ": ""}"
+    s = re.sub(r":\s*(?=[,}\]])", ': ""', s)
+    return s
+
+
+def _extract_fields_regex(raw: str) -> ScriptData | None:
+    """JSON 파싱 완전 실패 시 regex로 개별 필드를 추출한다 (마지막 폴백)."""
+    try:
+        def _get_str(key: str) -> str:
+            m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+            return m.group(1) if m else ""
+
+        hook  = _get_str("hook")
+        closer = _get_str("closer")
+        title  = _get_str("title_suggestion")
+        mood   = _get_str("mood") or "funny"
+
+        tags_m = re.search(r'"tags"\s*:\s*\[(.*?)\]', raw, re.DOTALL)
+        tags: list[str] = re.findall(r'"((?:[^"\\]|\\.)*)"', tags_m.group(1)) if tags_m else []
+
+        body: list[dict] = []
+        # "closer" 를 앵커로 탐욕적 매칭 → 비탐욕 fallback
+        body_m = (
+            re.search(r'"body"\s*:\s*\[(.*)\]\s*,\s*"closer"', raw, re.DOTALL)
+            or re.search(r'"body"\s*:\s*\[(.+?)\]\s*[,}]', raw, re.DOTALL)
+        )
+        if body_m:
+            for item_m in re.finditer(r'\{[^{}]+\}', body_m.group(1)):
+                lines_m = re.search(r'"lines"\s*:\s*\[(.*?)\]', item_m.group(0), re.DOTALL)
+                if not lines_m:
+                    # ] 없이 끝난 lines 배열 (}} 오류 등) — 열기부터 끝까지 문자열 직접 추출
+                    lines_m = re.search(r'"lines"\s*:\s*\[(.+)', item_m.group(0), re.DOTALL)
+                if lines_m:
+                    item_lines = re.findall(r'"((?:[^"\\]|\\.)*)"', lines_m.group(1))
+                    if item_lines:
+                        body.append({"line_count": len(item_lines), "lines": item_lines})
+
+        if hook:
+            logger.info("regex 필드 추출 성공: hook=%.20s...", hook)
+            return ScriptData(hook=hook, body=body, closer=closer,
+                              title_suggestion=title, tags=tags, mood=mood)
+    except Exception as _e:
+        logger.debug("regex 추출 실패: %s", _e)
+    return None
+
+
+def _parse_script_json(raw: str) -> ScriptData:
+    """LLM 응답에서 JSON 파싱.
+
+    1차: 직접 파싱 → 2차: _repair_json 후 재파싱 → 3차: regex 필드 추출
+    모두 실패 시 ValueError 발생.
+    """
     # ```json ... ``` 블록 제거
     cleaned = re.sub(r"```json\s*", "", raw)
     cleaned = re.sub(r"```\s*", "", cleaned)
@@ -111,8 +172,26 @@ def _parse_script_json(raw: str, fallback_text: str) -> ScriptData:
     # JSON 문자열 내 제어 문자 정규화
     cleaned = _fix_control_chars(cleaned)
 
+    d: dict | None = None
     try:
         d = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # 2차 시도: 공통 LLM JSON 오류 보정 후 재파싱
+        repaired = _repair_json(cleaned)
+        try:
+            d = json.loads(repaired)
+            logger.info("JSON 보정 후 파싱 성공")
+        except json.JSONDecodeError as e2:
+            # 3차 시도: regex 개별 필드 추출
+            fallback = _extract_fields_regex(raw)
+            if fallback is not None:
+                return fallback
+            raise ValueError(
+                f"LLM이 유효하지 않은 JSON을 반환했습니다 ({e2}). "
+                "다시 시도하거나 모델을 확인하세요."
+            ) from e2
+
+    try:
         # body 정규화: str 항목 → dict 변환 (하위 호환)
         body_raw = list(d.get("body", []))
         body: list[dict] = []
@@ -130,16 +209,8 @@ def _parse_script_json(raw: str, fallback_text: str) -> ScriptData:
             tags=list(d.get("tags", [])),
             mood=str(d.get("mood", "funny")),
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        logger.warning("ScriptData JSON 파싱 실패 (%s) — fallback 사용", e)
-        return ScriptData(
-            hook=fallback_text,
-            body=[],
-            closer="",
-            title_suggestion="",
-            tags=[],
-            mood="funny",
-        )
+    except (KeyError, TypeError) as e:
+        raise ValueError(f"ScriptData 필드 매핑 실패: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -154,12 +225,15 @@ def generate_script(
     model: str | None = None,
     extra_instructions: str | None = None,
     post_id: int | None = None,
+    call_type: str = "generate_script",
 ) -> ScriptData:
     """구조화 대본(ScriptData) 생성.
 
     Args:
         extra_instructions: 프롬프트 끝에 추가할 보조 지시사항 (스타일, 톤 등).
         post_id:            LLM 로그 연결용 게시글 ID (선택).
+        call_type:          LLM 로그 호출 유형 (기본 "generate_script",
+                            대시보드 편집실은 "generate_script_editor").
     """
     from ai_worker.llm.logger import LLMCallTimer, log_llm_call
 
@@ -191,7 +265,7 @@ def generate_script(
         finally:
             # 성공/실패 모두 로그 기록
             log_llm_call(
-                call_type="generate_script",
+                call_type=call_type,
                 post_id=post_id,
                 model_name=model,
                 prompt_text=prompt,
@@ -206,7 +280,7 @@ def generate_script(
 
     logger.info("Ollama 응답 수신: %d자 (%dms)", len(raw), timer.elapsed_ms)
 
-    script = _parse_script_json(raw, fallback_text=raw)
+    script = _parse_script_json(raw)
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])
     return script
 

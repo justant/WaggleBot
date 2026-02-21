@@ -330,9 +330,207 @@ def render_image_slider(images_raw: "str | list | None", key_prefix: str, width:
 
     img_data = _fetch_image(imgs[cur])
     if img_data:
-        st.image(img_data, width=width)
+        try:
+            st.image(img_data, width=width)
+        except Exception:
+            st.caption(f"이미지 로드 실패: {imgs[cur]}")
     else:
         st.caption(f"이미지 로드 실패: {imgs[cur]}")
+
+
+_DEFAULT_STYLE_PRESETS: list[dict] = [
+    {"name": "기본 (쇼츠 최적화)", "prompt": ""},
+    {"name": "자극적", "prompt": "최대한 자극적이고 충격적인 표현을 사용하라. 감탄사와 강렬한 단어로 시작하라."},
+    {"name": "공감형", "prompt": "시청자가 깊이 공감할 수 있는 감성적 접근. 따뜻하고 진정성 있는 말투."},
+    {"name": "유머러스", "prompt": "가볍고 재미있는 말투, ㅋㅋ/ㄷㄷ 구어체 활용, 이모티콘 1~2개 포함."},
+    {"name": "뉴스형", "prompt": "뉴스 앵커 스타일, 객관적 서술, 중립적 어조."},
+]
+
+
+def _load_style_presets() -> list[dict]:
+    """pipeline.json에서 스타일 프리셋 로드. 없으면 기본값 반환."""
+    raw = load_pipeline_config().get("style_presets")
+    if raw:
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(data, list) and data:
+                return data
+        except Exception:
+            pass
+    return list(_DEFAULT_STYLE_PRESETS)
+
+
+def _save_style_presets(presets: list[dict]) -> None:
+    """스타일 프리셋을 pipeline.json에 저장."""
+    cfg = load_pipeline_config()
+    cfg["style_presets"] = json.dumps(presets, ensure_ascii=False)
+    save_pipeline_config(cfg)
+
+
+def _body_to_scene_strs(body: list) -> list[str]:
+    """ScriptData.body (list[dict] v2) → 씬 편집기용 list[str] 변환.
+
+    각 씬의 lines를 줄바꿈으로 연결한 문자열로 변환.
+    """
+    result: list[str] = []
+    for item in body:
+        if isinstance(item, dict):
+            result.append("\n".join(item.get("lines", [""])))
+        else:
+            result.append(str(item))
+    return result
+
+
+def _collect_scenes(pid: int, n: int) -> list[str]:
+    """씬 편집기의 현재 입력 값을 body_scenes_{pid} 형식(줄바꿈 조인)으로 수집."""
+    result: list[str] = []
+    for _i in range(n):
+        _nl = st.session_state.get(f"bscene_{pid}_{_i}_nlines", 1)
+        _l0 = st.session_state.get(f"bscene_{pid}_{_i}_L0", "")
+        _l1 = st.session_state.get(f"bscene_{pid}_{_i}_L1", "")
+        if _nl >= 2 and _l1:
+            result.append(f"{_l0}\n{_l1}")
+        else:
+            result.append(_l0)
+    return result
+
+
+@st.fragment
+def _scene_editor_frag(pid: int, init_body: list) -> None:
+    """씬 기반 본문 편집기.
+
+    - 줄당 st.text_input(max_chars=21) → 21자 초과 입력 자체 차단
+    - 씬당 최대 2줄: 2줄일 때 "+ 줄 추가" 버튼 숨김
+    - 씬 추가/삭제/줄 추가/삭제 시 fragment만 재실행
+    """
+    _sk = f"body_scenes_{pid}"
+
+    # ── body_scenes 초기화 ────────────────────────────────────────────────────
+    if _sk not in st.session_state:
+        _init = _body_to_scene_strs(init_body)
+        st.session_state[_sk] = _init if _init else [""]
+
+    _scenes: list[str] = st.session_state[_sk]
+    _n = len(_scenes)
+
+    # ── 각 씬의 nlines / L0 / L1 키 초기화 (없을 때만) ─────────────────────
+    for _i, _st_txt in enumerate(_scenes):
+        _nk  = f"bscene_{pid}_{_i}_nlines"
+        _l0k = f"bscene_{pid}_{_i}_L0"
+        _l1k = f"bscene_{pid}_{_i}_L1"
+        if _nk not in st.session_state:
+            _parts = [l for l in _st_txt.split("\n") if l]
+            _nl = min(len(_parts), 2) if _parts else 1
+            st.session_state[_nk]  = _nl
+            st.session_state[_l0k] = _parts[0] if len(_parts) > 0 else ""
+            st.session_state[_l1k] = _parts[1] if len(_parts) > 1 else ""
+
+    st.markdown("**📝 본문 항목** (씬 단위 · 각 줄 최대 21자 · 최대 2줄)")
+
+    _del_idx: int | None      = None
+    _add_line_idx: int | None = None
+    _del_line_idx: int | None = None
+
+    for _si in range(_n):
+        _nk  = f"bscene_{pid}_{_si}_nlines"
+        _l0k = f"bscene_{pid}_{_si}_L0"
+        _l1k = f"bscene_{pid}_{_si}_L1"
+        _nl  = st.session_state.get(_nk, 1)
+
+        with st.container(border=True):
+            # ── 씬 헤더: 번호 + 씬 삭제 ──────────────────────────────────
+            _hc, _dc = st.columns([9, 1])
+            with _hc:
+                st.markdown(f"**씬 {_si + 1}**")
+            with _dc:
+                if st.button("✕", key=f"dsc_{pid}_{_si}", help="씬 삭제"):
+                    _del_idx = _si
+
+            # ── 줄 1 ─────────────────────────────────────────────────────
+            if _nl == 1:
+                # 1줄: 입력 + "+ 줄" 버튼
+                _lc, _bc = st.columns([9, 1])
+                with _lc:
+                    st.text_input(
+                        "줄 1",
+                        key=_l0k,
+                        max_chars=21,
+                        label_visibility="collapsed",
+                        placeholder="줄 1 (최대 21자)",
+                    )
+                with _bc:
+                    if st.button("+ 줄", key=f"aln_{pid}_{_si}", help="줄 추가"):
+                        _add_line_idx = _si
+            else:
+                # 2줄: 줄 1 단독 (전체 너비)
+                st.text_input(
+                    "줄 1",
+                    key=_l0k,
+                    max_chars=21,
+                    label_visibility="collapsed",
+                    placeholder="줄 1 (최대 21자)",
+                )
+
+            # ── 줄 2 (nlines == 2 일 때만) ───────────────────────────────
+            if _nl >= 2:
+                _l2c, _dlc = st.columns([9, 1])
+                with _l2c:
+                    st.text_input(
+                        "줄 2",
+                        key=_l1k,
+                        max_chars=21,
+                        label_visibility="collapsed",
+                        placeholder="줄 2 (최대 21자)",
+                    )
+                with _dlc:
+                    if st.button("✕", key=f"dln_{pid}_{_si}", help="줄 삭제"):
+                        _del_line_idx = _si
+
+    if st.button("+ 씬 추가", key=f"asc_{pid}"):
+        _cur = _collect_scenes(pid, _n)
+        _new_i = len(_cur)
+        _cur.append("")
+        st.session_state[_sk] = _cur
+        st.session_state[f"bscene_{pid}_{_new_i}_nlines"] = 1
+        st.session_state[f"bscene_{pid}_{_new_i}_L0"]     = ""
+        st.session_state[f"bscene_{pid}_{_new_i}_L1"]     = ""
+        st.rerun(scope="fragment")
+
+    # ── 줄 추가 처리 ─────────────────────────────────────────────────────────
+    if _add_line_idx is not None:
+        st.session_state[_sk] = _collect_scenes(pid, _n)
+        st.session_state[f"bscene_{pid}_{_add_line_idx}_nlines"] = 2
+        st.rerun(scope="fragment")
+
+    # ── 줄 삭제 처리 ─────────────────────────────────────────────────────────
+    elif _del_line_idx is not None:
+        st.session_state[_sk] = _collect_scenes(pid, _n)
+        st.session_state[f"bscene_{pid}_{_del_line_idx}_nlines"] = 1
+        st.session_state[f"bscene_{pid}_{_del_line_idx}_L1"]     = ""
+        st.rerun(scope="fragment")
+
+    # ── 씬 삭제 처리 ─────────────────────────────────────────────────────────
+    elif _del_idx is not None:
+        _cur = _collect_scenes(pid, _n)
+        _cur.pop(_del_idx)
+        for _dk in list(st.session_state.keys()):
+            if _dk.startswith(f"bscene_{pid}_"):
+                del st.session_state[_dk]
+        st.session_state[_sk] = _cur
+        for _ri, _rt in enumerate(_cur):
+            _parts = [l for l in _rt.split("\n") if l]
+            _nl2   = min(len(_parts), 2) if _parts else 1
+            st.session_state[f"bscene_{pid}_{_ri}_nlines"] = _nl2
+            st.session_state[f"bscene_{pid}_{_ri}_L0"]     = _parts[0] if _parts else ""
+            st.session_state[f"bscene_{pid}_{_ri}_L1"]     = _parts[1] if len(_parts) > 1 else ""
+        st.rerun(scope="fragment")
+
+    else:
+        # 현재 입력 값을 body_scenes_{pid} 에 동기화
+        st.session_state[_sk] = _collect_scenes(pid, _n)
+
+    # max_chars=21 로 네이티브 강제하므로 항상 유효
+    st.session_state[f"scene_valid_{pid}"] = True
 
 
 def _check_ollama_health() -> bool:
@@ -588,14 +786,27 @@ with tab_inbox:
         # 글로벌 배치 액션 바
         # ---------------------------------------------------------------------------
         n_selected = len(st.session_state["selected_posts"])
+        _all_post_ids = {p.id for p in posts}
+        _all_selected = bool(_all_post_ids) and _all_post_ids.issubset(
+            st.session_state["selected_posts"]
+        )
+
+        def _on_select_all_toggle() -> None:
+            if st.session_state.get("inbox_select_all_cb"):
+                st.session_state["selected_posts"] = _all_post_ids.copy()
+            else:
+                st.session_state["selected_posts"] = set()
+
+        # 체크박스 표시값을 실제 선택 상태에 동기화
+        st.session_state["inbox_select_all_cb"] = _all_selected
+
         bc0, bc1, bc2 = st.columns([1, 1, 1])
         with bc0:
-            if st.button("☑️ 전체 선택", width="stretch"):
-                st.session_state["selected_posts"] = {p.id for p in posts}
-                st.rerun()
-            if st.button("⬜ 전체 해제", width="stretch"):
-                st.session_state["selected_posts"] = set()
-                st.rerun()
+            st.checkbox(
+                "전체 선택/해제",
+                key="inbox_select_all_cb",
+                on_change=_on_select_all_toggle,
+            )
         with bc1:
             if st.button(
                 f"✅ 선택 ({n_selected}건) 일괄 승인",
@@ -867,11 +1078,41 @@ with tab_editor:
                     st.session_state["editor_idx"] = new_idx
                     st.rerun()
             with skip_col:
-                if st.button("⏭ 건너뛰기", width="stretch",
-                             help="편집 없이 AI 처리 대기열로 이동"):
-                    update_status(approved_posts[idx].id, PostStatus.APPROVED)
-                    st.session_state["editor_idx"] = max(0, idx - 1)
-                    st.rerun()
+                if st.button("🤖 자동생성", width="stretch",
+                             help="AI가 대본을 자동 생성하고 영상 생성 대기열로 이동합니다"):
+                    if not _check_ollama_health():
+                        st.error("❌ LLM 서버에 연결할 수 없습니다.")
+                    else:
+                        with st.spinner("AI 대본 자동 생성 중..."):
+                            try:
+                                from ai_worker.llm.client import generate_script as _gs
+                                _auto_post = approved_posts[idx]
+                                _auto_best = sorted(
+                                    _auto_post.comments, key=lambda c: c.likes, reverse=True
+                                )[:5]
+                                _auto_script = _gs(
+                                    title=_auto_post.title,
+                                    body=_auto_post.content or "",
+                                    comments=[f"{c.author}: {c.content[:100]}" for c in _auto_best],
+                                    model=load_pipeline_config().get("llm_model"),
+                                    post_id=_auto_post.id,
+                                )
+                                with SessionLocal() as _aws:
+                                    _acr = _aws.query(Content).filter(
+                                        Content.post_id == _auto_post.id
+                                    ).first()
+                                    if _acr is None:
+                                        _acr = Content(post_id=_auto_post.id)
+                                        _aws.add(_acr)
+                                    _acr.summary_text = _auto_script.to_json()
+                                    _apost = _aws.get(Post, _auto_post.id)
+                                    if _apost:
+                                        _apost.status = PostStatus.APPROVED
+                                    _aws.commit()
+                                st.session_state["editor_idx"] = max(0, idx - 1)
+                                st.rerun()
+                            except Exception as _ae:
+                                st.error(f"자동 생성 실패: {_ae}")
 
             selected_post = approved_posts[idx]
             selected_post_id = selected_post.id
@@ -933,11 +1174,7 @@ with tab_editor:
                 # --- 재생성 파라미터 ---
                 with st.expander("⚙️ 재생성 파라미터", expanded=script_data is None):
                     _STYLE_PRESETS: dict[str, str] = {
-                        "기본 (쇼츠 최적화)": "",
-                        "자극적": "최대한 자극적이고 충격적인 표현을 사용하라. 감탄사와 강렬한 단어로 시작하라.",
-                        "공감형": "시청자가 깊이 공감할 수 있는 감성적 접근. 따뜻하고 진정성 있는 말투.",
-                        "유머러스": "가볍고 재미있는 말투, ㅋㅋ/ㄷㄷ 구어체 활용, 이모티콘 1~2개 포함.",
-                        "뉴스형": "뉴스 앵커 스타일, 객관적 서술, 중립적 어조.",
+                        p["name"]: p["prompt"] for p in _load_style_presets()
                     }
                     style_choice = st.selectbox(
                         "스타일 프리셋",
@@ -981,20 +1218,28 @@ with tab_editor:
                                         comments=comment_texts,
                                         model=cfg_editor.get("llm_model"),
                                         extra_instructions=full_extra,
+                                        post_id=selected_post_id,
+                                        call_type="generate_script_editor",
                                     )
-                                    # 위젯 키 초기화 → 새 값 주입
-                                    for _k, _v in [
-                                        (f"hook_{selected_post_id}", script_data.hook),
-                                        (f"closer_{selected_post_id}", script_data.closer),
-                                        (f"title_{selected_post_id}", script_data.title_suggestion),
-                                        (f"tags_{selected_post_id}", ", ".join(script_data.tags)),
-                                        (f"body_{selected_post_id}", script_data.body),
-                                    ]:
-                                        st.session_state[_k] = _v
-                                    # data_editor 강제 재초기화
-                                    _de_key = f"body_editor_{selected_post_id}"
-                                    if _de_key in st.session_state:
-                                        del st.session_state[_de_key]
+                                    # 다음 런의 pre-init 블록에서 주입할 결과 저장
+                                    _gid = selected_post_id
+                                    _new_sc = _body_to_scene_strs(script_data.body)
+                                    st.session_state[f"_ai_result_{_gid}"] = {
+                                        "hook":        script_data.hook,
+                                        "closer":      script_data.closer,
+                                        "title":       script_data.title_suggestion,
+                                        "tags":        ", ".join(script_data.tags),
+                                        "mood":        script_data.mood or "funny",
+                                        "body_scenes": _new_sc if _new_sc else [""],
+                                    }
+                                    # 기존 위젯 키 삭제 → pre-init에서 새 값으로 채움
+                                    for _ok in list(st.session_state.keys()):
+                                        if _ok in (
+                                            f"hook_{_gid}", f"closer_{_gid}",
+                                            f"title_{_gid}", f"tags_{_gid}", f"mood_{_gid}",
+                                            f"body_scenes_{_gid}",
+                                        ) or _ok.startswith(f"bscene_{_gid}_"):
+                                            del st.session_state[_ok]
                                     st.success("대본 생성 완료!")
                                     st.rerun()
                                 except Exception as exc:
@@ -1004,66 +1249,83 @@ with tab_editor:
 
                 # --- 편집 필드 ---
                 mood_options = ["funny", "serious", "shocking", "heartwarming"]
+                _pid = selected_post_id
+                _sd = script_data  # DB 로드값 (저장 전이면 None)
 
+                # ── AI 생성 결과 주입 (이전 런 핸들러가 _ai_result_* 에 저장한 값) ──────────
+                _ai_pending = st.session_state.pop(f"_ai_result_{_pid}", None)
+                if _ai_pending is not None:
+                    # 위젯 렌더 직전(같은 런)에 session_state 덮어씀 → 위젯이 즉시 반영
+                    st.session_state[f"hook_{_pid}"]   = _ai_pending["hook"]
+                    st.session_state[f"closer_{_pid}"] = _ai_pending["closer"]
+                    st.session_state[f"title_{_pid}"]  = _ai_pending["title"]
+                    st.session_state[f"tags_{_pid}"]   = _ai_pending["tags"]
+                    _pm = _ai_pending["mood"]
+                    st.session_state[f"mood_{_pid}"]   = _pm if _pm in mood_options else "funny"
+                    # body_scenes 설정 (bscene_ 키는 fragment init 블록이 초기화)
+                    st.session_state[f"body_scenes_{_pid}"] = _ai_pending["body_scenes"]
+                    for _ok in list(st.session_state.keys()):
+                        if _ok.startswith(f"bscene_{_pid}_"):
+                            del st.session_state[_ok]
+                else:
+                    # ── 최초 방문: DB 값으로 초기화 (이후 방문은 기존 state 유지) ──────────
+                    if f"hook_{_pid}" not in st.session_state:
+                        st.session_state[f"hook_{_pid}"] = _sd.hook if _sd else ""
+                    if f"closer_{_pid}" not in st.session_state:
+                        st.session_state[f"closer_{_pid}"] = _sd.closer if _sd else ""
+                    if f"title_{_pid}" not in st.session_state:
+                        st.session_state[f"title_{_pid}"] = _sd.title_suggestion if _sd else ""
+                    if f"tags_{_pid}" not in st.session_state:
+                        st.session_state[f"tags_{_pid}"] = ", ".join(_sd.tags) if _sd else ""
+                    if f"mood_{_pid}" not in st.session_state:
+                        _m0 = (_sd.mood if _sd else "funny") or "funny"
+                        st.session_state[f"mood_{_pid}"] = _m0 if _m0 in mood_options else "funny"
+
+                # value= 없이 key= 만으로 위젯 렌더 (session_state가 단일 진실 소스)
                 hook = st.text_area(
                     "🎣 후킹 (Hook)",
-                    value=script_data.hook if script_data else "",
                     max_chars=60,
                     height=80,
-                    key=f"hook_{selected_post_id}",
+                    key=f"hook_{_pid}",
                 )
 
-                st.markdown("**📝 본문 항목** (행 추가/삭제 가능)")
-                _body_init = st.session_state.get(
-                    f"body_{selected_post_id}",
-                    script_data.body if script_data else [],
+                # --- 씬 기반 본문 편집기 (fragment) ---
+                _scene_editor_frag(
+                    _pid,
+                    _sd.body if _sd else [],
                 )
-                body_df_edited = st.data_editor(
-                    pd.DataFrame({"내용": pd.Series(_body_init, dtype="object")}),
-                    num_rows="dynamic",
-                    width="stretch",
-                    column_config={
-                        "내용": st.column_config.TextColumn(
-                            "내용", width="large", max_chars=200
-                        )
-                    },
-                    key=f"body_editor_{selected_post_id}",
-                    height=220,
-                )
-                body_lines = [
-                    str(s).strip()
-                    for s in body_df_edited["내용"].dropna()
-                    if str(s).strip()
-                ]
+
+                # fragment 외부: session_state 에서 body 값 읽기 (저장·미리듣기용)
+                _body_scenes_v2: list[dict] = []
+                body_lines: list[str] = []
+                for _sc_txt in st.session_state.get(f"body_scenes_{_pid}", []):
+                    _sc_lines = [l.strip() for l in _sc_txt.split("\n") if l.strip()]
+                    if _sc_lines:
+                        _body_scenes_v2.append({"line_count": len(_sc_lines), "lines": _sc_lines})
+                        body_lines.append(" ".join(_sc_lines))
 
                 closer = st.text_area(
                     "🔚 마무리 (Closer)",
-                    value=script_data.closer if script_data else "",
                     max_chars=100,
                     height=80,
-                    key=f"closer_{selected_post_id}",
+                    key=f"closer_{_pid}",
                 )
 
                 st.divider()
 
                 title_sug = st.text_input(
                     "🎬 영상 제목",
-                    value=script_data.title_suggestion if script_data else "",
-                    key=f"title_{selected_post_id}",
+                    key=f"title_{_pid}",
                 )
                 tags_input = st.text_input(
                     "🏷️ 태그 (쉼표 구분)",
-                    value=", ".join(script_data.tags) if script_data else "",
-                    key=f"tags_{selected_post_id}",
+                    key=f"tags_{_pid}",
                 )
 
-                mood_val = script_data.mood if script_data else "funny"
-                mood_idx = mood_options.index(mood_val) if mood_val in mood_options else 0
                 mood = st.selectbox(
                     "🎭 분위기",
                     mood_options,
-                    index=mood_idx,
-                    key=f"mood_{selected_post_id}",
+                    key=f"mood_{_pid}",
                 )
 
                 # BGM 제안
@@ -1124,69 +1386,84 @@ with tab_editor:
 
                 st.divider()
 
-                # --- 저장 & 건너뛰기 ---
-                save_c, skip_c = st.columns(2)
+                # --- 저장 / 확정 ---
+                def _build_script() -> ScriptData:
+                    """현재 편집 상태에서 ScriptData 생성."""
+                    _tags = [t.strip() for t in tags_input.split(",") if t.strip()]
+                    return ScriptData(
+                        hook=hook,
+                        body=_body_scenes_v2,
+                        closer=closer,
+                        title_suggestion=title_sug,
+                        tags=_tags,
+                        mood=mood,
+                    )
+
+                def _persist_script(new_status: PostStatus | None = None) -> None:
+                    """ScriptData를 DB에 저장. new_status가 주어지면 Post.status도 변경."""
+                    _sd = _build_script()
+                    with SessionLocal() as _ws:
+                        _cr = _ws.query(Content).filter(
+                            Content.post_id == selected_post_id
+                        ).first()
+                        if _cr is None:
+                            _cr = Content(post_id=selected_post_id)
+                            _ws.add(_cr)
+                        _cr.summary_text = _sd.to_json()
+                        if new_status is not None:
+                            _ep = _ws.get(Post, selected_post_id)
+                            if _ep:
+                                _ep.status = new_status
+                        _ws.commit()
+
+                def _validate_editor() -> bool:
+                    if not hook.strip():
+                        st.error("🎣 후킹(Hook)을 입력하세요.")
+                        return False
+                    if not body_lines:
+                        st.error("📝 본문 항목을 1개 이상 입력하세요.")
+                        return False
+                    if not closer.strip():
+                        st.error("🔚 마무리(Closer)를 입력하세요.")
+                        return False
+                    if est_seconds < 15:
+                        st.error("⏱️ 대본이 너무 짧습니다 (최소 15초 이상).")
+                        return False
+                    if not st.session_state.get(f"scene_valid_{_pid}", True):
+                        st.error("📝 본문 항목에 오류가 있습니다. 🔴 표시 씬을 수정하세요.")
+                        return False
+                    return True
+
+                save_c, confirm_c = st.columns(2)
                 with save_c:
                     if st.button(
-                        "💾 저장 & 확정",
+                        "💾 저장",
+                        width="stretch",
+                        key=f"draft_save_{selected_post_id}",
+                        help="편집 내용을 저장합니다. 편집실에 계속 머뭅니다.",
+                    ):
+                        if _validate_editor():
+                            try:
+                                _persist_script(new_status=None)
+                                st.toast("✅ 저장 완료")
+                            except Exception as exc:
+                                st.error(f"저장 실패: {exc}")
+                with confirm_c:
+                    if st.button(
+                        "✅ 확정",
                         width="stretch",
                         type="primary",
-                        key=f"save_{selected_post_id}",
+                        key=f"confirm_{selected_post_id}",
+                        help="저장 후 AI 워커 처리 대기열로 이동합니다.",
                     ):
-                        # 유효성 검증
-                        if not hook.strip():
-                            st.error("🎣 후킹(Hook)을 입력하세요.")
-                            st.stop()
-                        if not body_lines:
-                            st.error("📝 본문 항목을 1개 이상 입력하세요.")
-                            st.stop()
-                        if not closer.strip():
-                            st.error("🔚 마무리(Closer)를 입력하세요.")
-                            st.stop()
-                        if est_seconds < 15:
-                            st.error("⏱️ 대본이 너무 짧습니다 (최소 15초 이상).")
-                            st.stop()
-                        try:
-                            tags_list = [t.strip() for t in tags_input.split(",") if t.strip()]
-                            confirmed = ScriptData(
-                                hook=hook,
-                                body=body_lines,
-                                closer=closer,
-                                title_suggestion=title_sug,
-                                tags=tags_list,
-                                mood=mood,
-                            )
-                            # 쓰기 전용 세션 분리 (읽기 세션과 identity map 충돌 방지)
-                            with SessionLocal() as write_session:
-                                content_rec = (
-                                    write_session.query(Content)
-                                    .filter(Content.post_id == selected_post_id)
-                                    .first()
-                                )
-                                if content_rec is None:
-                                    content_rec = Content(post_id=selected_post_id)
-                                    write_session.add(content_rec)
-                                content_rec.summary_text = confirmed.to_json()
-                                # 편집 완료 → AI 워커 대기 상태로 전환
-                                _edit_post = write_session.get(Post, selected_post_id)
-                                if _edit_post and _edit_post.status == PostStatus.EDITING:
-                                    _edit_post.status = PostStatus.APPROVED
-                                write_session.commit()
-                            st.success("✅ 저장 완료! AI Worker 처리 대기열에 추가됩니다.")
-                            st.session_state["editor_idx"] = max(0, idx - 1)
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"저장 실패: {exc}")
-                with skip_c:
-                    if st.button(
-                        "⏭ 건너뛰기",
-                        width="stretch",
-                        key=f"skip_bottom_{selected_post_id}",
-                        help="편집 없이 AI 처리 대기열로 이동",
-                    ):
-                        update_status(selected_post_id, PostStatus.APPROVED)
-                        st.session_state["editor_idx"] = max(0, idx - 1)
-                        st.rerun()
+                        if _validate_editor():
+                            try:
+                                _persist_script(new_status=PostStatus.APPROVED)
+                                st.success("✅ 확정 완료! AI Worker 처리 대기열에 추가됩니다.")
+                                st.session_state["editor_idx"] = max(0, idx - 1)
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"확정 실패: {exc}")
 
 # ===========================================================================
 # Tab 3: 진행현황 (Progress)
@@ -1885,6 +2162,36 @@ with tab_settings:
 
     st.divider()
 
+    # 스타일 프리셋 관리
+    st.subheader("✍️ 스타일 프리셋 관리")
+    st.caption("편집실의 '스타일 프리셋' 드롭다운에 표시되는 항목을 조회·수정·추가·삭제할 수 있습니다.")
+    _cur_presets = _load_style_presets()
+    _presets_df = pd.DataFrame(_cur_presets, columns=["name", "prompt"])
+    _edited_presets_df = st.data_editor(
+        _presets_df,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "name":   st.column_config.TextColumn("프리셋 이름", width="medium", max_chars=40),
+            "prompt": st.column_config.TextColumn("지시사항 (비워두면 기본 스타일)", width="large", max_chars=300),
+        },
+        key="set_style_presets_editor",
+        height=220,
+    )
+    if st.button("💾 프리셋 저장", key="save_presets_btn", width="content"):
+        _new_presets = [
+            {"name": str(r.get("name", "")).strip(), "prompt": str(r.get("prompt", "") or "")}
+            for _, r in _edited_presets_df.iterrows()
+            if str(r.get("name", "")).strip()
+        ]
+        if _new_presets:
+            _save_style_presets(_new_presets)
+            st.success("✅ 스타일 프리셋이 저장되었습니다.")
+        else:
+            st.error("프리셋 이름이 비어 있습니다. 이름을 입력하세요.")
+
+    st.divider()
+
     # LLM 설정
     st.subheader("🧠 LLM 설정")
     llm_model = st.text_input("LLM 모델 (Ollama)", key="set_llm_model")
@@ -2133,7 +2440,9 @@ with tab_llm_log:
     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
     with col_f1:
         filter_call_type = st.selectbox(
-            "호출 유형", ["전체", "chunk", "generate_script"], key="llm_filter_type"
+            "호출 유형",
+            ["전체", "chunk", "generate_script", "generate_script_editor"],
+            key="llm_filter_type",
         )
     with col_f2:
         filter_success = st.selectbox(
@@ -2208,7 +2517,11 @@ with tab_llm_log:
     else:
         st.caption(f"최근 {filter_days}일 이력 (최대 200건 표시)")
         for _log in _logs:
-            _icon = "✅" if _log.success else "❌"
+            _is_editor = _log.call_type == "generate_script_editor"
+            if _log.success:
+                _icon = "🔵" if _is_editor else "✅"
+            else:
+                _icon = "❌"
             _post = _posts_map.get(_log.post_id) if _log.post_id else None
             _site = _post.site_code if _post else "-"
             _title = (_post.title[:30] + "…") if _post and len(_post.title) > 30 else (_post.title if _post else "-")
