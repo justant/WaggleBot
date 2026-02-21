@@ -102,7 +102,14 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     "auto_approve_threshold": "80",
     # LLM 파이프라인 (5-Phase content_processor 활성화 여부)
     "use_content_processor": "false",
+    # 자동 업로드
+    "auto_upload": "false",
 }
+
+
+def get_pipeline_defaults() -> dict[str, str]:
+    """파이프라인 기본 설정값 반환."""
+    return dict(_PIPELINE_DEFAULTS)
 
 
 def load_pipeline_config() -> dict[str, str]:

@@ -25,7 +25,7 @@ from config.settings import (
     TTS_VOICES, MEDIA_DIR, ASSETS_DIR,
     PLATFORM_CREDENTIAL_FIELDS,
     OLLAMA_MODEL,
-    load_pipeline_config, save_pipeline_config,
+    load_pipeline_config, save_pipeline_config, get_pipeline_defaults,
     load_credentials_config, save_credentials_config,
 )
 from crawlers.plugin_manager import list_crawlers
@@ -435,11 +435,40 @@ STATUS_EMOJI = {
 }
 
 # ---------------------------------------------------------------------------
+# 설정 탭 session_state 초기화 (세션 최초 1회 — 파일에서 로드)
+# ---------------------------------------------------------------------------
+def _apply_cfg_to_session(cfg: dict[str, str]) -> None:
+    """dict 값을 설정 위젯 session_state 키에 적용한다.
+
+    위젯이 아직 렌더링되기 전(스크립트 상단)에서만 호출해야 한다.
+    위젯 렌더 후 동일 키를 수정하면 StreamlitAPIException이 발생한다.
+    """
+    st.session_state["set_tts_engine"]             = cfg.get("tts_engine", "edge-tts")
+    st.session_state["set_tts_voice"]              = cfg.get("tts_voice", "ko-KR-SunHiNeural")
+    st.session_state["set_llm_model"]              = cfg.get("llm_model", "qwen2.5:14b")
+    st.session_state["set_upload_platforms"]       = json.loads(cfg.get("upload_platforms", '["youtube"]'))
+    st.session_state["set_upload_privacy"]         = cfg.get("upload_privacy", "unlisted")
+    st.session_state["set_auto_upload"]            = cfg.get("auto_upload", "false") == "true"
+    st.session_state["set_auto_approve"]           = cfg.get("auto_approve_enabled", "false") == "true"
+    st.session_state["set_auto_approve_threshold"] = int(cfg.get("auto_approve_threshold", "80"))
+    st.session_state["set_use_content_processor"]  = cfg.get("use_content_processor", "false") == "true"
+
+
+# 기본값 복원 요청이 있으면 위젯 렌더 전에 처리 (위젯 렌더 후 key 수정 불가)
+if st.session_state.pop("_settings_reset_pending", False):
+    _apply_cfg_to_session(get_pipeline_defaults())
+
+# 세션 최초 1회 — 파일에서 로드
+if "settings_initialized" not in st.session_state:
+    _apply_cfg_to_session(load_pipeline_config())
+    st.session_state["settings_initialized"] = True
+
+# ---------------------------------------------------------------------------
 # 탭 구성
 # ---------------------------------------------------------------------------
 
-tab_inbox, tab_editor, tab_progress, tab_gallery, tab_analytics, tab_settings, tab_llm_log = st.tabs(
-    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "📊 분석", "⚙️ 설정", "🔬 LLM 이력"]
+tab_inbox, tab_editor, tab_progress, tab_gallery, tab_analytics, tab_llm_log, tab_settings = st.tabs(
+    ["📥 수신함", "✏️ 편집실", "⚙️ 진행현황", "🎬 갤러리", "📊 분석", "🔬 LLM 이력", "⚙️ 설정"]
 )
 
 # ===========================================================================
@@ -1838,27 +1867,27 @@ with tab_settings:
         if st.button("🔄 새로고침", key="settings_refresh_btn", width="stretch"):
             st.rerun()
 
-    cfg = load_pipeline_config()
-
     # TTS 설정
     st.subheader("🎙️ TTS 설정")
 
     engine_list = list(TTS_VOICES.keys())
-    engine_idx = engine_list.index(cfg["tts_engine"]) if cfg["tts_engine"] in engine_list else 0
-    selected_engine = st.selectbox("TTS 엔진", engine_list, index=engine_idx)
+    _stored_engine = st.session_state.get("set_tts_engine", engine_list[0])
+    engine_idx = engine_list.index(_stored_engine) if _stored_engine in engine_list else 0
+    selected_engine = st.selectbox("TTS 엔진", engine_list, index=engine_idx, key="set_tts_engine")
 
     voices = TTS_VOICES[selected_engine]
     voice_ids = [v["id"] for v in voices]
     voice_labels = [f'{v["name"]} ({v["id"]})' for v in voices]
-    voice_idx = voice_ids.index(cfg["tts_voice"]) if cfg["tts_voice"] in voice_ids else 0
-    selected_voice_label = st.selectbox("TTS 목소리", voice_labels, index=voice_idx)
-    selected_voice = voice_ids[voice_labels.index(selected_voice_label)]
+    _stored_voice = st.session_state.get("set_tts_voice", voice_ids[0] if voice_ids else "")
+    voice_idx = voice_ids.index(_stored_voice) if _stored_voice in voice_ids else 0
+    selected_voice_label = st.selectbox("TTS 목소리", voice_labels, index=voice_idx, key="set_tts_voice_label")
+    selected_voice = voice_ids[voice_labels.index(selected_voice_label)] if selected_voice_label in voice_labels else voice_ids[0]
 
     st.divider()
 
     # LLM 설정
     st.subheader("🧠 LLM 설정")
-    llm_model = st.text_input("LLM 모델 (Ollama)", value=cfg.get("llm_model", "qwen2.5:14b"))
+    llm_model = st.text_input("LLM 모델 (Ollama)", key="set_llm_model")
     if st.button("🔍 연결 확인", key="check_ollama", width="content"):
         from config.settings import get_ollama_host
         try:
@@ -1881,17 +1910,16 @@ with tab_settings:
     st.subheader("📤 업로드 설정")
 
     available_platforms = ["youtube"]
-    current_platforms = json.loads(cfg.get("upload_platforms", '["youtube"]'))
     selected_platforms = st.multiselect(
         "업로드 플랫폼",
         available_platforms,
-        default=[p for p in current_platforms if p in available_platforms],
+        key="set_upload_platforms",
     )
 
     privacy_options = ["unlisted", "private", "public"]
-    current_privacy = cfg.get("upload_privacy", "unlisted")
-    privacy_idx = privacy_options.index(current_privacy) if current_privacy in privacy_options else 0
-    selected_privacy = st.selectbox("공개 설정", privacy_options, index=privacy_idx)
+    _stored_privacy = st.session_state.get("set_upload_privacy", "unlisted")
+    privacy_idx = privacy_options.index(_stored_privacy) if _stored_privacy in privacy_options else 0
+    selected_privacy = st.selectbox("공개 설정", privacy_options, index=privacy_idx, key="set_upload_privacy")
 
     st.divider()
 
@@ -1991,7 +2019,7 @@ with tab_settings:
 
     auto_upload_on = st.checkbox(
         "자동 업로드 활성화",
-        value=cfg.get("auto_upload", "false") == "true",
+        key="set_auto_upload",
         help="활성화 시 고화질 렌더링 완료 즉시 자동으로 플랫폼에 업로드됩니다.",
     )
 
@@ -2003,7 +2031,7 @@ with tab_settings:
 
     auto_approve_on = st.checkbox(
         "자동 승인 활성화",
-        value=cfg.get("auto_approve_enabled") == "true",
+        key="set_auto_approve",
         help="활성화 시 수신함 로드마다 임계값 이상 게시글이 자동 승인됩니다.",
     )
     if auto_approve_on:
@@ -2015,8 +2043,8 @@ with tab_settings:
         "자동 승인 임계값 (Engagement Score)",
         min_value=0,
         max_value=100,
-        value=int(cfg.get("auto_approve_threshold", "80")),
         step=5,
+        key="set_auto_approve_threshold",
         help="이 점수 이상인 게시글이 자동 승인됩니다. 80점 권장.",
     )
 
@@ -2030,27 +2058,37 @@ with tab_settings:
     )
     use_content_processor = st.checkbox(
         "content_processor 사용 (5-Phase 파이프라인)",
-        value=cfg.get("use_content_processor") == "true",
+        key="set_use_content_processor",
         help="비활성화 시 기존 generate_script() 경로(레거시)를 사용합니다.",
     )
 
     st.divider()
 
-    # 저장 버튼 (파이프라인 설정만)
-    if st.button("💾 파이프라인 설정 저장", type="primary"):
-        new_cfg = {
-            "tts_engine": selected_engine,
-            "tts_voice": selected_voice,
-            "llm_model": llm_model,
-            "upload_platforms": json.dumps(selected_platforms),
-            "upload_privacy": selected_privacy,
-            "auto_upload": "true" if auto_upload_on else "false",
-            "auto_approve_enabled": "true" if auto_approve_on else "false",
-            "auto_approve_threshold": str(auto_approve_thresh),
-            "use_content_processor": "true" if use_content_processor else "false",
-        }
-        save_pipeline_config(new_cfg)
-        st.success("✅ 설정이 저장되었습니다.")
+    # 저장 / 기본값 복원 버튼
+    _save_col, _reset_col = st.columns(2)
+    with _save_col:
+        if st.button("💾 설정 저장", type="primary", key="save_settings_btn", width="stretch"):
+            _new_cfg = {
+                "tts_engine": selected_engine,
+                "tts_voice": selected_voice,
+                "llm_model": st.session_state.get("set_llm_model", "qwen2.5:14b"),
+                "upload_platforms": json.dumps(st.session_state.get("set_upload_platforms", ["youtube"])),
+                "upload_privacy": st.session_state.get("set_upload_privacy", "unlisted"),
+                "auto_upload": "true" if st.session_state.get("set_auto_upload") else "false",
+                "auto_approve_enabled": "true" if st.session_state.get("set_auto_approve") else "false",
+                "auto_approve_threshold": str(st.session_state.get("set_auto_approve_threshold", 80)),
+                "use_content_processor": "true" if st.session_state.get("set_use_content_processor") else "false",
+            }
+            # tts_voice는 label selectbox에서 추출한 값을 session_state에 동기화
+            st.session_state["set_tts_voice"] = selected_voice
+            save_pipeline_config(_new_cfg)
+            st.success("✅ 설정이 저장되었습니다.")
+    with _reset_col:
+        if st.button("↩️ 기본값 복원", key="restore_defaults_btn", width="stretch"):
+            # 위젯 key 수정은 렌더 전에만 가능 → pending 플래그 세팅 후 rerun
+            save_pipeline_config(get_pipeline_defaults())
+            st.session_state["_settings_reset_pending"] = True
+            st.rerun()
 
     st.divider()
 
@@ -2145,6 +2183,15 @@ with tab_llm_log:
 
         _logs = _fq.order_by(LLMLog.created_at.desc()).limit(200).all()
 
+        # 로그에 연결된 Post 일괄 조회 (헤더 표시용)
+        _post_ids = {_l.post_id for _l in _logs if _l.post_id is not None}
+        _posts_map: dict[int, Post] = {}
+        if _post_ids:
+            _posts_map = {
+                p.id: p
+                for p in _db.query(Post).filter(Post.id.in_(_post_ids)).all()
+            }
+
     # 통계 카드
     _sc1, _sc2, _sc3 = st.columns(3)
     _sc1.metric("총 호출 (기간)", _total_period)
@@ -2162,12 +2209,13 @@ with tab_llm_log:
         st.caption(f"최근 {filter_days}일 이력 (최대 200건 표시)")
         for _log in _logs:
             _icon = "✅" if _log.success else "❌"
-            _strat = _log.strategy or "-"
+            _post = _posts_map.get(_log.post_id) if _log.post_id else None
+            _site = _post.site_code if _post else "-"
+            _title = (_post.title[:30] + "…") if _post and len(_post.title) > 30 else (_post.title if _post else "-")
+            _img_count = len(_post.images) if _post and isinstance(_post.images, list) else 0
             _hdr = (
                 f"{_icon} #{_log.id} "
-                f"[{_log.call_type}] "
-                f"{to_kst(_log.created_at)} | "
-                f"전략={_strat} | 이미지={_log.image_count}장 | {_log.duration_ms}ms"
+                f"{_site} | {_title} | 이미지 {_img_count}장"
             )
             with st.expander(_hdr):
                 _mc, _rc = st.columns(2)
