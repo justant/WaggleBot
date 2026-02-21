@@ -1041,14 +1041,15 @@ with tab_editor:
     # ---------------------------------------------------------------------------
     if "editor_idx" not in st.session_state:
         st.session_state["editor_idx"] = 0
+    if "auto_generating_posts" not in st.session_state:
+        st.session_state["auto_generating_posts"] = set()
 
     with SessionLocal() as session:
-        approved_posts = (
-            session.query(Post)
-            .filter(Post.status == PostStatus.EDITING)
-            .order_by(Post.created_at.desc())
-            .all()
-        )
+        _excl_ids = st.session_state["auto_generating_posts"]
+        _posts_q = session.query(Post).filter(Post.status == PostStatus.EDITING)
+        if _excl_ids:
+            _posts_q = _posts_q.filter(Post.id.notin_(_excl_ids))
+        approved_posts = _posts_q.order_by(Post.created_at.desc()).all()
 
         if not approved_posts:
             st.info("✏️ 편집 대기 게시글이 없습니다. 수신함에서 먼저 승인하세요.")
@@ -1079,40 +1080,55 @@ with tab_editor:
                     st.rerun()
             with skip_col:
                 if st.button("🤖 자동생성", width="stretch",
-                             help="AI가 대본을 자동 생성하고 영상 생성 대기열로 이동합니다"):
+                             help="AI가 대본을 자동 생성하고 영상 생성 대기열로 이동합니다 (백그라운드 처리)"):
                     if not _check_ollama_health():
                         st.error("❌ LLM 서버에 연결할 수 없습니다.")
                     else:
-                        with st.spinner("AI 대본 자동 생성 중..."):
+                        import threading as _threading
+                        _auto_post = approved_posts[idx]
+                        _auto_pid = _auto_post.id
+                        _auto_title = _auto_post.title
+                        _auto_body = _auto_post.content or ""
+                        _auto_best = sorted(
+                            _auto_post.comments, key=lambda c: c.likes, reverse=True
+                        )[:5]
+                        _auto_cmts = [f"{c.author}: {c.content[:100]}" for c in _auto_best]
+                        _auto_model = load_pipeline_config().get("llm_model")
+
+                        def _bg_auto_generate(
+                            _pid=_auto_pid, _title=_auto_title, _body=_auto_body,
+                            _cmts=_auto_cmts, _model=_auto_model,
+                        ):
+                            import logging as _logging
+                            _log = _logging.getLogger(__name__)
                             try:
                                 from ai_worker.llm.client import generate_script as _gs
-                                _auto_post = approved_posts[idx]
-                                _auto_best = sorted(
-                                    _auto_post.comments, key=lambda c: c.likes, reverse=True
-                                )[:5]
-                                _auto_script = _gs(
-                                    title=_auto_post.title,
-                                    body=_auto_post.content or "",
-                                    comments=[f"{c.author}: {c.content[:100]}" for c in _auto_best],
-                                    model=load_pipeline_config().get("llm_model"),
-                                    post_id=_auto_post.id,
+                                _script = _gs(
+                                    title=_title,
+                                    body=_body,
+                                    comments=_cmts,
+                                    model=_model,
+                                    post_id=_pid,
                                 )
-                                with SessionLocal() as _aws:
-                                    _acr = _aws.query(Content).filter(
-                                        Content.post_id == _auto_post.id
+                                with SessionLocal() as _db:
+                                    _cr = _db.query(Content).filter(
+                                        Content.post_id == _pid
                                     ).first()
-                                    if _acr is None:
-                                        _acr = Content(post_id=_auto_post.id)
-                                        _aws.add(_acr)
-                                    _acr.summary_text = _auto_script.to_json()
-                                    _apost = _aws.get(Post, _auto_post.id)
-                                    if _apost:
-                                        _apost.status = PostStatus.APPROVED
-                                    _aws.commit()
-                                st.session_state["editor_idx"] = max(0, idx - 1)
-                                st.rerun()
-                            except Exception as _ae:
-                                st.error(f"자동 생성 실패: {_ae}")
+                                    if _cr is None:
+                                        _cr = Content(post_id=_pid)
+                                        _db.add(_cr)
+                                    _cr.summary_text = _script.to_json()
+                                    _p = _db.get(Post, _pid)
+                                    if _p:
+                                        _p.status = PostStatus.APPROVED
+                                    _db.commit()
+                            except Exception as _ex:
+                                _log.error(f"자동생성 백그라운드 실패 post_id={_pid}: {_ex}")
+
+                        _threading.Thread(target=_bg_auto_generate, daemon=True).start()
+                        st.session_state["auto_generating_posts"].add(_auto_pid)
+                        st.session_state["editor_idx"] = max(0, idx - 1)
+                        st.rerun()
 
             selected_post = approved_posts[idx]
             selected_post_id = selected_post.id
