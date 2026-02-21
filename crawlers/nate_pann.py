@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -11,6 +12,11 @@ from crawlers.plugin_manager import CrawlerRegistry
 log = logging.getLogger(__name__)
 
 POST_BASE = "https://pann.nate.com/talk/"
+
+# 트래킹 픽셀 및 URL 단축 도메인 — 실제 콘텐츠 이미지가 아니므로 수집 제외
+_TRACKER_DOMAINS: frozenset[str] = frozenset({
+    "nate.zza.kr",
+})
 
 
 @CrawlerRegistry.register(
@@ -88,8 +94,12 @@ class NatePannCrawler(BaseCrawler):
         if content_area:
             for img in content_area.select("img"):
                 src = img.get("src") or img.get("data-src") or ""
-                if src and src.startswith("http"):
-                    images.append(src)
+                if not src or not src.startswith("http"):
+                    continue
+                if urlparse(src).hostname in _TRACKER_DOMAINS:
+                    log.debug("트래킹 픽셀 제외: %s", src)
+                    continue
+                images.append(src)
 
         views_el = soup.select_one("div.post-tit-info div.info span.count")
         views = self._parse_int(self._text(views_el).replace("조회", ""))
