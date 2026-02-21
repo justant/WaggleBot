@@ -18,7 +18,7 @@ BASE_URL = "https://m.bobaedream.co.kr"
     description="보배드림 베스트 게시글 크롤러",
     enabled=True,
 )
-class BobaedrreamCrawler(BaseCrawler):
+class BobaedreamCrawler(BaseCrawler):
     site_code = "bobaedream"
     SECTIONS = [
         {"name": "자유게시판 베스트", "url": "https://m.bobaedream.co.kr/board/best/freeb"},
@@ -94,7 +94,10 @@ class BobaedrreamCrawler(BaseCrawler):
         # 후미 "(댓글수)" 레이블 제거
         title = re.sub(r"\(\d+\).*$", "", title).strip()
 
-        body_el = soup.select_one("div#body_frame")
+        body_el = (
+            soup.select_one("div#body_frame")
+            or soup.select_one("div.article-body")
+        )
         content = body_el.get_text("\n", strip=True) if body_el else ""
 
         images: list[str] = []
@@ -130,62 +133,34 @@ class BobaedrreamCrawler(BaseCrawler):
         }
 
     # ------------------------------------------------------------------
-    # Comments (AJAX)
+    # Comments (페이지 HTML 직접 파싱)
     # ------------------------------------------------------------------
 
     def _fetch_comments(self, soup: BeautifulSoup, post_url: str) -> list[dict]:
-        """JS comment_call() 인자를 파싱해 댓글 AJAX 엔드포인트를 호출."""
-        match = re.search(
-            r"comment_call\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'(\d+)'",
-            str(soup),
-        )
-        if not match:
-            log.debug("comment_call not found in %s", post_url)
+        """페이지 HTML의 div.reple_body에서 댓글을 직접 파싱한다."""
+        reple_body = soup.select_one("div.reple_body")
+        if not reple_body:
+            log.debug("reple_body not found in %s", post_url)
             return []
 
-        table = match.group(1)    # e.g. uni_cmt_2602
-        board = match.group(2)    # e.g. freeb
-        post_id = match.group(3)  # e.g. 3372254
+        return self._parse_comments(reple_body)
 
-        comment_url = (
-            f"{BASE_URL}/board/comment_call/"
-            f"{table}/{board}/{post_id}/{board}/{post_id}"
-        )
-
-        try:
-            resp = self._get(comment_url)
-        except requests.RequestException:
-            log.warning("Failed to fetch comments from %s", comment_url)
-            return []
-
-        return self._parse_comments(BeautifulSoup(resp.content, "html.parser"))
-
-    def _parse_comments(self, soup: BeautifulSoup) -> list[dict]:
+    def _parse_comments(self, container: BeautifulSoup) -> list[dict]:
         results: list[dict] = []
 
-        for li in soup.select("li"):
-            author_el = (
-                li.select_one("span.nick")
-                or li.select_one("span.author")
-                or li.select_one("[class*='name']")
-            )
-            content_el = (
-                li.select_one("p.txt")
-                or li.select_one("p.content")
-                or li.select_one("span.txt")
-                or li.select_one("[class*='content']")
-            )
-            likes_el = (
-                li.select_one("[class*='reco']")
-                or li.select_one("span.likes")
-                or li.select_one("[class*='good']")
-            )
+        for li in container.select("li"):
+            author_el = li.select_one("span.data4")
+            reply_el = li.select_one("div.reply")
+            likes_el = li.select_one("button.good")
 
-            if not author_el or not content_el:
+            if not author_el or not reply_el:
                 continue
 
             author = author_el.get_text(strip=True)
-            content = content_el.get_text(strip=True)
+            # div.reply 내 ico3 스팬("베플" 라벨) 제거 후 텍스트 추출
+            for ico in reply_el.select("span.ico3"):
+                ico.decompose()
+            content = reply_el.get_text(strip=True)
             if not author or not content:
                 continue
 

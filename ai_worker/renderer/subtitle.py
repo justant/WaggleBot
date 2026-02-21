@@ -183,9 +183,20 @@ def _is_comment_sentence(text: str) -> bool:
 # ASS 파일 빌더
 # ---------------------------------------------------------------------------
 
+def _flatten_body(body: list) -> list[str]:
+    """v2 dict body ([{"lines": [...]}]) → list[str] 변환. str 요소는 그대로 유지."""
+    result: list[str] = []
+    for item in body:
+        if isinstance(item, dict):
+            result.append(" ".join(item.get("lines", [])))
+        else:
+            result.append(str(item))
+    return result
+
+
 def build_ass(
     hook: str,
-    body: list[str],
+    body: list,
     closer: str,
     duration: float,
     mood: str,
@@ -214,7 +225,7 @@ def build_ass(
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    sentences = [hook] + list(body) + [closer]
+    sentences = [hook] + _flatten_body(body) + [closer]
     timings   = _proportional_timings(sentences, duration)
 
     dialogues: list[str] = []
@@ -258,7 +269,7 @@ def build_ass(
 
 def get_comment_timings(
     hook: str,
-    body: list[str],
+    body: list,
     closer: str,
     duration: float,
 ) -> list[tuple[float, float]]:
@@ -266,7 +277,7 @@ def get_comment_timings(
 
     video.py에서 shake 효과 및 효과음 타이밍 계산에 사용된다.
     """
-    sentences = [hook] + list(body) + [closer]
+    sentences = [hook] + _flatten_body(body) + [closer]
     timings = _proportional_timings(sentences, duration)
 
     result: list[tuple[float, float]] = []

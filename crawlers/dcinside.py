@@ -159,9 +159,9 @@ class DcInsideCrawler(BaseCrawler):
         page_text = soup.get_text()
         views = self._parse_stat(page_text, r"조회\s*([\d,]+)")
         recommend_el = (
-            soup.select_one("span.vote_r_btn")
+            soup.select_one("p.up_num")
+            or soup.select_one("span.vote_r_btn")
             or soup.select_one("em.up_num")
-            or soup.select_one("[class*='recommend']")
         )
         likes = (
             self._parse_int(recommend_el.get_text(strip=True))
@@ -221,17 +221,21 @@ class DcInsideCrawler(BaseCrawler):
     def _parse_comments(self, soup: BeautifulSoup) -> list[dict]:
         results: list[dict] = []
 
-        for li in soup.select("li.ub-content"):
+        # PC: li.ub-content, 모바일 AJAX: li.comment
+        comment_items = soup.select("li.ub-content") or soup.select("li.comment")
+
+        for li in comment_items:
             author_el = (
                 li.select_one("span.nickname em")
+                or li.select_one("a.nick")
                 or li.select_one("span.nick")
                 or li.select_one("[class*='nick']")
             )
             content_el = (
                 li.select_one("span.usertxt_in")
                 or li.select_one("p.usertxt_in")
-                or li.select_one("[class*='usertxt']")
                 or li.select_one("p.txt")
+                or li.select_one("[class*='usertxt']")
             )
             likes_el = (
                 li.select_one("span.rcnt")

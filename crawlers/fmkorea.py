@@ -142,8 +142,10 @@ class FMKoreaCrawler(BaseCrawler):
         # JS 변수에서 document_srl과 mid 추출
         doc_srl, mid = self._extract_js_vars(str(soup))
 
-        # 댓글
+        # 댓글: AJAX API 시도 → 실패 시 페이지 HTML에서 직접 파싱
         comments = self._fetch_comments(doc_srl, mid)
+        if not comments:
+            comments = self._parse_comments(soup)
         comment_count = len(comments)
         cm = re.search(r"댓글\s*[\(\[]?\s*(\d+)", page_text)
         if cm:

@@ -74,15 +74,15 @@
 
 ### 도메인 소유권 테이블
 
-| 도메인 (디렉토리) | 소유 Agent | 권한 | 비고 |
-|---|---|---|---|
-| `ai_worker/` 중 **pipeline 계열** | 🧠 Agent A | Write | llm, tts, text, nlp, chunker, scene, content, resource 키워드 파일 |
-| `ai_worker/` 중 **render 계열** | 🎨 Agent B | Write | layout, render, video, gpu, codec 키워드 파일 |
-| `assets/` | 🎨 Agent B | Write | 레이아웃 이미지, BGM, 폰트 |
-| `crawlers/`, `config/crawler.py` | 🕷️ Agent C | Write | 크롤러 전체 + 크롤러 전용 설정 |
-| `dashboard.py`, `analytics/`, `uploaders/`, `monitoring/`, `config/monitoring.py`, `config/pipeline.json` | 🖥️ Agent D | Write | UI/UX, 업로더, 모니터링 전체 |
-| `db/`, `config/settings.py`, `config/layout.json`*, `arch/`, `main.py`, `README.md`, `requirements.txt` | 🎯 Team Lead | **Proposal** | CEO 승인 필수 |
-| `.env`, `docker-compose*.yml`, `CLAUDE.md` | 👑 CEO | **직접 수정** | Agent 접근 절대 금지 |
+| 도메인 (디렉토리)                                                                                               | 소유 Agent | 권한 | 비고 |
+|----------------------------------------------------------------------------------------------------------|---|---|---|
+| `ai_worker/` 중 **pipeline 계열**                                                                           | 🧠 Agent A | Write | llm, tts, text, nlp, chunker, scene, content, resource 키워드 파일 |
+| `ai_worker/` 중 **render 계열**                                                                             | 🎨 Agent B | Write | layout, render, video, gpu, codec 키워드 파일 |
+| `assets/`                                                                                                | 🎨 Agent B | Write | 레이아웃 이미지, BGM, 폰트 |
+| `crawlers/`, `config/crawler.py`                                                                         | 🕷️ Agent C | Write | 크롤러 전체 + 크롤러 전용 설정 |
+| `dashboard/`, `analytics/`, `uploaders/`, `monitoring/`, `config/monitoring.py`, `config/pipeline.json` | 🖥️ Agent D | Write | UI/UX, 업로더, 모니터링 전체 |
+| `db/`, `config/settings.py`, `config/layout.json`*, `arch/`, `main.py`, `README.md`, `requirements.txt`  | 🎯 Team Lead | **Proposal** | CEO 승인 필수 |
+| `.env`, `docker-compose*.yml`, `CLAUDE.md`                                                               | 👑 CEO | **직접 수정** | Agent 접근 절대 금지 |
 
 > \* `config/layout.json`은 Agent B가 읽고 소비하지만, 레이아웃 좌표 변경은 전체 렌더 결과에 영향을 미치므로 Proposal 대상. 단순 값 조정(기존 필드 내 수치 변경)은 Agent B가 직접 수정 가능.
 
