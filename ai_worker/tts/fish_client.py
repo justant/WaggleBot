@@ -9,9 +9,15 @@ import json
 import logging
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import httpx
+
+# Fish Speech 서버는 단일 GPU 모델이므로 동시 요청을 처리하지 못한다.
+# render_stage(스레드 풀)와 llm_tts_stage(메인 이벤트 루프)가 동시에 요청을 보내면
+# baize.ClientDisconnect 오류가 발생하므로, threading.Lock으로 전역 직렬화한다.
+_FISH_SPEECH_LOCK = threading.Lock()
 
 from config.settings import (
     EMOTION_TAGS,
@@ -334,17 +340,25 @@ async def synthesize(
         read=FISH_SPEECH_TIMEOUT,
         pool=5.0,
     )
-    async with httpx.AsyncClient(timeout=_timeout) as client:
-        resp = await client.post(
-            f"{FISH_SPEECH_URL}/v1/tts",
-            json={
-                "text": final_text,
-                "format": TTS_OUTPUT_FORMAT,
-                "references": references,
-            },
-        )
-        resp.raise_for_status()
-        output_path.write_bytes(resp.content)
+    # render_stage(스레드 풀)와 llm_tts_stage(메인 루프)가 동시에 fish-speech에
+    # 요청을 보내면 ClientDisconnect가 발생한다. run_in_executor로 블로킹 락
+    # 획득을 이벤트 루프 밖으로 위임해 직렬화한다.
+    _loop = asyncio.get_running_loop()
+    await _loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
+    try:
+        async with httpx.AsyncClient(timeout=_timeout) as client:
+            resp = await client.post(
+                f"{FISH_SPEECH_URL}/v1/tts",
+                json={
+                    "text": final_text,
+                    "format": TTS_OUTPUT_FORMAT,
+                    "references": references,
+                },
+            )
+            resp.raise_for_status()
+            output_path.write_bytes(resp.content)
+    finally:
+        _FISH_SPEECH_LOCK.release()
 
     _post_process_audio(output_path)
 
@@ -378,15 +392,20 @@ async def _warmup_model() -> None:
         read=FISH_SPEECH_TIMEOUT,
         pool=5.0,
     )
-    async with httpx.AsyncClient(timeout=_timeout) as client:
-        try:
-            await client.post(
-                f"{FISH_SPEECH_URL}/v1/tts",
-                json={"text": "안녕하세요.", "format": TTS_OUTPUT_FORMAT, "references": references},
-            )
-            logger.info("Fish Speech 모델 웜업 완료")
-        except Exception as exc:
-            logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
+    _loop = asyncio.get_running_loop()
+    await _loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
+    try:
+        async with httpx.AsyncClient(timeout=_timeout) as client:
+            try:
+                await client.post(
+                    f"{FISH_SPEECH_URL}/v1/tts",
+                    json={"text": "안녕하세요.", "format": TTS_OUTPUT_FORMAT, "references": references},
+                )
+                logger.info("Fish Speech 모델 웜업 완료")
+            except Exception as exc:
+                logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
+    finally:
+        _FISH_SPEECH_LOCK.release()
 
 
 async def wait_for_fish_speech(retries: int = 10, delay: float = 5.0) -> bool:
