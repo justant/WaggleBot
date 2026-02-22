@@ -184,9 +184,11 @@ class ScriptData:
 
     ai_worker/llm.py에서 생성하고 Content.summary_text에 JSON으로 저장.
 
-    body 포맷 (v2): [{"line_count": int, "lines": list[str]}, ...]
-      - lines 요소는 각 21자 이내 (렌더러 슬롯 한 줄에 대응)
-      - 하위 호환: from_json에서 str 항목 → dict 자동 변환
+    body 포맷 (v2): [{"type": str, "line_count": int, "lines": list[str], "author"?: str}, ...]
+      - type: "body" (본문) 또는 "comment" (베스트 댓글). 기본값 "body".
+      - author: comment 타입 전용, 댓글 작성자 닉네임. 없으면 None.
+      - lines 요소는 각 15~20자 내외 의미 단위 (렌더러 슬롯 한 줄에 대응)
+      - 하위 호환: type 필드 없는 기존 데이터는 "body"로 처리
     """
     hook: str
     body: list[dict]
@@ -199,7 +201,10 @@ class ScriptData:
         texts = [self.hook]
         for item in self.body:
             if isinstance(item, dict):
-                texts.append(" ".join(item.get("lines", [])))
+                line_text = " ".join(item.get("lines", []))
+                if item.get("type") == "comment" and item.get("author"):
+                    line_text = f"{item['author']}: {line_text}"
+                texts.append(line_text)
             else:
                 texts.append(str(item))
         texts.append(self.closer)

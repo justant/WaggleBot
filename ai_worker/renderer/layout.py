@@ -399,7 +399,7 @@ def _render_img_text_frame(
 
 def _render_text_only_frame(
     base_frame: Image.Image,
-    text_history: list[dict],   # [{"lines": list[str], "is_new": bool}]
+    text_history: list[dict],   # [{"lines": list[str], "is_new": bool, "block_type": str, "author": str|None}]
     layout: dict,
     font_dir: Path,
     out_path: Path,
@@ -408,16 +408,21 @@ def _render_text_only_frame(
 
     슬롯 간격은 len(lines) × (line_height + slot_gap)으로 동적 계산.
     1줄 슬롯: 150px 전진, 2줄 슬롯: 300px 전진.
+    comment 타입은 닉네임 + 다른 색상으로 시각 구분.
     """
     sc = layout["scenes"]["text_only"]
     ta = sc["elements"]["text_area"]
 
     font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
+    author_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", max(int(ta["font_size"] * 0.55), 20))
     lh: int = ta.get("line_height", 120)
     slot_gap: int = ta.get("slot_gap", 5)
     new_color: str = ta.get("color", "#000000")
     prev_color: str = ta.get("prev_text_color", "#888888")
-    y_start: int = ta.get("y_coords", [550])[0]  # 첫 번째 y만 기준점으로 사용
+    comment_color: str = "#00BCD4"       # 댓글 본문: 청록색
+    comment_prev_color: str = "#5E9EA0"  # 댓글 이전: 흐린 청록
+    author_color: str = "#9E9E9E"        # 닉네임: 회색
+    y_start: int = ta.get("y_coords", [550])[0]
     cw = layout["canvas"]["width"]
 
     img = base_frame.copy()
@@ -425,8 +430,27 @@ def _render_text_only_frame(
 
     current_y = y_start
     for entry in text_history:
-        color = new_color if entry.get("is_new") else prev_color
+        is_new = entry.get("is_new", False)
+        block_type = entry.get("block_type", "body")
+        author = entry.get("author")
         slot_y = current_y
+
+        # comment 타입: 닉네임을 먼저 표시
+        if block_type == "comment" and author:
+            author_text = f"@{author}"
+            try:
+                aw = author_font.getlength(author_text)
+            except AttributeError:
+                aw = author_font.getbbox(author_text)[2]
+            ax = int((cw - aw) / 2)
+            draw.text((ax, slot_y), author_text, font=author_font, fill=author_color)
+            slot_y += int(lh * 0.55)
+
+        # 본문/댓글 텍스트 색상 결정
+        if block_type == "comment":
+            color = comment_color if is_new else comment_prev_color
+        else:
+            color = new_color if is_new else prev_color
 
         for line_text in entry["lines"]:
             try:
@@ -435,10 +459,11 @@ def _render_text_only_frame(
                 lw = font.getbbox(line_text)[2]
             cx = int((cw - lw) / 2)
             draw.text((cx, slot_y), line_text, font=font, fill=color)
-            slot_y += lh   # 슬롯 내 래핑 줄은 line_height씩 아래로 쌓임
+            slot_y += lh
 
-        # 다음 슬롯 시작 y: 줄 수 × (line_height + slot_gap)
-        current_y += len(entry["lines"]) * (lh + slot_gap)
+        # 다음 슬롯 시작 y: 줄 수 × (line_height + slot_gap) + 닉네임 여분
+        author_extra = int(lh * 0.55) if (block_type == "comment" and author) else 0
+        current_y += len(entry["lines"]) * (lh + slot_gap) + author_extra
 
     img.save(str(out_path), "PNG")
     return out_path
@@ -822,7 +847,12 @@ def _scenes_to_plan_and_sentences(
         elif scene.type == "img_text":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
+            sentences.append({
+                "text": text, "section": "body", "audio": audio,
+                "voice_override": scene.voice_override,
+                "block_type": getattr(scene, "block_type", "body"),
+                "author": getattr(scene, "author", None),
+            })
             plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
 
         elif scene.type == "text_only":
@@ -830,7 +860,12 @@ def _scenes_to_plan_and_sentences(
             for line in scene.text_lines:
                 text, audio = _unpack_line(line)
                 sent_idx = len(sentences)
-                sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
+                sentences.append({
+                    "text": text, "section": "body", "audio": audio,
+                    "voice_override": scene.voice_override,
+                    "block_type": getattr(scene, "block_type", "body"),
+                    "author": getattr(scene, "author", None),
+                })
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
 
         elif scene.type == "img_only":
@@ -976,7 +1011,13 @@ def _render_pipeline(
                                        frame_idx, len(new_lines))
                     text_only_history = []
 
-                text_only_history.append({"lines": new_lines, "is_new": True})
+                sent_data = sentences[sent_idx] if sent_idx is not None else {}
+                text_only_history.append({
+                    "lines": new_lines,
+                    "is_new": True,
+                    "block_type": sent_data.get("block_type", "body"),
+                    "author": sent_data.get("author"),
+                })
                 _render_text_only_frame(base_frame, text_only_history, layout, font_dir, frame_path)
 
             elif scene_type == "img_only":
@@ -1149,17 +1190,28 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     sentences.append({"text": script.hook, "section": "hook"})
     for body_item in script.body:
         if isinstance(body_item, dict):
-            # 새 포맷: {"line_count": N, "lines": [...]}
             pre_split_lines: list[str] | None = body_item.get("lines")
             body_text = " ".join(pre_split_lines) if pre_split_lines else ""
+            block_type = body_item.get("type", "body")
+            author = body_item.get("author")
         else:
-            # 하위 호환: str 항목
             body_text = str(body_item)
             pre_split_lines = None
-        is_quote = any(q in body_text for q in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d"))
-        sent: dict = {"text": body_text, "section": "comment" if is_quote else "body"}
+            block_type = "body"
+            author = None
+
+        is_quote = block_type == "comment" or any(
+            q in body_text for q in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d")
+        )
+        sent: dict = {
+            "text": body_text,
+            "section": "comment" if is_quote else "body",
+            "block_type": block_type,
+        }
+        if author:
+            sent["author"] = author
         if pre_split_lines:
-            sent["lines"] = pre_split_lines  # Step 7에서 재계산 스킵
+            sent["lines"] = pre_split_lines
         sentences.append(sent)
     sentences.append({"text": script.closer, "section": "closer"})
 

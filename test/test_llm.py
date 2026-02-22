@@ -5,9 +5,9 @@ generate_script()를 실행하고, LLM 입력 프롬프트와 원시 응답을
 test_llm_output/ 에 txt로 저장합니다.
 
 케이스:
-  1) 본문 1000자 이상 (최신 기준)
-  2) 이미지 8개 이상 (본문 길이 무관)
-  3) 제목 10자 이상이지만 본문 10자 미만
+  1) 본문 500자 이상 (긴 서사 — 분량 유지 검증)
+  2) 이미지 8개 이상 (이미지 다수 — 이미지+텍스트 배분 검증)
+  3) 댓글 5개 이상 (comment 타입 분리 검증)
 
 사용법:
     python test/test_llm.py
@@ -22,8 +22,9 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from sqlalchemy import func, or_
+from sqlalchemy.orm import selectinload
 
-from db.models import LLMLog, Post
+from db.models import Comment, LLMLog, Post
 from db.session import SessionLocal
 from ai_worker.llm.client import generate_script, _SCRIPT_PROMPT_V2
 
@@ -112,10 +113,28 @@ def _write_result(
             f.write(f"closer : {script.closer}\n")
             f.write(f"title  : {script.title_suggestion}\n")
             f.write(f"tags   : {script.tags}\n\n")
+
+            # 검증 카운터
+            body_count = sum(1 for b in script.body if b.get("type", "body") == "body")
+            comment_count = sum(1 for b in script.body if b.get("type") == "comment")
+            f.write(f"body 블록: {body_count}개 / comment 블록: {comment_count}개\n\n")
+
             f.write("body:\n")
-            for block in script.body:
-                for line in block.get("lines", []):
-                    f.write(f"  - {line}\n")
+            for idx, block in enumerate(script.body):
+                block_type = block.get("type", "body")
+                author = block.get("author", "")
+                lines = block.get("lines", [])
+                line_count = block.get("line_count", len(lines))
+
+                if block_type == "comment":
+                    f.write(f"  [{idx}] type=comment  author={author}  line_count={line_count}\n")
+                else:
+                    f.write(f"  [{idx}] type=body  line_count={line_count}\n")
+
+                for line in lines:
+                    char_count = len(line)
+                    warn = " ⚠️ >20자" if char_count > 20 else ""
+                    f.write(f"       - ({char_count:>2}자) {line}{warn}\n")
         else:
             f.write(f"오류: {error_msg}\n")
 
@@ -124,35 +143,42 @@ def _fetch_test_posts(db) -> list[tuple[str, Post]]:
     """3가지 케이스별로 게시글을 1개씩 조회한다. 중복 post_id는 제거."""
     cases: list[tuple[str, Post | None]] = []
 
-    # 케이스 1: 본문 1000자 이상 (최신 기준)
+    # 케이스 1: 본문 500자 이상 (긴 서사 — 분량 유지 검증)
     c1 = (
         db.query(Post)
-        .filter(func.char_length(Post.content) >= 1000)
+        .options(selectinload(Post.comments))
+        .filter(func.char_length(Post.content) >= 500)
         .order_by(Post.created_at.desc())
         .first()
     )
-    cases.append(("case1_본문1000자이상", c1))
+    cases.append(("case1_본문500자이상", c1))
 
-    # 케이스 2: 이미지 8개 이상 (본문 무관)
+    # 케이스 2: 이미지 8개 이상
     c2 = (
         db.query(Post)
+        .options(selectinload(Post.comments))
         .filter(func.json_length(Post.images) >= 8)
         .order_by(Post.created_at.desc())
         .first()
     )
     cases.append(("case2_이미지8개이상", c2))
 
-    # 케이스 3: 제목 10자 이상 & 본문 10자 미만 (없거나 짧음)
+    # 케이스 3: 댓글 5개 이상 (comment 타입 분리 검증)
+    from sqlalchemy import select
+    comment_count_sub = (
+        select(Comment.post_id, func.count(Comment.id).label("cnt"))
+        .group_by(Comment.post_id)
+        .having(func.count(Comment.id) >= 5)
+        .subquery()
+    )
     c3 = (
         db.query(Post)
-        .filter(
-            func.char_length(Post.title) >= 10,
-            or_(Post.content.is_(None), func.char_length(Post.content) < 10),
-        )
+        .options(selectinload(Post.comments))
+        .join(comment_count_sub, Post.id == comment_count_sub.c.post_id)
         .order_by(Post.created_at.desc())
         .first()
     )
-    cases.append(("case3_제목만있는글", c3))
+    cases.append(("case3_댓글5개이상", c3))
 
     # 중복 제거 (같은 post_id가 여러 케이스에 해당할 경우 첫 케이스만 유지)
     seen: set[int] = set()
