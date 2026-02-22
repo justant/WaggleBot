@@ -84,3 +84,12 @@ with SessionLocal() as db:  # DB 항상 with 블록
 - **공유 파일(db/, config/settings.py 등)** → Write-Proposal 패턴 (Section 5)
 - **새 최상위 디렉토리** → 즉시 중단 + CEO에게 Proposal (Section 6)
 - **ai_worker/ 레거시 플랫 파일 수정 금지** → 패키지 경로(llm/, tts/, renderer/, pipeline/)만 수정
+
+### 필수 프로세스 (절대 누락 금지)
+1. 공유 파일 수정 시: 반드시 `/proposal` 스킬을 사용하여 승인을 요청할 것. 직접 수정 절대 금지.
+2. 작업 완료 시: 작업을 종료하기 전에 반드시 `_result/{작업명}.md` 형식의 결과 보고서를 작성할 것.
+
+### ⚠️ CTO 지시 대응 프로세스 (Absolute Rule)
+사용자(CTO)가 새로운 요구사항(보통 `.md` 파일 참조 지시)을 전달했을 때, **절대 코드를 즉시 수정하거나 개발을 시작하지 마십시오.**
+반드시 가장 먼저 `.claude/prompts/team_lead.md`를 읽고 **[Step 1] 요구사항 분석 및 검증**과 **[Step 2] 작업 실행 제안서 작성** 단계로 돌입해야 합니다.
+`_proposals/`에 계획을 문서화하고 승인을 받기 전까지는 코딩 도구를 사용해서는 안 됩니다.

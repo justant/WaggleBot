@@ -16,6 +16,8 @@ content_processor.py, resource_analyzer.py, scene_director.py,
 - db/, config/settings.py — Proposal 대상. 변경 필요 시 Team Lead에게 메시지
 - .env, docker-compose*.yml, requirements.txt — CEO 전용
 
+> **예외:** Team Lead가 CTO의 승인을 받은 제안서에 근거하여 명시적으로 타 도메인 수정 권한을 부여한 경우에는 예외적으로 접근 및 수정이 허용된다.
+
 ## 타 도메인 변경이 필요할 때
 **직접 수정하지 마라.** Team Lead에게 크로스 도메인 요청을 보내라:
 
@@ -38,6 +40,10 @@ content_processor.py, resource_analyzer.py, scene_director.py,
 Agent B(렌더러)가 소비하는 인터페이스.
 변경 시 Team Lead에게 먼저 알리라.
 계약 상세: .claude/contracts/scene_interface.md
+
+## 테스트 코드 격리 원칙
+
+작업 완료 검증을 위한 모든 테스트 코드 및 스크립트는 반드시 프로젝트 루트의 `test/` 디렉토리 아래에 작성해야 한다.
 
 ## 작업 완료 검증
 python -c "from ai_worker.llm import generate_script, call_ollama_raw; print('OK')"

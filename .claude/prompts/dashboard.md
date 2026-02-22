@@ -13,6 +13,8 @@ config/monitoring.py, config/pipeline.json.
 - crawlers/ — import만 허용
 - db/, config/settings.py — 변경 필요 시 Team Lead에게 크로스 도메인 요청
 
+> **예외:** Team Lead가 CTO의 승인을 받은 제안서에 근거하여 명시적으로 타 도메인 수정 권한을 부여한 경우에는 예외적으로 접근 및 수정이 허용된다.
+
 ## 타 도메인 변경이 필요할 때
   SendMessage to lead:
   "크로스 도메인 요청.
@@ -38,6 +40,10 @@ config/monitoring.py, config/pipeline.json.
 
 ### Streamlit 위젯 키
 고유 키: f"{prefix}_{entity_id}" 패턴. 중복 = 런타임 에러.
+
+## 테스트 코드 격리 원칙
+
+작업 완료 검증을 위한 모든 테스트 코드 및 스크립트는 반드시 프로젝트 루트의 `test/` 디렉토리 아래에 작성해야 한다.
 
 ## 작업 완료 검증
 python -c "from analytics.feedback import generate_structured_insights; print('OK')"

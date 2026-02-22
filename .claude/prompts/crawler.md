@@ -14,6 +14,8 @@ config/crawler.py (크롤러 전용 설정).
 - ai_worker/, uploaders/, dashboard.py, analytics/, monitoring/
 - .env, docker-compose*.yml, requirements.txt
 
+> **예외:** Team Lead가 CTO의 승인을 받은 제안서에 근거하여 명시적으로 타 도메인 수정 권한을 부여한 경우에는 예외적으로 접근 및 수정이 허용된다.
+
 ## 타 도메인 변경이 필요할 때
   SendMessage to lead:
   "크로스 도메인 요청.
@@ -35,6 +37,10 @@ python -c "from crawlers.nate_pann import NatePannCrawler; print('OK')"
 python -c "from crawlers.bobaedream import BobaedreamCrawler; print('OK')"
 python -c "from crawlers.dcinside import DcInsideCrawler; print('OK')"
 python -c "from crawlers.fmkorea import FMKoreaCrawler; print('OK')"
+
+## 테스트 코드 격리 원칙
+
+작업 완료 검증을 위한 모든 테스트 코드 및 스크립트는 반드시 프로젝트 루트의 `test/` 디렉토리 아래에 작성해야 한다.
 
 ## 코드 수정 완료 후
 작업이 끝나면 Team Lead에게 "수정 완료 + 재시작 필요 서비스"를 반드시 보고한다.

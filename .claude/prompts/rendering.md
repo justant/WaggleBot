@@ -22,6 +22,8 @@ assets/ 디렉토리 전체 (레이아웃 이미지, BGM, 폰트).
 - h264_nvenc 관련 코드 — VRAM 차단 이슈
 - db/, config/settings.py — Proposal 대상
 
+> **예외:** Team Lead가 CTO의 승인을 받은 제안서에 근거하여 명시적으로 타 도메인 수정 권한을 부여한 경우에는 예외적으로 접근 및 수정이 허용된다.
+
 ## 타 도메인 변경이 필요할 때
 직접 수정하지 마라. Team Lead에게 크로스 도메인 요청:
 
@@ -40,6 +42,10 @@ SceneDirector.direct()가 반환하는 list[Scene] 소비.
 - RTX 3080 Ti 12GB VRAM. 렌더링 중 TTS 동시 실행 가능
 - gpu_manager.py의 VRAM 체크 로직 반드시 유지
 - 인코딩: _resolve_codec() 결과 따름. 하드코딩 금지
+
+## 테스트 코드 격리 원칙
+
+작업 완료 검증을 위한 모든 테스트 코드 및 스크립트는 반드시 프로젝트 루트의 `test/` 디렉토리 아래에 작성해야 한다.
 
 ## 작업 완료 검증
 python -c "from ai_worker.layout_renderer import render_layout_video_from_scenes; print('OK')"
