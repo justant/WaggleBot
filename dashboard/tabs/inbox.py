@@ -40,6 +40,8 @@ def render() -> None:
         st.session_state["ai_analysis"] = {}
     if "hidden_post_ids" not in st.session_state:
         st.session_state["hidden_post_ids"] = set()
+    if "inbox_page" not in st.session_state:
+        st.session_state["inbox_page"] = 0
 
     inbox_cfg = load_pipeline_config()
     auto_approve_enabled = inbox_cfg.get("auto_approve_enabled") == "true"
@@ -86,6 +88,7 @@ def render() -> None:
         if st.button("🔄 새로고침", width="stretch"):
             # 새로고침 시 hidden_post_ids 초기화 (DB 상태와 동기화)
             st.session_state["hidden_post_ids"] = set()
+            st.session_state["inbox_page"] = 0
             st.rerun()
 
     # 처리 현황 progress bar
@@ -112,6 +115,12 @@ def render() -> None:
             "정렬", ["인기도순", "최신순", "조회수순", "추천수순"], index=0
         )
 
+    # 필터 변경 시 페이지 초기화
+    _current_filters = (tuple(sorted(site_filter)), image_filter, sort_by)
+    if st.session_state.get("_inbox_filters") != _current_filters:
+        st.session_state["_inbox_filters"] = _current_filters
+        st.session_state["inbox_page"] = 0
+
     st.divider()
 
     # ---------------------------------------------------------------------------
@@ -137,6 +146,20 @@ def render() -> None:
             posts = sorted(posts, key=lambda p: (p.stats or {}).get("likes", 0), reverse=True)
         else:
             posts = sorted(posts, key=lambda p: p.created_at or 0, reverse=True)
+
+        # 전체 티어 카운트 (페이지네이션 전)
+        _total_inbox = len(posts)
+        _total_high = sum(1 for p in posts if (p.engagement_score or 0) >= 80)
+        _total_normal = sum(1 for p in posts if 30 <= (p.engagement_score or 0) < 80)
+        _total_low = sum(1 for p in posts if (p.engagement_score or 0) < 30)
+
+        # 페이지네이션 — 초기 이미지/미디어 로딩 최소화
+        _INBOX_PAGE_SIZE = 20
+        _max_page = max(0, (_total_inbox - 1) // _INBOX_PAGE_SIZE) if _total_inbox else 0
+        if st.session_state["inbox_page"] > _max_page:
+            st.session_state["inbox_page"] = _max_page
+        _page = st.session_state["inbox_page"]
+        posts = posts[_page * _INBOX_PAGE_SIZE : (_page + 1) * _INBOX_PAGE_SIZE]
 
         # 댓글 일괄 사전 로드 (N+1 → 1+1 쿼리)
         _all_comments: dict[int, list] = {}
@@ -213,9 +236,10 @@ def render() -> None:
                 st.session_state["selected_posts"] = set()
                 st.rerun()
 
+        _page_info = f" — 페이지 {_page + 1}/{_max_page + 1}" if _total_inbox > _INBOX_PAGE_SIZE else ""
         st.caption(
-            f"총 {len(posts)}건 | 🏆 추천 {len(high_posts)}건 "
-            f"| 📋 일반 {len(normal_posts)}건 | 📉 낮음 {len(low_posts)}건"
+            f"총 {_total_inbox}건 | 🏆 추천 {_total_high}건 "
+            f"| 📋 일반 {_total_normal}건 | 📉 낮음 {_total_low}건{_page_info}"
         )
 
         if not posts:
@@ -457,3 +481,19 @@ def render() -> None:
                 _render_tier(low_posts, "low", _all_comments)
             else:
                 st.caption("해당 게시글 없음")
+
+        # ---------------------------------------------------------------------------
+        # 페이지네이션 컨트롤
+        # ---------------------------------------------------------------------------
+        if _total_inbox > _INBOX_PAGE_SIZE:
+            _ip1, _ip2, _ip3 = st.columns([1, 3, 1])
+            with _ip1:
+                if st.button("◀ 이전", disabled=_page == 0, key="inbox_prev"):
+                    st.session_state["inbox_page"] -= 1
+                    st.rerun()
+            with _ip2:
+                st.caption(f"페이지 {_page + 1} / {_max_page + 1} (전체 {_total_inbox}건)")
+            with _ip3:
+                if st.button("다음 ▶", disabled=_page >= _max_page, key="inbox_next"):
+                    st.session_state["inbox_page"] += 1
+                    st.rerun()

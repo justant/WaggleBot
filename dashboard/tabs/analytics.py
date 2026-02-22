@@ -359,7 +359,7 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
         _itask_running = _insight_tasks.get(period_days, {}).get("status") == "running"
 
         if _itask_running:
-            @st.fragment(run_every="2s")
+            @st.fragment(run_every="10s")
             def _insight_poller() -> None:
                 _t = _insight_tasks.get(period_days)
                 if _t and _t["status"] in ("done", "error"):
@@ -434,7 +434,7 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                     width="stretch",
                     disabled=True,
                 )
-                @st.fragment(run_every="2s")
+                @st.fragment(run_every="5s")
                 def _fb_poller() -> None:
                     if _feedback_task.get("status") in ("done", "error"):
                         st.rerun()

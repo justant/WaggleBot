@@ -36,9 +36,9 @@ def render() -> None:
         PostStatus.FAILED,
     ]
 
-    @st.fragment(run_every="5s")
+    @st.fragment(run_every="20s")
     def _progress_metrics():
-        """진행현황 메트릭 자동 갱신 (5초 간격)."""
+        """진행현황 메트릭 자동 갱신 (20초 간격)."""
         with SessionLocal() as _ms:
             _counts = dict(
                 _ms.query(Post.status, func.count(Post.id))

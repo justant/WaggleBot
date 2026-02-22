@@ -194,9 +194,10 @@ def render() -> None:
                             if thumb_path.exists():
                                 st.image(str(thumb_path), width="stretch")
 
-                        # 영상 플레이어
+                        # 영상 플레이어 (주문형 로드 — 초기 미디어 요청 최소화)
                         if video_path and video_path.exists():
-                            st.video(str(video_path))
+                            if st.checkbox("▶️ 영상 재생", key=f"vid_{content.id}"):
+                                st.video(str(video_path))
                         else:
                             st.caption("영상 파일 없음")
 

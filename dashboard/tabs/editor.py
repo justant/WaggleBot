@@ -669,9 +669,9 @@ def render() -> None:
                         st.error(f"확정 실패: {exc}")
 
     # ── 6. 비동기 작업 상태 모니터 (fragment — 2초마다 이 블록만 조용히 갱신) ────
-    @st.fragment(run_every="2s")
+    @st.fragment(run_every="10s")
     def _task_status_monitor(pid: int) -> None:
-        """LLM / TTS 작업 완료를 2초 간격으로 감지.
+        """LLM / TTS 작업 완료를 10초 간격으로 감지.
         완료 시점에만 전체 rerun을 트리거하고, 그 전까지는 이 fragment만 갱신.
         """
         _l = get_llm_task(pid)
