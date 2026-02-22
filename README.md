@@ -17,6 +17,7 @@
 - **자동 크롤링**: 네이트판·뽐뿌·DC인사이드·FM코리아 인기 게시글 수집 + 시간감쇠 인기도 스코어링
 - **AI 대본**: Ollama LLM 기반 쇼츠 특화 3막 구조 대본 (hook/body/closer)
 - **TTS**: Fish Speech 1.5 (zero-shot 음성 클로닝, 감정 태그 지원)
+- **Mood 기반 씬 연출**: 9가지 감성 톤(humor/touching/horror 등) 프리셋 → 비주얼·BGM·TTS 감정 자동 배분
 - **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 장면 전환, 썸네일 자동 생성
 - **대시보드**: Streamlit 기반 수신함/편집실/갤러리/분석 탭
 - **자동 업로드**: YouTube Shorts + YouTube Analytics 성과 추적
@@ -261,7 +262,8 @@ WaggleBot/
 ├── assets/
 │   ├── backgrounds/                   # 9:16 배경 영상
 │   ├── fonts/
-│   ├── bgm/                           # funny/ serious/ shocking/ heartwarming/
+│   ├── image/                         # Mood별 Intro/Outro 이미지 (anger/controversy/daily/horror/humor/info/sadness/shock/touching)
+│   ├── bgm/                           # Mood별 BGM (9개 카테고리)
 │   └── voices/                        # Fish Speech 참조 오디오 (WAV)
 ├── checkpoints/
 │   └── fish-speech-1.5/               # Fish Speech 모델 파일
@@ -269,12 +271,16 @@ WaggleBot/
 │   ├── settings.py                    # 전역 설정 허브 (도메인별 모듈 re-export)
 │   ├── crawler.py                     # 크롤러 설정 (USER_AGENTS, REQUEST_HEADERS 등)
 │   ├── monitoring.py                  # 모니터링/알림 임계값
-│   └── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
+│   ├── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
+│   └── scene_policy.json              # Mood별 씬 정책 (9개 프리셋, 에셋·BGM·레이아웃 매핑)
 ├── scripts/
 │   ├── setup_docker_gpu.sh
 │   └── download_fish_speech.sh        # 모델 다운로드
 ├── test/
-│   └── test_tts.py                    # Fish Speech 단독 테스트
+│   ├── test_tts.py                    # Fish Speech 단독 테스트
+│   ├── test_scene_policy.py           # Mood 씬 정책 단위 테스트
+│   ├── test_scene_policy_visual.py    # 시각적 렌더링 테스트 (PNG/MP4 출력)
+│   └── run_scene_scenarios.py         # 9개 Mood 시나리오 통합 실행
 ├── monitoring/
 │   ├── alerting.py
 │   └── daemon.py

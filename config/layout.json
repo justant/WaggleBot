@@ -117,6 +117,19 @@
           "stroke_width": 3
         }
       }
+    },
+    "img_only": {
+      "description": "텍스트 없이 이미지만 전체 화면으로 표시 (인트로 배경 및 아웃트로)",
+      "elements": {
+        "image_area": {
+          "x": 90,
+          "y": 550,
+          "width": 900,
+          "height": 900,
+          "fit_mode": "cover",
+          "border_radius": 20
+        }
+      }
     }
   },
   "layout_algorithm": {

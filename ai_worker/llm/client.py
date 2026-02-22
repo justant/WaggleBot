@@ -35,7 +35,8 @@ _SCRIPT_PROMPT_V2 = """\
   ],
   "closer": "여러분들의 생각은 어떤가요?",
   "title_suggestion": "원문 제목 그대로 기입 (수정 절대 금지)",
-  "tags": ["태그1", "태그2", "태그3"]
+  "tags": ["태그1", "태그2", "태그3"],
+  "mood": "daily"
 }}
 
 ## 규칙
@@ -46,6 +47,7 @@ _SCRIPT_PROMPT_V2 = """\
 5. 화자 시점 유지: 원문 글쓴이의 1인칭 시점과 감정을 그대로 살려 스토리텔링 하세요.
 6. 가독성 및 형식 제한: body 각 항목의 lines 요소는 반드시 '21자 이내'로 작성하세요. 21자를 초과하면 어절 단위로 분할하여 line_count를 늘리세요. 주의: line_count의 숫자와 lines 배열 안의 실제 문장 개수는 반드시 일치해야 하며, 구색을 맞추기 위해 빈 문자열("")을 넣는 것을 절대 금지합니다.
 7. 기타: 한국어만 사용하며, 없는 사실을 지어내거나 왜곡하지 마세요.
+8. 감정 분류: 글의 분위기를 아래 9가지 중 정확히 하나로 분류하여 `mood` 필드에 기입하세요. 분류 목록은 추후 확장될 수 있으므로, 제시된 값 중 가장 적합한 것을 선택하세요: touching(감동), humor(유머), anger(분노), sadness(슬픔), horror(공포), info(정보), controversy(논란), daily(일상), shock(충격)
 """
 
 # ---------------------------------------------------------------------------
@@ -122,7 +124,7 @@ def _extract_fields_regex(raw: str) -> ScriptData | None:
         hook  = _get_str("hook")
         closer = _get_str("closer")
         title  = _get_str("title_suggestion")
-        mood   = _get_str("mood") or "funny"
+        mood   = _get_str("mood") or "daily"
 
         tags_m = re.search(r'"tags"\s*:\s*\[(.*?)\]', raw, re.DOTALL)
         tags: list[str] = re.findall(r'"((?:[^"\\]|\\.)*)"', tags_m.group(1)) if tags_m else []
@@ -207,7 +209,7 @@ def _parse_script_json(raw: str) -> ScriptData:
             closer=str(d.get("closer", "")),
             title_suggestion=str(d.get("title_suggestion", "")),
             tags=list(d.get("tags", [])),
-            mood=str(d.get("mood", "funny")),
+            mood=str(d.get("mood", "daily")),
         )
     except (KeyError, TypeError) as e:
         raise ValueError(f"ScriptData 필드 매핑 실패: {e}") from e

@@ -32,3 +32,4 @@ _result/
 test/test_layout_output
 test/test_llm_output
 test/test_tts_output
+test/test_scene_policy_visual_output

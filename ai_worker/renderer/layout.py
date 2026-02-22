@@ -444,6 +444,38 @@ def _render_text_only_frame(
     return out_path
 
 
+def _render_img_only_frame(
+    base_frame: Image.Image,
+    img_pil: Optional[Image.Image],
+    layout: dict,
+    out_path: Path,
+) -> Path:
+    """씬 img_only — 베이스 프레임 + 이미지 전체 화면 cover 렌더링. 텍스트 없음."""
+    sc = layout["scenes"]["img_only"]
+    ia = sc["elements"]["image_area"]
+
+    img = base_frame.copy()
+    draw = ImageDraw.Draw(img)
+
+    if img_pil is not None:
+        fitted = _fit_cover(img_pil, ia["width"], ia["height"])
+        img = _paste_rounded(img, fitted, ia["x"], ia["y"], ia.get("border_radius", 0))
+    else:
+        try:
+            draw.rounded_rectangle(
+                [(ia["x"], ia["y"]), (ia["x"] + ia["width"], ia["y"] + ia["height"])],
+                radius=ia.get("border_radius", 0), fill="#CCCCCC",
+            )
+        except AttributeError:
+            draw.rectangle(
+                [(ia["x"], ia["y"]), (ia["x"] + ia["width"], ia["y"] + ia["height"])],
+                fill="#CCCCCC",
+            )
+
+    img.save(str(out_path), "PNG")
+    return out_path
+
+
 def _render_outro_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
@@ -564,6 +596,9 @@ def _plan_sequence(
 # TTS 유틸리티
 # ---------------------------------------------------------------------------
 
+_INTRO_PAUSE_SEC: float = 0.5  # 제목 읽기 후 본문 시작 전 숨고르기 (초)
+
+
 async def _tts_chunk_async(
     text: str,
     idx: int,
@@ -640,6 +675,25 @@ async def _generate_tts_chunks(
             scene_type = entry.get("type", "img_text")
             chunk_voice = sent.get("voice_override") or voice
             dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice)
+
+            # 제목(intro) 읽기 후 본문 시작 전 숨고르기 삽입
+            if scene_type == "intro" and dur > 0:
+                chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
+                tmp_pad = chunk_path.with_suffix(".padded.wav")
+                pad_result = subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-i", str(chunk_path),
+                        "-af", f"apad=pad_dur={_INTRO_PAUSE_SEC}",
+                        "-c:a", "pcm_s16le", str(tmp_pad),
+                    ],
+                    capture_output=True,
+                )
+                if pad_result.returncode == 0 and tmp_pad.exists() and tmp_pad.stat().st_size > 0:
+                    tmp_pad.replace(chunk_path)
+                    dur += _INTRO_PAUSE_SEC
+                    logger.debug(
+                        "[layout] intro TTS 뒤 %.1f초 숨고르기 삽입 (프레임=%d)", _INTRO_PAUSE_SEC, frame_idx
+                    )
         else:
             out_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             subprocess.run(
@@ -779,6 +833,14 @@ def _scenes_to_plan_and_sentences(
                 sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
 
+        elif scene.type == "img_only":
+            text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
+            sent_idx: Optional[int] = None
+            if text:
+                sent_idx = len(sentences)
+                sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
+            plan.append({"type": "img_only", "sent_idx": sent_idx, "img_idx": img_idx})
+
         elif scene.type == "outro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx: Optional[int] = None
@@ -810,10 +872,12 @@ def _render_pipeline(
     audio_dir: Path,
     save_tts_cache: Path | None = None,
     tts_audio_cache: Path | None = None,
+    bgm_path: Path | None = None,
 ) -> Path:
     """sentences / plan / images 를 받아 mp4를 생성한다.
 
     Steps 2, 4–11 을 담당. _plan_sequence 단계는 호출자가 수행한다.
+    bgm_path: 우선 사용할 BGM 파일 경로. 없거나 파일이 존재하지 않으면 무시.
     """
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -915,6 +979,10 @@ def _render_pipeline(
                 text_only_history.append({"lines": new_lines, "is_new": True})
                 _render_text_only_frame(base_frame, text_only_history, layout, font_dir, frame_path)
 
+            elif scene_type == "img_only":
+                img_pil = img_cache.get(img_idx) if img_idx is not None else None
+                _render_img_only_frame(base_frame, img_pil, layout, frame_path)
+
             elif scene_type == "outro":
                 img_pil = img_cache.get(img_idx) if img_idx is not None else None
                 _render_outro_frame(base_frame, img_pil, "", layout, font_dir, frame_path)
@@ -952,19 +1020,84 @@ def _render_pipeline(
             "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
             "pad=1080:1920:(ow-iw)/2:(oh-ih)/2[vout]"
         )
-        filter_complex = f"{video_filter};{sfx_filter}"
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_file),
-            "-i", str(merged_tts),
-            *extra_inputs,
-            "-filter_complex", filter_complex,
-            "-map", "[vout]", "-map", "[aout]",
-            *enc_args,
-            "-c:a", "aac", "-b:a", "192k", "-r", "30",
-            str(output_path),
-        ]
+        # BGM 처리: bgm_path 우선, 없으면 BGM 없이 인코딩
+        effective_bgm: Path | None = None
+        if bgm_path is not None and Path(bgm_path).exists():
+            effective_bgm = Path(bgm_path)
+            logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
+        elif bgm_path is not None:
+            logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+
+        if effective_bgm is not None:
+            # SFX 필터는 tts_input_idx=1 기준으로 생성됐으므로 BGM 입력 추가 시 인덱스 재조정 필요
+            # BGM을 TTS 뒤(index=2)에 추가하고 SFX는 그 이후로 시프트
+            bgm_sfx_extra, bgm_sfx_filter = _build_layout_sfx_filter(
+                plan, timings, audio_dir, layout,
+                tts_input_idx=1, sfx_offset=sfx_offset,
+            )
+            # SFX 필터의 tts 참조를 premix_tts로 대체하여 BGM과 함께 믹싱
+            # BGM 볼륨: 0.15 (TTS 오디오에 ducking 없이 단순 볼륨 믹싱)
+            bgm_audio_filter = (
+                f"[1:a]apad[tts_pad];"
+                f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
+                f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout_premix]"
+            )
+            # SFX가 있으면 aout_premix에 추가 믹싱, 없으면 그대로 aout으로 사용
+            if bgm_sfx_extra:
+                # SFX 입력 인덱스를 3부터 시작하도록 sfx_filter 재생성
+                bgm_extra_sfx, bgm_sfx_str = _build_layout_sfx_filter(
+                    plan, timings, audio_dir, layout,
+                    tts_input_idx=1, sfx_offset=sfx_offset,
+                )
+                # sfx_filter의 [1:a] 참조를 [aout_premix]로 교체하여 BGM 포함 믹싱
+                bgm_sfx_str_patched = bgm_sfx_str.replace(
+                    f"[1:a]acopy[aout]", "[aout_premix]acopy[aout]"
+                ).replace(
+                    f"[1:a]", "[aout_premix]"
+                )
+                filter_complex = f"{video_filter};{bgm_audio_filter};{bgm_sfx_str_patched}"
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                    "-i", str(merged_tts),
+                    "-stream_loop", "-1", "-i", str(effective_bgm),
+                    *bgm_extra_sfx,
+                    "-filter_complex", filter_complex,
+                    "-map", "[vout]", "-map", "[aout]",
+                    *enc_args,
+                    "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                    str(output_path),
+                ]
+            else:
+                bgm_audio_filter_final = bgm_audio_filter.replace(
+                    "[aout_premix]", "[aout]"
+                )
+                filter_complex = f"{video_filter};{bgm_audio_filter_final}"
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                    "-i", str(merged_tts),
+                    "-stream_loop", "-1", "-i", str(effective_bgm),
+                    "-filter_complex", filter_complex,
+                    "-map", "[vout]", "-map", "[aout]",
+                    *enc_args,
+                    "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                    str(output_path),
+                ]
+        else:
+            filter_complex = f"{video_filter};{sfx_filter}"
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                "-i", str(merged_tts),
+                *extra_inputs,
+                "-filter_complex", filter_complex,
+                "-map", "[vout]", "-map", "[aout]",
+                *enc_args,
+                "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                str(output_path),
+            ]
 
         logger.info("[layout] FFmpeg 인코딩 시작: %s", output_path.name)
         ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -1084,9 +1217,25 @@ def render_layout_video_from_scenes(
         post.id, len(scenes), len(sentences), len(images),
     )
 
+    # intro 씬에서 bgm_path 추출 (계약: bgm_path는 intro 씬에만 설정됨)
+    bgm_path: Path | None = None
+    for scene in scenes:
+        if scene.type == "intro" and getattr(scene, "bgm_path", None):
+            candidate = Path(scene.bgm_path)
+            if candidate.exists():
+                bgm_path = candidate
+                logger.info("[layout:scenes] intro bgm_path 적용: %s", bgm_path.name)
+            else:
+                logger.warning(
+                    "[layout:scenes] intro bgm_path 파일 없음: %s — 기존 BGM 방식 fallback",
+                    scene.bgm_path,
+                )
+            break
+
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
         save_tts_cache=save_tts_cache,
         tts_audio_cache=tts_audio_cache,
+        bgm_path=bgm_path,
     )

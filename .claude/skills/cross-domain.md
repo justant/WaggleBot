@@ -1,4 +1,4 @@
-# /cross-domain — 크로스 도메인 요청 메시지 생성
+# /cross-domain - 크로스 도메인 요청 메시지 생성
 
 Agent가 타 Agent의 소유 도메인 변경이 필요할 때 Team Lead에게 보내는
 올바른 형식의 SendMessage를 생성하는 스킬.

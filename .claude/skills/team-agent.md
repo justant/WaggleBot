@@ -1,4 +1,4 @@
-# /team-agent — Team Agent 워크플로우 실행
+# /team-agent - Team Agent 워크플로우 실행
 
 CTO의 요구사항 스펙(`.md`)을 바탕으로 Team Lead 역할을 수행하는 스킬.
 `.claude/prompts/team_lead.md`의 6단계 워크플로우를 자동으로 실행한다.

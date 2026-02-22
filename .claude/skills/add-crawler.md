@@ -1,4 +1,4 @@
-# /add-crawler — 새 크롤러 스캐폴딩
+# /add-crawler - 새 크롤러 스캐폴딩
 
 Agent C가 새 커뮤니티 사이트 크롤러를 추가할 때 사용하는 스킬.
 `crawlers/ADDING_CRAWLER.md`의 절차를 따라 올바른 골격 파일을 생성한다.

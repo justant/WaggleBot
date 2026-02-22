@@ -1,0 +1,112 @@
+{
+  "_version": "2.0",
+  "_description": "WaggleBot 쇼츠 화면 구성 정책. 이 파일만 수정하면 연출이 바뀐다. 모든 에셋은 폴더 단위로 관리하며 런타임에 랜덤 선택.",
+
+  "moods": {
+    "touching": {
+      "label": "감동",
+      "intro_image_dir": "assets/image/intro/mood/touching",
+      "outro_image_dir": "assets/image/outro/mood/touching",
+      "bgm_dir": "assets/bgm/mood/touching",
+      "tts_emotion": "gentle"
+    },
+    "humor": {
+      "label": "유머",
+      "intro_image_dir": "assets/image/intro/mood/humor",
+      "outro_image_dir": "assets/image/outro/mood/humor",
+      "bgm_dir": "assets/bgm/mood/humor",
+      "tts_emotion": "cheerful"
+    },
+    "anger": {
+      "label": "분노",
+      "intro_image_dir": "assets/image/intro/mood/anger",
+      "outro_image_dir": "assets/image/outro/mood/anger",
+      "bgm_dir": "assets/bgm/mood/anger",
+      "tts_emotion": "serious"
+    },
+    "sadness": {
+      "label": "슬픔",
+      "intro_image_dir": "assets/image/intro/mood/sadness",
+      "outro_image_dir": "assets/image/outro/mood/sadness",
+      "bgm_dir": "assets/bgm/mood/sadness",
+      "tts_emotion": "sad"
+    },
+    "horror": {
+      "label": "공포",
+      "intro_image_dir": "assets/image/intro/mood/horror",
+      "outro_image_dir": "assets/image/outro/mood/horror",
+      "bgm_dir": "assets/bgm/mood/horror",
+      "tts_emotion": "whispering"
+    },
+    "info": {
+      "label": "정보",
+      "intro_image_dir": "assets/image/intro/mood/info",
+      "outro_image_dir": "assets/image/outro/mood/info",
+      "bgm_dir": "assets/bgm/mood/info",
+      "tts_emotion": "neutral"
+    },
+    "controversy": {
+      "label": "논란",
+      "intro_image_dir": "assets/image/intro/mood/controversy",
+      "outro_image_dir": "assets/image/outro/mood/controversy",
+      "bgm_dir": "assets/bgm/mood/controversy",
+      "tts_emotion": "serious"
+    },
+    "daily": {
+      "label": "일상",
+      "intro_image_dir": "assets/image/intro/mood/daily",
+      "outro_image_dir": "assets/image/outro/mood/daily",
+      "bgm_dir": "assets/bgm/mood/daily",
+      "tts_emotion": "friendly"
+    },
+    "shock": {
+      "label": "충격",
+      "intro_image_dir": "assets/image/intro/mood/shock",
+      "outro_image_dir": "assets/image/outro/mood/shock",
+      "bgm_dir": "assets/bgm/mood/shock",
+      "tts_emotion": "surprised"
+    }
+  },
+
+  "scene_rules": {
+    "intro": {
+      "description": "제목을 읽어주는 첫 화면",
+      "with_image": {
+        "layout": "img_text",
+        "image_source": "post_images[0]",
+        "note": "글에 이미지가 1장 이상이면 첫 번째 이미지 사용"
+      },
+      "without_image": {
+        "layout": "img_only",
+        "image_source": "intro_image_dir",
+        "note": "글에 이미지가 0장이면 mood별 인트로 폴더에서 랜덤 선택"
+      }
+    },
+    "body": {
+      "description": "본문을 읽는 화면들",
+      "with_image": { "layout": "img_text" },
+      "without_image": { "layout": "text_only" },
+      "image_distribution": "even_spread",
+      "image_distribution_note": "공식: interval = total_lines / (remaining_images + 1)"
+    },
+    "outro": {
+      "description": "마지막 화면 — 고정 멘트 + mood별 아웃트로 폴더에서 랜덤 이미지",
+      "layout": "img_only",
+      "image_source": "outro_image_dir",
+      "fixed_texts": [
+        "여러분들의 생각은 어떤가요?",
+        "여러분들의 생각을 댓글로 남겨주세요!",
+        "이 이야기, 어떻게 생각하시나요?"
+      ],
+      "fixed_text_selection": "random"
+    }
+  },
+
+  "defaults": {
+    "fallback_mood": "daily",
+    "max_body_images": 8,
+    "min_body_lines_per_image": 2,
+    "supported_image_ext": [".png", ".jpg", ".jpeg", ".webp"],
+    "supported_bgm_ext": [".mp3", ".wav", ".ogg"]
+  }
+}

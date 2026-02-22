@@ -116,7 +116,7 @@ class Content(Base):
                 closer="",
                 title_suggestion="",
                 tags=[],
-                mood="funny",
+                mood="daily",
             )
 
 
@@ -180,7 +180,7 @@ class ScriptData:
     closer: str
     title_suggestion: str
     tags: list[str]
-    mood: str = "funny"
+    mood: str = "daily"
 
     def to_plain_text(self) -> str:
         texts = [self.hook]
@@ -222,5 +222,5 @@ class ScriptData:
             closer=d["closer"],
             title_suggestion=d["title_suggestion"],
             tags=d["tags"],
-            mood=d.get("mood", "funny"),
+            mood=d.get("mood", "daily"),
         )

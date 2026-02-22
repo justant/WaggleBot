@@ -294,6 +294,7 @@ async def synthesize(
     scene_type: str = "img_text",
     voice_key: str = VOICE_DEFAULT,
     output_path: Path | None = None,
+    emotion: str = "",
 ) -> Path:
     """Fish Speech API로 TTS를 생성하고 wav 파일 경로를 반환한다.
 
@@ -302,6 +303,7 @@ async def synthesize(
         scene_type:  씬 타입 (감정 태그 자동 결정 — EMOTION_TAGS 참조)
         voice_key:   VOICE_PRESETS 키
         output_path: 저장 경로 (None이면 /tmp 임시파일)
+        emotion:     TTS 감정 톤 키 (예: "gentle", "cheerful"). API가 지원하지 않으면 무시.
 
     Returns:
         생성된 wav 파일 경로
@@ -311,9 +313,9 @@ async def synthesize(
     """
     # 텍스트 전처리: 슬랭/이모티콘 제거
     normalized = _normalize_for_tts(text)
-    # 감정 태그 prefix (EMOTION_TAGS 모두 빈 문자열 → 현재 no-op)
-    emotion = EMOTION_TAGS.get(scene_type, "")
-    final_text = f"{emotion} {normalized}".strip() if emotion else normalized
+    # 감정 태그 prefix: emotion 파라미터 우선, 없으면 EMOTION_TAGS scene_type 폴백
+    emotion_tag = emotion or EMOTION_TAGS.get(scene_type, "")
+    final_text = f"{emotion_tag} {normalized}".strip() if emotion_tag else normalized
 
     # 참조 오디오 경로
     ref_filename = VOICE_PRESETS.get(voice_key, VOICE_PRESETS[VOICE_DEFAULT])
@@ -350,13 +352,20 @@ async def synthesize(
         for _attempt in range(_MAX_TTS_RETRIES + 1):
             try:
                 async with httpx.AsyncClient(timeout=_timeout) as client:
+                    payload: dict = {
+                        "text": final_text,
+                        "format": TTS_OUTPUT_FORMAT,
+                        "references": references,
+                    }
+                    # emotion 파라미터를 Fish Speech API에 전달 시도 (graceful degradation)
+                    if emotion:
+                        try:
+                            payload["emotion"] = emotion
+                        except Exception as _e:
+                            logger.warning("Fish Speech emotion 파라미터 설정 실패 (무시): %s", _e)
                     resp = await client.post(
                         f"{FISH_SPEECH_URL}/v1/tts",
-                        json={
-                            "text": final_text,
-                            "format": TTS_OUTPUT_FORMAT,
-                            "references": references,
-                        },
+                        json=payload,
                     )
                     resp.raise_for_status()
                     output_path.write_bytes(resp.content)
@@ -376,8 +385,8 @@ async def synthesize(
     _post_process_audio(output_path)
 
     logger.info(
-        "TTS 생성 완료: scene=%s text=%d자→%d자 → %s (%dKB)",
-        scene_type, len(text), len(final_text), output_path.name, len(resp.content) // 1024,
+        "TTS 생성 완료: scene=%s emotion=%s text=%d자→%d자 → %s (%dKB)",
+        scene_type, emotion or "—", len(text), len(final_text), output_path.name, len(resp.content) // 1024,
     )
     return output_path
 
