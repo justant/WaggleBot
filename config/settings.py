@@ -69,6 +69,7 @@ TTS_VOICES: dict[str, list[dict[str, str]]] = {
         {"id": "sunny",   "name": "Sunny (여, 따뜻한 내레이션)"},
         {"id": "yohan",   "name": "Yohan (남, 깊이 있는 내레이션)"},
         {"id": "yura",    "name": "Yura (여, 활기찬 대화체)"},
+        {"id": "manbo",   "name": "Manbo (여, 유쾌한 대화체)"},
     ],
     "edge-tts": [
         {"id": "ko-KR-SunHiNeural",   "name": "선히 (여, 밝음)"},
@@ -247,6 +248,7 @@ VOICE_PRESETS: dict[str, str] = {
     "sunny":   "voice_preview_sunny.mp3",
     "yohan":   "voice_preview_yohan.mp3",
     "yura":    "voice_preview_yura.mp3",
+    "manbo":   "voice_preview_manbo.mp3",
 }
 VOICE_DEFAULT = "default"
 
@@ -261,6 +263,7 @@ VOICE_REFERENCE_TEXTS: dict[str, str] = {
     "sunny": "인생은 늘 예측할 수 없는 방향으로 흐르지만 그 속에서 희망과 기회를 찾을 수 있습니다. 행복은 거창한 순간에만 있는 것이 아니라 매일의 작은 순간 속에서 피어납니다. 오늘도 감사하는 마음으로 하루를 보냅니다.",
     "yohan": "여러분, 우리가 하루를 살면서 수많은 생각과 경험을 합니다. 그런데 그 중 몇 가지를 진짜로 기억하고 있나요? 기록은 단순히 정보를 적는 행위가 아닙니다. 삶의 흔적을 남기는 일입니다. 지나간 시간의 소중한 순간, 깨달음, 감정을 미래의 나에게 전달하는 다리입니다.",
     "yura":  "제가 요즘 매일 쓰고 있는 게 바로 이거예요. 처음엔 그냥 궁금해서 써봤는데 왜 이렇게 인기인지 알겠더라고요. 아침에 바쁘잖아요, 그냥 툭 사용하면 끝. 아래 링크에서 확인해 보세요. 할인도 들어가 있어서 놓치면 후회할 수도 있어요. 다음 영상에서 또 꿀템 들고 올게요.",
+    "manbo":  "여돌 중에 제일 이쁘지 않음? 키키 하음 발언이 여돌 중에 제일 이물감 없고 유니크하다고 함 특히 금발 생머리가 잘 어울림 성격도 웃기고 몸선 춤선도 예쁘다고 함",
 }
 
 # 감정 태그 매핑 — Fish Speech 1.5는 (tag) 형식 미지원, 참조 오디오로 톤 결정
