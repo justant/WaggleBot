@@ -635,7 +635,8 @@ async def _generate_tts_chunks(
             text = sent["text"]
             pre_audio = sent.get("audio")          # 사전 생성 경로 (없으면 None)
             scene_type = entry.get("type", "img_text")
-            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, voice)
+            chunk_voice = sent.get("voice_override") or voice
+            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice)
         else:
             out_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             subprocess.run(
@@ -758,13 +759,13 @@ def _scenes_to_plan_and_sentences(
         if scene.type == "intro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "hook", "audio": audio})
+            sentences.append({"text": text, "section": "hook", "audio": audio, "voice_override": None})
             plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx})
 
         elif scene.type == "img_text":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "body", "audio": audio})
+            sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
             plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
 
         elif scene.type == "text_only":
@@ -772,7 +773,7 @@ def _scenes_to_plan_and_sentences(
             for line in scene.text_lines:
                 text, audio = _unpack_line(line)
                 sent_idx = len(sentences)
-                sentences.append({"text": text, "section": "body", "audio": audio})
+                sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
 
         elif scene.type == "outro":
@@ -780,7 +781,7 @@ def _scenes_to_plan_and_sentences(
             sent_idx: Optional[int] = None
             if text:
                 sent_idx = len(sentences)
-                sentences.append({"text": text, "section": "closer", "audio": audio})
+                sentences.append({"text": text, "section": "closer", "audio": audio, "voice_override": None})
             plan.append({"type": "outro", "sent_idx": sent_idx, "img_idx": img_idx})
 
     return sentences, plan, images

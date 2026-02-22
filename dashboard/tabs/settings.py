@@ -67,6 +67,38 @@ def render() -> None:
     selected_voice_label = st.selectbox("TTS 목소리", voice_labels, index=voice_idx, key="set_tts_voice_label")
     selected_voice = voice_ids[voice_labels.index(selected_voice_label)] if selected_voice_label in voice_labels else voice_ids[0]
 
+    # 댓글 낭독자 설정
+    st.subheader("💬 댓글 낭독자 설정")
+    st.caption("댓글을 읽어주는 씬에서 랜덤으로 선택될 목소리입니다. 최대 5명까지 설정 가능합니다.")
+
+    # 현재 설정 로드
+    _stored_comment_voices_raw = load_pipeline_config().get("comment_voices", "[]")
+    try:
+        import json as _j
+        _stored_comment_voices: list[str] = _j.loads(_stored_comment_voices_raw)
+    except Exception:
+        _stored_comment_voices = []
+
+    # "사용 안 함" + 현재 엔진의 목소리 목록
+    _comment_voice_options = ["사용 안 함"] + voice_ids
+    _comment_voice_labels = ["사용 안 함"] + voice_labels
+
+    _comment_voice_cols = st.columns(5)
+    _selected_comment_voices = []
+    for _ci in range(5):
+        with _comment_voice_cols[_ci]:
+            _cv_stored = _stored_comment_voices[_ci] if _ci < len(_stored_comment_voices) else None
+            _cv_idx = voice_ids.index(_cv_stored) + 1 if (_cv_stored and _cv_stored in voice_ids) else 0
+            _cv_selected = st.selectbox(
+                f"낭독자 {_ci + 1}",
+                _comment_voice_labels,
+                index=_cv_idx,
+                key=f"set_comment_voice_{_ci + 1}",
+            )
+            if _cv_selected != "사용 안 함":
+                _cv_id = voice_ids[_comment_voice_labels.index(_cv_selected) - 1]
+                _selected_comment_voices.append(_cv_id)
+
     st.divider()
 
     # 스타일 프리셋 관리
@@ -292,6 +324,7 @@ def render() -> None:
                 "auto_approve_enabled": "true" if st.session_state.get("set_auto_approve") else "false",
                 "auto_approve_threshold": str(st.session_state.get("set_auto_approve_threshold", 80)),
                 "use_content_processor": "true" if st.session_state.get("set_use_content_processor") else "false",
+                "comment_voices": json.dumps(_selected_comment_voices),
             }
             # tts_voice는 label selectbox에서 추출한 값을 session_state에 동기화
             st.session_state["set_tts_voice"] = selected_voice

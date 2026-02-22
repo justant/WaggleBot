@@ -9,6 +9,7 @@ Phase 1 ~ 5를 순서대로 실행해 SceneDecision 목록을 반환한다.
     [Phase 5] TTS 사전 생성      - scene.text_lines[j] = {"text": str, "audio": str|None}
 """
 import collections
+import json as _json
 import logging
 from pathlib import Path
 
@@ -21,12 +22,13 @@ from ai_worker.tts.fish_client import synthesize
 logger = logging.getLogger(__name__)
 
 
-async def process_content(post, images: list[str]) -> list[SceneDecision]:
+async def process_content(post, images: list[str], cfg: dict | None = None) -> list[SceneDecision]:
     """콘텐츠 처리 전체 파이프라인.
 
     Args:
         post:   Post 객체 (post.content, post.title 사용)
         images: 이미지 URL/경로 목록
+        cfg:    파이프라인 설정 dict (선택). comment_voices 등.
 
     Returns:
         렌더러에 전달할 SceneDecision 목록.
@@ -36,6 +38,8 @@ async def process_content(post, images: list[str]) -> list[SceneDecision]:
         requests.RequestException: Ollama 통신 오류
         ValueError: 대본 필수 키 누락 등 검증 실패
     """
+    _cfg = cfg or {}
+    comment_voices: list[str] = _json.loads(_cfg.get("comment_voices", "[]"))
     # ── Phase 1: 자원 분석 ────────────────────────────────────────
     profile: ResourceProfile = analyze_resources(post, images)
     logger.info(
@@ -56,7 +60,7 @@ async def process_content(post, images: list[str]) -> list[SceneDecision]:
     )
 
     # ── Phase 4: 씬 배분 ──────────────────────────────────────────
-    director = SceneDirector(profile, images, script)
+    director = SceneDirector(profile, images, script, comment_voices=comment_voices)
     scenes: list[SceneDecision] = director.direct()
 
     counter = collections.Counter(s.type for s in scenes)
@@ -72,7 +76,10 @@ async def process_content(post, images: list[str]) -> list[SceneDecision]:
         for j, line in enumerate(scene.text_lines):
             text = line if isinstance(line, str) else line.get("text", "")
             try:
-                audio_path = await synthesize(text=text, scene_type=scene.type)
+                tts_kwargs: dict = {"text": text, "scene_type": scene.type}
+                if scene.voice_override:
+                    tts_kwargs["voice_key"] = scene.voice_override
+                audio_path = await synthesize(**tts_kwargs)
                 scene.text_lines[j] = {"text": text, "audio": str(audio_path)}
                 tts_ok += 1
             except Exception as exc:

@@ -28,3 +28,7 @@ _result/
 !.claude/contracts/
 !.claude/settings.json
 !.claude/skills/
+
+test/test_layout_output
+test/test_llm_output
+test/test_tts_output

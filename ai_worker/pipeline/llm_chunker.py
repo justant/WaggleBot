@@ -68,7 +68,8 @@ def create_chunking_prompt(
         f'  "hook": "첫 3초 후킹 문장 (최대 {MAX_BODY_CHARS}자)",\n'
         '  "body": [\n'
         '    {"line_count": 2, "lines": ["21자 이하 줄 1", "21자 이하 줄 2"]},\n'
-        '    {"line_count": 1, "lines": ["21자 이하 단일 줄"]}\n'
+        '    {"line_count": 1, "lines": ["21자 이하 단일 줄"]},\n'
+        '    {"line_count": 1, "lines": ["닉네임: 댓글 내용"], "type": "comment"}\n'
         '  ],\n'
         f'  "closer": "마무리 멘트 (최대 {MAX_BODY_CHARS}자)",\n'
         f"{extended_fields}"
@@ -80,6 +81,8 @@ def create_chunking_prompt(
         f"4. body 각 항목의 lines 요소는 21자 이내\n"
         "5. 21자 초과 시 자연스러운 어절 단위로 분리해 line_count 2로 설정\n"
         "6. body는 최소 3개, 최대 8개 항목\n"
+        '7. 댓글을 직접 읽어주는 항목에는 "type": "comment" 추가\n'
+        "8. 일반 본문 항목은 type 필드 생략\n"
     )
 
 

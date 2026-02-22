@@ -11,6 +11,7 @@ img_text / text_only 씬을 순서대로 배분한다.
 - 마지막 이미지 남으면 → outro 1장
 """
 import logging
+import random
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -39,6 +40,7 @@ class SceneDecision:
     image_url: str | None     # img_text / outro 에서 사용
     text_only_stack: int = 1  # text_only 씬의 실제 스택 줄 수
     emotion_tag: str = ""     # Fish Speech 감정 태그 (EMOTION_TAGS에서 자동 할당)
+    voice_override: str | None = None  # 댓글 씬: comment_voices에서 random 선택
 
 
 class SceneDirector:
@@ -49,10 +51,23 @@ class SceneDirector:
         profile: ResourceProfile,
         images: list[str],
         script: dict,
+        comment_voices: list[str] | None = None,
     ) -> None:
         self.profile = profile
         self._images: list[str] = list(images)   # 소모 추적용 복사본
         self.script = script
+
+        if comment_voices is None:
+            # pipeline.json에서 자동 로드 (processor.py 레거시 경로용)
+            try:
+                import json as _json
+                from config.settings import load_pipeline_config
+                _cfg = load_pipeline_config()
+                self.comment_voices = _json.loads(_cfg.get("comment_voices", "[]"))
+            except Exception:
+                self.comment_voices = []
+        else:
+            self.comment_voices = comment_voices
 
     # ------------------------------------------------------------------
     # Public
@@ -71,13 +86,17 @@ class SceneDirector:
 
         # ── Body ───────────────────────────────────────────────────────
         # body 항목이 dict(새 포맷)인 경우 lines를 join해 plain text로 변환
+        # (text, voice_override) 튜플: comment + voices 있으면 random 선택
         body_raw = list(self.script.get("body", []))
-        body: list[str] = []
+        body: list[tuple[str, str | None]] = []
         for item in body_raw:
             if isinstance(item, dict):
-                body.append(" ".join(item.get("lines", [])))
+                text = " ".join(item.get("lines", []))
+                is_comment = item.get("type") == "comment"
+                voice = random.choice(self.comment_voices) if is_comment and self.comment_voices else None
+                body.append((text, voice))
             else:
-                body.append(str(item))
+                body.append((str(item), None))
 
         while body:
             if self._images:
@@ -119,6 +138,7 @@ class SceneDirector:
         lines: list[str],
         image: str | None = None,
         stack: int = 1,
+        voice_override: str | None = None,
     ) -> SceneDecision:
         """SceneDecision을 생성하며 emotion_tag를 자동 할당한다."""
         return SceneDecision(
@@ -127,26 +147,33 @@ class SceneDirector:
             image_url=image,
             text_only_stack=stack,
             emotion_tag=EMOTION_TAGS.get(type_, ""),
+            voice_override=voice_override,
         )
 
-    def _make_img_text(self, body: list[str]) -> SceneDecision:
+    def _make_img_text(self, body: list[tuple[str, str | None]]) -> SceneDecision:
+        text, voice = body.pop(0)
         return self._make_scene(
             type_="img_text",
-            lines=[body.pop(0)],
+            lines=[text],
             image=self._images.pop(0),
+            voice_override=voice,
         )
 
-    def _make_text_only(self, body: list[str]) -> SceneDecision:
+    def _make_text_only(self, body: list[tuple[str, str | None]]) -> SceneDecision:
         n = self._decide_stack(body)
         count = min(n, len(body))
-        lines = [body.pop(0) for _ in range(count)]
+        items = [body.pop(0) for _ in range(count)]
+        lines = [text for text, _ in items]
+        # 첫 번째 항목의 voice_override를 씬에 적용
+        voice = items[0][1] if items else None
         return self._make_scene(
             type_="text_only",
             lines=lines,
             stack=len(lines),
+            voice_override=voice,
         )
 
-    def _decide_stack(self, remaining: list[str]) -> int:
+    def _decide_stack(self, remaining: list[tuple[str, str | None]]) -> int:
         """전략과 잔여 문장 수를 고려해 text_only 스택 크기를 결정한다."""
         base = _STACK_BY_STRATEGY.get(self.profile.strategy, 2)
 
@@ -155,7 +182,8 @@ class SceneDirector:
             return min(len(remaining), 2)
 
         # 반전/충격 키워드가 포함된 문장은 단독 강조
-        if any(kw in remaining[0] for kw in _HIGHLIGHT_KEYWORDS):
+        first_text = remaining[0][0]
+        if any(kw in first_text for kw in _HIGHLIGHT_KEYWORDS):
             return 1
 
         return base

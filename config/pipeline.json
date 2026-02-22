@@ -7,5 +7,6 @@
   "auto_upload": "false",
   "auto_approve_enabled": "false",
   "auto_approve_threshold": "80",
-  "use_content_processor": "false"
+  "use_content_processor": "false",
+  "comment_voices": "[\"yohan\", \"anna\", \"han\", \"krys\", \"default\"]"
 }

@@ -119,7 +119,13 @@ def validate_and_fix(llm_output: dict) -> dict:
                 fixed_lines.extend(parts)
             else:
                 fixed_lines.append(line)
-        fixed_body.append({"line_count": len(fixed_lines), "lines": fixed_lines})
+        fixed_item: dict = {"line_count": len(fixed_lines), "lines": fixed_lines}
+        # 부가 필드 보존 (예: "type": "comment")
+        if isinstance(item, dict):
+            for k, v in item.items():
+                if k not in ("line_count", "lines"):
+                    fixed_item[k] = v
+        fixed_body.append(fixed_item)
     llm_output["body"] = fixed_body
 
     if len(fixed_body) != original_body_count:

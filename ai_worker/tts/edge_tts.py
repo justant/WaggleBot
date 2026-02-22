@@ -9,9 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 class EdgeTTS(BaseTTS):
+    def __init__(self, rate: str = "+0%") -> None:
+        self.rate = rate
+
     async def synthesize(self, text: str, voice_id: str, output_path: Path) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        communicate = _edge_tts.Communicate(text, voice_id)
+        communicate = _edge_tts.Communicate(text, voice_id, rate=self.rate)
         await communicate.save(str(output_path))
         logger.info("Edge-TTS 생성 완료: %s", output_path)
         return output_path
