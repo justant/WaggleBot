@@ -183,7 +183,16 @@ class BaseCrawler(ABC):
                 self.site_code, origin_id, age_hours, score,
             )
         else:
-            # 신규 게시글: 방금 수집 → age=0, decay=1.0
+            # 신규 게시글: 본문 10자 미만이면 추론 불가 → 수집 제외
+            content = detail.get("content") or ""
+            if len(content) < 10:
+                log.debug(
+                    "Skip %s:%s — 본문 %d자 (10자 미만)",
+                    self.site_code, origin_id, len(content),
+                )
+                return
+
+            # 방금 수집 → age=0, decay=1.0
             score = self.calculate_engagement_score(raw_stats, comments, age_hours=0.0)
             post = Post(
                 site_code=self.site_code,
