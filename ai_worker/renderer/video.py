@@ -183,7 +183,10 @@ def _build_slideshow(
             continue
 
         try:
-            resp = requests.get(url, timeout=15)
+            _hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            if "dcinside.com" in url:
+                _hdrs["Referer"] = "https://gall.dcinside.com/"
+            resp = requests.get(url, timeout=15, headers=_hdrs)
             resp.raise_for_status()
         except requests.RequestException:
             logger.warning("이미지 다운로드 실패: %s", url)

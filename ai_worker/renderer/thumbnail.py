@@ -75,9 +75,26 @@ _DEFAULT_STYLE = "dramatic"
 # ---------------------------------------------------------------------------
 # 배경 생성
 # ---------------------------------------------------------------------------
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+_SITE_REFERERS: dict[str, str] = {
+    "dcinside.com": "https://gall.dcinside.com/",
+}
+
+
+def _image_headers(url: str) -> dict[str, str]:
+    """사이트별 이미지 다운로드 헤더 반환. Referer 없으면 hotlink 차단되는 사이트 대응."""
+    headers = {"User-Agent": _UA}
+    for domain, referer in _SITE_REFERERS.items():
+        if domain in url:
+            headers["Referer"] = referer
+            break
+    return headers
+
+
 def _download_image(url: str, timeout: int = 15) -> Optional[Image.Image]:
     try:
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, timeout=timeout, headers=_image_headers(url))
         resp.raise_for_status()
         return Image.open(BytesIO(resp.content)).convert("RGB")
     except Exception as exc:

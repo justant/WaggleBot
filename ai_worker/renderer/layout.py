@@ -229,7 +229,10 @@ def _load_image(src: str, cache_dir: Path) -> Optional[Image.Image]:
         cache_path = cache_dir / f"img_{url_hash}.jpg"
         if not cache_path.exists():
             try:
-                resp = requests.get(src, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                _hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+                if "dcinside.com" in src:
+                    _hdrs["Referer"] = "https://gall.dcinside.com/"
+                resp = requests.get(src, timeout=10, headers=_hdrs)
                 resp.raise_for_status()
                 cache_path.write_bytes(resp.content)
             except Exception as e:
