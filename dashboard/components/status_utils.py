@@ -56,14 +56,22 @@ def top_comments(post_id: int, session, limit: int = 2) -> list[Comment]:
 # 상태 변경 / 삭제
 # ---------------------------------------------------------------------------
 
-def update_status(post_id: int, new_status: PostStatus):
-    """게시글 상태 업데이트"""
+def update_status(post_id: int, new_status: PostStatus) -> None:
+    """게시글 상태 업데이트 (직접 SQL UPDATE — 동시 수정 충돌·1020 에러 방지)."""
+    from datetime import datetime, timezone
+    from sqlalchemy import update as _sql_update
+
     with SessionLocal() as session:
-        post = session.get(Post, post_id)
-        if post:
-            post.status = new_status
-            session.commit()
-            log.info(f"Post {post_id} status changed to {new_status.value}")
+        result = session.execute(
+            _sql_update(Post)
+            .where(Post.id == post_id)
+            .values(status=new_status, updated_at=datetime.now(timezone.utc))
+        )
+        session.commit()
+        if result.rowcount > 0:
+            log.info("Post %d → %s", post_id, new_status.value)
+        else:
+            log.warning("Post %d 상태 업데이트: 0 rows (이미 변경됨?)", post_id)
 
 
 def delete_post(post_id: int):
