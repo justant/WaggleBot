@@ -1,7 +1,4 @@
 {
-  "tts_engine": "fish-speech",
-  "tts_voice": "yura",
-  "llm_model": "qwen2.5:14b",
   "upload_platforms": "[\"youtube\"]",
   "upload_privacy": "unlisted",
   "auto_upload": "false",

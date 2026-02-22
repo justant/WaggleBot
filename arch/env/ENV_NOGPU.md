@@ -17,7 +17,7 @@
 |------|-----------|--------------|
 | Compose 파일 | `docker-compose.yml` | `docker-compose.galaxybook.yml` |
 | Dockerfile | `Dockerfile.gpu` | `Dockerfile` |
-| LLM 모델 | `.env`: `OLLAMA_MODEL=qwen2.5:14b` | `.env`: `OLLAMA_MODEL=qwen2.5:1.5b` |
+| LLM 모델 | `.env`: `OLLAMA_MODEL=qwen2.5:7b` | `.env`: `OLLAMA_MODEL=qwen2.5:1.5b` |
 | GPU 요건 | NVIDIA 필수 | 없음 (CPU 추론) |
 | 영상 인코딩 | `h264_nvenc` | `libx264` 자동 폴백 |
 | NVIDIA Container Toolkit | 필요 | 불필요 |

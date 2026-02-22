@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-from config.settings import load_pipeline_config, get_pipeline_defaults
+from config.settings import load_pipeline_config, get_pipeline_defaults, OLLAMA_MODEL
 
 log = logging.getLogger(__name__)
 
@@ -29,9 +29,10 @@ def _apply_cfg_to_session(cfg: dict[str, str]) -> None:
     위젯이 아직 렌더링되기 전(스크립트 상단)에서만 호출해야 한다.
     위젯 렌더 후 동일 키를 수정하면 StreamlitAPIException이 발생한다.
     """
-    st.session_state["set_tts_engine"]             = cfg.get("tts_engine", "edge-tts")
-    st.session_state["set_tts_voice"]              = cfg.get("tts_voice", "ko-KR-SunHiNeural")
-    st.session_state["set_llm_model"]              = cfg.get("llm_model", "qwen2.5:14b")
+    _d = get_pipeline_defaults()
+    st.session_state["set_tts_engine"]             = cfg.get("tts_engine", _d["tts_engine"])
+    st.session_state["set_tts_voice"]              = cfg.get("tts_voice",  _d["tts_voice"])
+    st.session_state["set_llm_model"]              = cfg.get("llm_model",  _d["llm_model"])
     st.session_state["set_upload_platforms"]       = json.loads(cfg.get("upload_platforms", '["youtube"]'))
     st.session_state["set_upload_privacy"]         = cfg.get("upload_privacy", "unlisted")
     st.session_state["set_auto_upload"]            = cfg.get("auto_upload", "false") == "true"

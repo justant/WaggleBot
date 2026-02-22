@@ -11,7 +11,7 @@ import streamlit as st
 from config.settings import (
     TTS_VOICES, MEDIA_DIR, PLATFORM_CREDENTIAL_FIELDS,
     load_pipeline_config, save_pipeline_config, get_pipeline_defaults,
-    load_credentials_config, save_credentials_config,
+    load_credentials_config, save_credentials_config, OLLAMA_MODEL,
 )
 
 from dashboard.components.status_utils import check_ollama_health
@@ -317,7 +317,7 @@ def render() -> None:
             _new_cfg = {
                 "tts_engine": selected_engine,
                 "tts_voice": selected_voice,
-                "llm_model": st.session_state.get("set_llm_model", "qwen2.5:14b"),
+                "llm_model": st.session_state.get("set_llm_model", OLLAMA_MODEL),
                 "upload_platforms": json.dumps(st.session_state.get("set_upload_platforms", ["youtube"])),
                 "upload_privacy": st.session_state.get("set_upload_privacy", "unlisted"),
                 "auto_upload": "true" if st.session_state.get("set_auto_upload") else "false",

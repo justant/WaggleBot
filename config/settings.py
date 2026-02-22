@@ -50,7 +50,7 @@ STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
 MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 
 
 def get_ollama_host() -> str:
@@ -87,9 +87,10 @@ FEEDBACK_CONFIG_PATH = _PROJECT_ROOT / "config" / "feedback_config.json"
 AB_TEST_CONFIG_PATH  = _PROJECT_ROOT / "config" / "ab_tests.json"
 
 _PIPELINE_DEFAULTS: dict[str, str] = {
-    "tts_engine": "edge-tts",
-    "tts_voice": "ko-KR-SunHiNeural",
-    "llm_model": OLLAMA_MODEL,
+    # 모델 관련 기본값 — .env의 값을 읽음. 변경 시 .env만 수정하면 됨.
+    "tts_engine": os.getenv("TTS_ENGINE", "fish-speech"),
+    "tts_voice":  os.getenv("TTS_VOICE",  "yura"),
+    "llm_model":  OLLAMA_MODEL,  # .env의 OLLAMA_MODEL
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
     "bgm_volume": "0.15",

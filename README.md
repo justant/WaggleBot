@@ -33,7 +33,7 @@
 | 분류 | 기술 |
 |------|------|
 | 언어 | Python 3.12 |
-| LLM | Ollama (`qwen2.5:14b` / `qwen2.5:1.5b`) |
+| LLM | Ollama (`qwen2.5:7b` / `qwen2.5:1.5b`) |
 | TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
 | DB | MariaDB 11.x + SQLAlchemy ORM |
 | 영상 | FFmpeg (h264_nvenc / libx264 폴백) |
@@ -87,7 +87,7 @@ sudo systemctl edit ollama.service
 # Environment="OLLAMA_HOST=0.0.0.0"
 
 sudo systemctl daemon-reload && sudo systemctl restart ollama
-ollama pull qwen2.5:14b
+ollama pull qwen2.5:7b
 ```
 
 ### 4. Fish Speech 모델 다운로드
@@ -136,7 +136,7 @@ nano .env
 # DB_ROOT_PASSWORD=...
 # DB_PASSWORD=...
 # HF_TOKEN=hf_...
-# OLLAMA_MODEL=qwen2.5:14b
+# OLLAMA_MODEL=qwen2.5:7b
 
 # 실행
 docker compose up -d
