@@ -1,7 +1,9 @@
 """분석 (Analytics) 탭."""
 
 import logging
+import threading as _threading
 from datetime import datetime, timezone, timedelta
+from typing import Any as _Any
 
 import streamlit as st
 from sqlalchemy import func
@@ -14,6 +16,106 @@ from db.session import SessionLocal
 from dashboard.components.status_utils import check_ollama_health
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 비동기 인사이트 작업 레지스트리 (period_days → task dict)
+# ---------------------------------------------------------------------------
+_insight_tasks: dict[int, dict[str, _Any]] = {}
+_insight_lock = _threading.Lock()
+
+# 피드백 반영 태스크 (단일 작업)
+_feedback_task: dict[str, _Any] = {}
+_feedback_lock = _threading.Lock()
+
+
+def _submit_insight_task(
+    period_days: int,
+    total_collected: int,
+    total_approved: int,
+    total_uploaded: int,
+    conversion_rate: float,
+    ranked: list[dict],
+    llm_model: str,
+) -> bool:
+    """AI 인사이트 생성을 백그라운드 스레드에 제출."""
+    with _insight_lock:
+        existing = _insight_tasks.get(period_days)
+        if existing and existing["status"] == "running":
+            return False
+        _insight_tasks[period_days] = {"status": "running"}
+
+    def _run() -> None:
+        try:
+            _data_summary = "\n".join(
+                f"- {r['title'][:60]}: 조회수 {r['views']:,}, 좋아요 {r['likes']:,}"
+                + (
+                    f", 시청유지율 {r['analytics']['avg_watch_pct']:.1f}%"
+                    if r["analytics"].get("avg_watch_pct")
+                    else ""
+                )
+                for r in ranked[:10]
+            )
+            _prompt = f"""당신은 유튜브 쇼츠 채널 성과 분석 전문가입니다.
+아래 최근 {period_days}일 업로드 영상 성과 데이터를 분석하고,
+운영자에게 유용한 인사이트 3~5가지를 간결하게 한국어로 작성하세요.
+
+## 성과 데이터
+수집: {total_collected}건 → 승인: {total_approved}건 → 업로드: {total_uploaded}건 (전환율 {conversion_rate:.1f}%)
+업로드 영상 목록:
+{_data_summary}
+
+## 인사이트 형식
+- 어떤 주제/패턴이 잘 됐는지
+- 개선이 필요한 부분
+- 다음 {period_days}일 운영 전략 제안
+각 항목은 "- " 로 시작하는 한 줄 문장으로 작성하세요."""
+
+            _insight_text = call_ollama_raw(
+                prompt=_prompt,
+                model=llm_model,
+                max_tokens=512,
+                temperature=0.7,
+            ).strip()
+            with _insight_lock:
+                _insight_tasks[period_days] = {"status": "done", "result": _insight_text}
+        except Exception as _ex:
+            with _insight_lock:
+                _insight_tasks[period_days] = {"status": "error", "error": str(_ex)}
+
+    _threading.Thread(target=_run, daemon=True).start()
+    return True
+
+
+def _submit_feedback_task(period_days: int, llm_model: str | None) -> bool:
+    """구조화 인사이트 생성 및 피드백 반영을 백그라운드로 제출."""
+    with _feedback_lock:
+        if _feedback_task.get("status") == "running":
+            return False
+        _feedback_task.clear()
+        _feedback_task["status"] = "running"
+
+    def _run() -> None:
+        try:
+            from analytics.feedback import (
+                load_feedback_config, generate_structured_insights,
+                apply_feedback, build_performance_summary,
+            )
+            with SessionLocal() as _fb_s:
+                _perf = build_performance_summary(_fb_s, days_back=period_days)
+            if not _perf:
+                with _feedback_lock:
+                    _feedback_task.update({"status": "error", "error": "분석할 데이터 없음"})
+                return
+            _insights = generate_structured_insights(_perf, llm_model=llm_model)
+            apply_feedback(_insights)
+            with _feedback_lock:
+                _feedback_task.update({"status": "done"})
+        except Exception as _ex:
+            with _feedback_lock:
+                _feedback_task.update({"status": "error", "error": str(_ex)})
+
+    _threading.Thread(target=_run, daemon=True).start()
+    return True
 
 
 def render() -> None:
@@ -241,48 +343,60 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
 
     _insight_key = f"analytics_insight_{period_days}"
     with st.container(border=True):
-        if st.button("✨ 인사이트 생성", key="gen_insight", width="content", type="primary"):
-            if not _ranked:
-                st.warning("업로드된 영상 데이터가 없습니다.")
-            elif not check_ollama_health():
-                st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
-            else:
-                with st.spinner("LLM 분석 중..."):
-                    try:
-                        _data_summary = "\n".join(
-                            f"- {r['title'][:60]}: 조회수 {r['views']:,}, 좋아요 {r['likes']:,}"
-                            + (f", 시청유지율 {r['analytics']['avg_watch_pct']:.1f}%" if r['analytics'].get('avg_watch_pct') else "")
-                            for r in _ranked[:10]
-                        )
-                        _prompt = f"""당신은 유튜브 쇼츠 채널 성과 분석 전문가입니다.
-아래 최근 {period_days}일 업로드 영상 성과 데이터를 분석하고,
-운영자에게 유용한 인사이트 3~5가지를 간결하게 한국어로 작성하세요.
-
-## 성과 데이터
-수집: {_total_collected}건 → 승인: {_total_approved}건 → 업로드: {_total_uploaded}건 (전환율 {_conversion_rate:.1f}%)
-업로드 영상 목록:
-{_data_summary}
-
-## 인사이트 형식
-- 어떤 주제/패턴이 잘 됐는지
-- 개선이 필요한 부분
-- 다음 {period_days}일 운영 전략 제안
-각 항목은 "- " 로 시작하는 한 줄 문장으로 작성하세요."""
-
-                        _insight_text = call_ollama_raw(
-                            prompt=_prompt,
-                            model=load_pipeline_config().get("llm_model", OLLAMA_MODEL),
-                            max_tokens=512,
-                            temperature=0.7,
-                        ).strip()
-                        st.session_state[_insight_key] = _insight_text
-                    except Exception as _ex:
-                        st.error(f"인사이트 생성 실패: {_ex}")
+        # 완료된 task가 있으면 session_state에 저장 후 정리
+        _itask = _insight_tasks.get(period_days)
+        if _itask:
+            if _itask["status"] == "done":
+                st.session_state[_insight_key] = _itask["result"]
+                with _insight_lock:
+                    _insight_tasks.pop(period_days, None)
+            elif _itask["status"] == "error":
+                st.error(f"인사이트 생성 실패: {_itask.get('error', '알 수 없는 오류')}")
+                with _insight_lock:
+                    _insight_tasks.pop(period_days, None)
 
         _saved_insight = st.session_state.get(_insight_key)
-        if _saved_insight:
+        _itask_running = _insight_tasks.get(period_days, {}).get("status") == "running"
+
+        if _itask_running:
+            @st.fragment(run_every="2s")
+            def _insight_poller() -> None:
+                _t = _insight_tasks.get(period_days)
+                if _t and _t["status"] in ("done", "error"):
+                    st.rerun()  # 완료 시 전체 재렌더링
+                else:
+                    st.info("🤖 LLM 인사이트 생성 중... (자동 갱신)")
+            _insight_poller()
+
+        elif _saved_insight:
             st.markdown(_saved_insight)
+            if st.button("✨ 인사이트 재생성", key="gen_insight", width="content"):
+                if not _ranked:
+                    st.warning("업로드된 영상 데이터가 없습니다.")
+                elif not check_ollama_health():
+                    st.error("❌ LLM 서버에 연결할 수 없습니다.")
+                else:
+                    st.session_state.pop(_insight_key, None)
+                    _submit_insight_task(
+                        period_days, _total_collected, _total_approved,
+                        _total_uploaded, _conversion_rate, _ranked,
+                        load_pipeline_config().get("llm_model", OLLAMA_MODEL),
+                    )
+                    st.rerun()
+
         else:
+            if st.button("✨ 인사이트 생성", key="gen_insight", width="content", type="primary"):
+                if not _ranked:
+                    st.warning("업로드된 영상 데이터가 없습니다.")
+                elif not check_ollama_health():
+                    st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+                else:
+                    _submit_insight_task(
+                        period_days, _total_collected, _total_approved,
+                        _total_uploaded, _conversion_rate, _ranked,
+                        load_pipeline_config().get("llm_model", OLLAMA_MODEL),
+                    )
+                    st.rerun()
             st.caption("'인사이트 생성' 버튼을 눌러 LLM 분석을 시작하세요.")
 
     # ---------------------------------------------------------------------------
@@ -291,19 +405,43 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
     st.subheader("🎯 피드백 파이프라인 반영")
 
     with st.container(border=True):
-        from analytics.feedback import (
-            load_feedback_config, generate_structured_insights,
-            apply_feedback, build_performance_summary,
-        )
+        from analytics.feedback import load_feedback_config
 
         _fb_cfg = load_feedback_config()
         _fb_updated = _fb_cfg.get("updated_at")
         if _fb_updated:
             st.caption(f"마지막 반영: {_fb_updated[:19].replace('T', ' ')} UTC")
 
+        # 피드백 태스크 완료 처리
+        _ftask = dict(_feedback_task)
+        if _ftask.get("status") == "done":
+            st.success("✅ 피드백이 파이프라인에 반영되었습니다.")
+            with _feedback_lock:
+                _feedback_task.clear()
+            st.rerun()
+        elif _ftask.get("status") == "error":
+            st.error(f"피드백 반영 실패: {_ftask.get('error', '알 수 없는 오류')}")
+            with _feedback_lock:
+                _feedback_task.clear()
+
         _col_fb1, _col_fb2 = st.columns([1, 1])
         with _col_fb1:
-            if st.button(
+            _fb_running = _feedback_task.get("status") == "running"
+            if _fb_running:
+                st.button(
+                    "🔄 분석 중...",
+                    key="apply_feedback_btn",
+                    width="stretch",
+                    disabled=True,
+                )
+                @st.fragment(run_every="2s")
+                def _fb_poller() -> None:
+                    if _feedback_task.get("status") in ("done", "error"):
+                        st.rerun()
+                    else:
+                        st.caption("LLM 인사이트 생성 중... (자동 감지)")
+                _fb_poller()
+            elif st.button(
                 "🔄 구조화 인사이트 생성 후 반영",
                 key="apply_feedback_btn",
                 width="stretch",
@@ -313,22 +451,11 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                 if not check_ollama_health():
                     st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
                 else:
-                    with st.spinner("성과 분석 + LLM 인사이트 생성 중..."):
-                        try:
-                            with SessionLocal() as _fb_s:
-                                _perf = build_performance_summary(_fb_s, days_back=period_days)
-                            if not _perf:
-                                st.warning("분석할 업로드 데이터가 없습니다.")
-                            else:
-                                _insights = generate_structured_insights(
-                                    _perf,
-                                    llm_model=load_pipeline_config().get("llm_model"),
-                                )
-                                apply_feedback(_insights)
-                                st.success("✅ 피드백이 파이프라인에 반영되었습니다.")
-                                st.rerun()
-                        except Exception as _ex:
-                            st.error(f"피드백 반영 실패: {_ex}")
+                    _submit_feedback_task(
+                        period_days,
+                        load_pipeline_config().get("llm_model"),
+                    )
+                    st.rerun()
 
         with _col_fb2:
             if st.button(

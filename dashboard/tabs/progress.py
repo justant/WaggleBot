@@ -1,5 +1,8 @@
 """진행현황 (Progress) 탭."""
 
+import threading
+from datetime import datetime, timezone, timedelta
+
 import streamlit as st
 from sqlalchemy import func
 
@@ -43,10 +46,25 @@ def render() -> None:
                 .group_by(Post.status)
                 .all()
             )
+            # PROCESSING 상태가 10분 이상 지속되면 경고
+            _stuck_count = (
+                _ms.query(func.count(Post.id))
+                .filter(
+                    Post.status == PostStatus.PROCESSING,
+                    Post.updated_at < datetime.now(timezone.utc) - timedelta(minutes=10),
+                )
+                .scalar() or 0
+            )
         metric_cols = st.columns(len(progress_statuses))
         for col, status in zip(metric_cols, progress_statuses):
             emoji = STATUS_EMOJI.get(status, "")
             col.metric(f"{emoji} {status.value}", _counts.get(status, 0))
+        if _stuck_count:
+            st.warning(
+                f"⚠️ {_stuck_count}건의 PROCESSING 작업이 10분 이상 멈춰있습니다. "
+                "AI 워커 로그를 확인하세요.",
+                icon="🚨",
+            )
 
     _progress_metrics()
 
@@ -90,7 +108,11 @@ def render() -> None:
                         col_retry, col_del = st.columns(2)
                         with col_retry:
                             if st.button("🔄 재시도", key=f"retry_{post.id}"):
-                                update_status(post.id, PostStatus.APPROVED)
+                                threading.Thread(
+                                    target=update_status,
+                                    args=(post.id, PostStatus.APPROVED),
+                                    daemon=True,
+                                ).start()
                                 st.rerun()
                         with col_del:
                             if st.button("🗑️", key=f"del_failed_{post.id}", help="삭제"):

@@ -32,7 +32,18 @@ class Post(Base):
     __tablename__ = "posts"
     __table_args__ = (
         UniqueConstraint("site_code", "origin_id", name="uq_site_origin"),
+        # 기존 인덱스
         Index("ix_posts_engagement_score", "engagement_score"),
+        # 수신함 핵심 쿼리: status=COLLECTED + score 정렬
+        Index("ix_posts_status_score", "status", "engagement_score"),
+        # 편집실 핵심 쿼리: status=EDITING + created_at 정렬
+        Index("ix_posts_status_created", "status", "created_at"),
+        # 진행현황 쿼리: status별 COUNT
+        Index("ix_posts_status", "status"),
+        # 사이트 필터 조합
+        Index("ix_posts_site_status", "site_code", "status"),
+        # updated_at 기반 정렬 (진행현황)
+        Index("ix_posts_updated_at", "updated_at"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
@@ -60,6 +71,8 @@ class Comment(Base):
     __tablename__ = "comments"
     __table_args__ = (
         UniqueConstraint("post_id", "author", "content_hash", name="uq_post_comment"),
+        # top_comments() 쿼리 최적화: post_id 필터 + likes 내림차순
+        Index("ix_comments_post_likes", "post_id", "likes"),
     )
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)

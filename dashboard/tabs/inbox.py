@@ -1,59 +1,25 @@
 """수신함 (Inbox) 탭."""
 
-import json
 import logging
-import re
+import threading
 
 import streamlit as st
 from sqlalchemy import func, or_
 
-from ai_worker.llm.client import call_ollama_raw
 from config.settings import load_pipeline_config, OLLAMA_MODEL
 from crawlers.plugin_manager import list_crawlers
 from db.models import Post, PostStatus
 from db.session import SessionLocal
 
 from dashboard.components.status_utils import (
-    to_kst, stats_display, top_comments, update_status, check_ollama_health,
+    to_kst, stats_display, update_status, check_ollama_health, batch_update_status,
 )
 from dashboard.components.image_slider import render_image_slider
+from dashboard.workers.ai_analysis_tasks import (
+    get_analysis_task, submit_analysis_task, clear_analysis_task,
+)
 
 log = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# 탭 전용 헬퍼
-# ---------------------------------------------------------------------------
-
-def _run_ai_fit_analysis(post: Post, model: str) -> dict:
-    """Ollama LLM으로 쇼츠 적합도 분석 (1~10점) 요청.
-
-    Returns:
-        {"score": int, "reason": str, "issues": list[str]}
-    """
-    prompt = (
-        "다음 게시글의 YouTube 쇼츠 영상 적합도를 분석하세요.\n\n"
-        f"제목: {post.title}\n"
-        f"내용: {(post.content or '')[:300]}\n\n"
-        "반드시 아래 JSON 형식으로만 응답하세요 (다른 텍스트 금지):\n"
-        '{"score": 7, "reason": "판단 근거 요약 2~3문장", "issues": ["문제점1"]}\n\n'
-        "평가 기준:\n"
-        "- 논쟁적·공감적 주제: +3점\n"
-        "- 강한 감정 반응 유발(분노·감동·웃음): +3점\n"
-        "- 댓글 활성화 가능성: +2점\n"
-        "- 이미지 있음: +1점\n"
-        "- 민감·저작권·광고 문제: -3점\n"
-        'issues 예시: ["광고성 게시글", "저작권 이미지", "민감 주제", "정치적 내용"]\n'
-        "문제 없으면 issues는 [] 로 작성"
-    )
-    try:
-        raw = call_ollama_raw(prompt=prompt, model=model)
-        m = re.search(r"\{.*?\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group())
-    except Exception as exc:
-        log.warning("AI 적합도 분석 실패: %s", exc)
-    return {"score": 0, "reason": "분석 실패 또는 LLM 응답 오류", "issues": []}
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +38,8 @@ def render() -> None:
         st.session_state["auto_approved_ids"] = set()
     if "ai_analysis" not in st.session_state:
         st.session_state["ai_analysis"] = {}
+    if "hidden_post_ids" not in st.session_state:
+        st.session_state["hidden_post_ids"] = set()
 
     inbox_cfg = load_pipeline_config()
     auto_approve_enabled = inbox_cfg.get("auto_approve_enabled") == "true"
@@ -116,6 +84,8 @@ def render() -> None:
             st.caption("검토 대기 중인 게시글을 승인하거나 거절하세요")
     with ref_col:
         if st.button("🔄 새로고침", width="stretch"):
+            # 새로고침 시 hidden_post_ids 초기화 (DB 상태와 동기화)
+            st.session_state["hidden_post_ids"] = set()
             st.rerun()
 
     # 처리 현황 progress bar
@@ -145,8 +115,10 @@ def render() -> None:
     st.divider()
 
     # ---------------------------------------------------------------------------
-    # 데이터 조회
+    # 데이터 조회 (N+1 방지: 댓글 일괄 사전 로드)
     # ---------------------------------------------------------------------------
+    from db.models import Comment
+
     with SessionLocal() as session:
         query = session.query(Post).filter(Post.status == PostStatus.COLLECTED)
         if site_filter:
@@ -165,6 +137,19 @@ def render() -> None:
             posts = sorted(posts, key=lambda p: (p.stats or {}).get("likes", 0), reverse=True)
         else:
             posts = sorted(posts, key=lambda p: p.created_at or 0, reverse=True)
+
+        # 댓글 일괄 사전 로드 (N+1 → 1+1 쿼리)
+        _all_comments: dict[int, list] = {}
+        _post_ids = [p.id for p in posts]
+        if _post_ids:
+            _comments_raw = (
+                session.query(Comment)
+                .filter(Comment.post_id.in_(_post_ids))
+                .order_by(Comment.likes.desc())
+                .all()
+            )
+            for _c in _comments_raw:
+                _all_comments.setdefault(_c.post_id, []).append(_c)
 
         # 3단계 티어 분류
         high_posts   = [p for p in posts if (p.engagement_score or 0) >= 80]
@@ -203,8 +188,13 @@ def render() -> None:
                 width="stretch",
                 type="primary",
             ):
-                for pid in list(st.session_state["selected_posts"]):
-                    update_status(pid, PostStatus.EDITING)
+                _ids = list(st.session_state["selected_posts"])
+                threading.Thread(
+                    target=batch_update_status,
+                    args=(_ids, PostStatus.EDITING),
+                    daemon=True,
+                ).start()
+                st.session_state["hidden_post_ids"].update(_ids)
                 st.session_state["selected_posts"] = set()
                 st.rerun()
         with bc2:
@@ -213,8 +203,13 @@ def render() -> None:
                 disabled=n_selected == 0,
                 width="stretch",
             ):
-                for pid in list(st.session_state["selected_posts"]):
-                    update_status(pid, PostStatus.DECLINED)
+                _ids = list(st.session_state["selected_posts"])
+                threading.Thread(
+                    target=batch_update_status,
+                    args=(_ids, PostStatus.DECLINED),
+                    daemon=True,
+                ).start()
+                st.session_state["hidden_post_ids"].update(_ids)
                 st.session_state["selected_posts"] = set()
                 st.rerun()
 
@@ -229,11 +224,17 @@ def render() -> None:
         # ---------------------------------------------------------------------------
         # 게시글 카드 렌더링 헬퍼 (인라인 함수)
         # ---------------------------------------------------------------------------
-        def _render_post_card(post: Post, tier_key: str) -> None:
+        def _render_post_card(
+            post: Post, tier_key: str, preloaded_comments: dict
+        ) -> None:
             """게시글 카드 1개를 렌더링한다."""
+            # 낙관적 UI — 이미 처리된 카드는 렌더링 스킵
+            if post.id in st.session_state.get("hidden_post_ids", set()):
+                return
+
             views, likes, n_comments = stats_display(post.stats)
             score = post.engagement_score or 0
-            best_coms = top_comments(post.id, session, limit=2)
+            best_coms = preloaded_comments.get(post.id, [])[:2]
             has_img = bool(post.images and post.images != "[]")
 
             if score >= 80:
@@ -292,9 +293,11 @@ def render() -> None:
                             lk = f" (+{c.likes})" if c.likes else ""
                             st.text(f"{c.author}: {c.content[:100]}{lk}")
 
-                    # AI 적합도 분석
+                    # AI 적합도 분석 (비동기)
                     ai_key = f"ai_btn_{tier_key}_{post.id}"
                     cached = st.session_state["ai_analysis"].get(post.id)
+                    _task = get_analysis_task(post.id)
+
                     if cached:
                         ai_score = cached.get("score", 0)
                         ai_color = "green" if ai_score >= 7 else ("orange" if ai_score >= 4 else "red")
@@ -305,17 +308,28 @@ def render() -> None:
                         issues = cached.get("issues", [])
                         if issues:
                             st.warning("⚠️ " + " / ".join(issues))
+
+                    elif _task and _task["status"] == "running":
+                        st.info("🔍 AI 분석 중...")
+
+                    elif _task and _task["status"] in ("done", "error"):
+                        # 완료 → ai_analysis cache에 저장 후 task 정리
+                        st.session_state["ai_analysis"][post.id] = _task["result"]
+                        clear_analysis_task(post.id)
+                        st.rerun(scope="fragment")
+
                     else:
                         if st.button("🔍 AI 적합도 분석", key=ai_key, width="content"):
                             if not check_ollama_health():
-                                st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+                                st.error("❌ LLM 서버에 연결할 수 없습니다.")
                             else:
-                                with st.spinner("LLM 분석 중..."):
-                                    result = _run_ai_fit_analysis(
-                                        post, inbox_cfg.get("llm_model", OLLAMA_MODEL)
-                                    )
-                                    st.session_state["ai_analysis"][post.id] = result
-                                    st.rerun()
+                                submit_analysis_task(
+                                    post.id,
+                                    title=post.title,
+                                    content=post.content or "",
+                                    model=inbox_cfg.get("llm_model", OLLAMA_MODEL),
+                                )
+                                st.rerun(scope="fragment")
 
                 with col_act:
                     st.write("")
@@ -326,18 +340,39 @@ def render() -> None:
                         width="stretch",
                         help="승인",
                     ):
-                        update_status(post.id, PostStatus.EDITING)
+                        # DB 업데이트 — 백그라운드 스레드로 위임 (Fire & Forget)
+                        threading.Thread(
+                            target=update_status,
+                            args=(post.id, PostStatus.EDITING),
+                            daemon=True,
+                        ).start()
+                        # 낙관적 UI — session_state에서 즉시 제거
+                        st.session_state["hidden_post_ids"].add(post.id)
                         st.session_state["selected_posts"].discard(post.id)
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     if st.button(
                         "❌",
                         key=f"decline_{tier_key}_{post.id}",
                         width="stretch",
                         help="거절",
                     ):
-                        update_status(post.id, PostStatus.DECLINED)
+                        threading.Thread(
+                            target=update_status,
+                            args=(post.id, PostStatus.DECLINED),
+                            daemon=True,
+                        ).start()
+                        st.session_state["hidden_post_ids"].add(post.id)
                         st.session_state["selected_posts"].discard(post.id)
-                        st.rerun()
+                        st.rerun(scope="fragment")
+
+        # ---------------------------------------------------------------------------
+        # 티어별 렌더링 — @st.fragment로 감싸 버튼 클릭 시 해당 티어만 재실행
+        # ---------------------------------------------------------------------------
+        @st.fragment
+        def _render_tier(tier_posts: list, tier_key: str, preloaded_comments: dict) -> None:
+            """티어별 카드 렌더링 fragment — 버튼 클릭 시 이 블록만 재실행."""
+            for post in tier_posts:
+                _render_post_card(post, tier_key, preloaded_comments)
 
         # ---------------------------------------------------------------------------
         # 🏆 추천 티어 (Score 80+) — 기본 펼침
@@ -355,12 +390,16 @@ def render() -> None:
                     width="stretch",
                     type="primary",
                 ):
-                    for p in high_posts:
-                        update_status(p.id, PostStatus.EDITING)
-                    st.session_state["selected_posts"] -= {p.id for p in high_posts}
+                    _ids = [p.id for p in high_posts]
+                    threading.Thread(
+                        target=batch_update_status,
+                        args=(_ids, PostStatus.EDITING),
+                        daemon=True,
+                    ).start()
+                    st.session_state["hidden_post_ids"].update(_ids)
+                    st.session_state["selected_posts"] -= set(_ids)
                     st.rerun()
-            for post in high_posts:
-                _render_post_card(post, "high")
+            _render_tier(high_posts, "high", _all_comments)
         else:
             st.subheader(tier_h_label)
             st.caption("해당 게시글 없음")
@@ -380,12 +419,16 @@ def render() -> None:
                         key="decline_all_normal",
                         width="stretch",
                     ):
-                        for p in normal_posts:
-                            update_status(p.id, PostStatus.DECLINED)
-                        st.session_state["selected_posts"] -= {p.id for p in normal_posts}
+                        _ids = [p.id for p in normal_posts]
+                        threading.Thread(
+                            target=batch_update_status,
+                            args=(_ids, PostStatus.DECLINED),
+                            daemon=True,
+                        ).start()
+                        st.session_state["hidden_post_ids"].update(_ids)
+                        st.session_state["selected_posts"] -= set(_ids)
                         st.rerun()
-                for post in normal_posts:
-                    _render_post_card(post, "normal")
+                _render_tier(normal_posts, "normal", _all_comments)
             else:
                 st.caption("해당 게시글 없음")
 
@@ -402,11 +445,15 @@ def render() -> None:
                         key="decline_all_low",
                         width="stretch",
                     ):
-                        for p in low_posts:
-                            update_status(p.id, PostStatus.DECLINED)
-                        st.session_state["selected_posts"] -= {p.id for p in low_posts}
+                        _ids = [p.id for p in low_posts]
+                        threading.Thread(
+                            target=batch_update_status,
+                            args=(_ids, PostStatus.DECLINED),
+                            daemon=True,
+                        ).start()
+                        st.session_state["hidden_post_ids"].update(_ids)
+                        st.session_state["selected_posts"] -= set(_ids)
                         st.rerun()
-                for post in low_posts:
-                    _render_post_card(post, "low")
+                _render_tier(low_posts, "low", _all_comments)
             else:
                 st.caption("해당 게시글 없음")

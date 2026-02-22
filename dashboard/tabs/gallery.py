@@ -1,8 +1,10 @@
 """갤러리 (Gallery) 탭."""
 
+import threading as _gal_threading
 from pathlib import Path
 
 import streamlit as st
+from sqlalchemy import func
 
 from config.settings import MEDIA_DIR
 from db.models import Post, PostStatus, Content, ScriptData
@@ -15,19 +17,21 @@ from dashboard.workers.hd_render import (
     hd_render_pending, hd_render_errors, enqueue_hd_render,
 )
 
+# 업로드 작업 레지스트리 (post_id → {"status": ..., "error": ...})
+_upload_tasks: dict[int, dict] = {}
+_upload_lock = _gal_threading.Lock()
+
 
 # ---------------------------------------------------------------------------
 # 갤러리 액션 버튼 fragment
 # ---------------------------------------------------------------------------
 
-@st.fragment(run_every="3s")
+@st.fragment
 def _gallery_action_btn(post_id: int, content_id: int) -> None:
     """갤러리 btn_col1 fragment.
 
-    3초마다 DB를 재조회하여 렌더 완료 즉시 버튼을 자동 전환:
-      PREVIEW_RENDERED + pending  →  🎬 렌더링 중… (disabled)
-      PREVIEW_RENDERED             →  🎬 고화질
-      RENDERED                     →  📤 업로드
+    성능 개선: run_every="3s" 제거 — 12개 아이템 × 3초 = 초당 4회 DB 쿼리 방지.
+    상태 변화는 '새로고침' 버튼 또는 전체 rerun 시 반영.
     버튼 클릭 시 fragment만 재실행 → 전체 페이지 lock 없음.
     """
     with SessionLocal() as _s:
@@ -48,32 +52,52 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
             help="고화질 렌더링이 대기 중이거나 진행 중입니다.",
         )
     elif _post.status == PostStatus.RENDERED:
-        if st.button("📤 업로드", key=f"upload_{content_id}", width="stretch"):
-            try:
-                from uploaders.uploader import upload_post
-                with SessionLocal() as upload_session:
-                    _up = upload_session.get(Post, post_id)
-                    _uc = upload_session.query(Content).filter_by(post_id=post_id).first()
-                    ok = upload_post(_up, _uc, upload_session)
-                    if ok:
-                        _up.status = PostStatus.UPLOADED
-                        upload_session.commit()
-                        st.success("업로드 완료!")
-                        st.rerun()
-                    else:
-                        upload_session.refresh(_uc)
-                        _fail_info = {
-                            k: v.get("error", "알 수 없는 오류")
-                            for k, v in (_uc.upload_meta or {}).items()
-                            if isinstance(v, dict) and v.get("error")
-                        }
-                        if _fail_info:
-                            for _plat, _err in _fail_info.items():
-                                st.error(f"❌ {_plat}: {_err}")
-                        else:
-                            st.error("일부 플랫폼 업로드 실패. 로그를 확인하세요.")
-            except Exception as _e:
-                st.error(f"업로드 오류: {_e}")
+        _upload_task = _upload_tasks.get(post_id)
+
+        if _upload_task and _upload_task["status"] == "running":
+            st.button("📤 업로드 중...", key=f"upload_{content_id}", width="stretch", disabled=True)
+        elif _upload_task and _upload_task["status"] == "error":
+            st.error(f"업로드 실패: {_upload_task.get('error', '')}")
+            with _upload_lock:
+                _upload_tasks.pop(post_id, None)
+        elif _upload_task and _upload_task["status"] == "done":
+            st.success("업로드 완료!")
+            with _upload_lock:
+                _upload_tasks.pop(post_id, None)
+            st.rerun()
+        else:
+            if st.button("📤 업로드", key=f"upload_{content_id}", width="stretch"):
+                def _do_upload(pid: int) -> None:
+                    try:
+                        from uploaders.uploader import upload_post
+                        with SessionLocal() as _us:
+                            _up = _us.get(Post, pid)
+                            _uc = _us.query(Content).filter_by(post_id=pid).first()
+                            ok = upload_post(_up, _uc, _us)
+                            if ok:
+                                _up.status = PostStatus.UPLOADED
+                                _us.commit()
+                                with _upload_lock:
+                                    _upload_tasks[pid] = {"status": "done"}
+                            else:
+                                _us.refresh(_uc)
+                                _fail_info = {
+                                    k: v.get("error", "알 수 없는 오류")
+                                    for k, v in (_uc.upload_meta or {}).items()
+                                    if isinstance(v, dict) and v.get("error")
+                                }
+                                _err_msg = " / ".join(
+                                    f"{p}: {e}" for p, e in _fail_info.items()
+                                ) or "업로드 실패"
+                                with _upload_lock:
+                                    _upload_tasks[pid] = {"status": "error", "error": _err_msg}
+                    except Exception as _e:
+                        with _upload_lock:
+                            _upload_tasks[pid] = {"status": "error", "error": str(_e)}
+
+                with _upload_lock:
+                    _upload_tasks[post_id] = {"status": "running"}
+                _gal_threading.Thread(target=_do_upload, args=(post_id,), daemon=True).start()
     elif _post.status == PostStatus.PREVIEW_RENDERED:
         if st.button(
             "🎬 고화질",
@@ -112,21 +136,32 @@ def render() -> None:
         else [PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED]
     )
 
+    if "gallery_page" not in st.session_state:
+        st.session_state["gallery_page"] = 0
+
+    _GAL_PAGE_SIZE = 12  # 3열 × 4행
+
     with SessionLocal() as session:
-        # 영상이 있는 게시글 조회
+        _total_gal = (
+            session.query(func.count(Content.id))
+            .join(Post)
+            .filter(Post.status.in_(_gal_statuses))
+            .scalar() or 0
+        )
         contents = (
             session.query(Content)
             .join(Post)
             .filter(Post.status.in_(_gal_statuses))
             .order_by(Content.created_at.desc())
-            .limit(20)  # 최대 20개
+            .offset(st.session_state["gallery_page"] * _GAL_PAGE_SIZE)
+            .limit(_GAL_PAGE_SIZE)
             .all()
         )
 
         if not contents:
             st.info("🎥 아직 렌더링된 영상이 없습니다.")
         else:
-            st.caption(f"총 {len(contents)}개의 영상")
+            st.caption(f"총 {_total_gal}개의 영상")
 
             # 3열 그리드 레이아웃
             cols = st.columns(3)
@@ -198,3 +233,20 @@ def render() -> None:
                                     delete_post(post.id)
                                     st.success("삭제됨")
                                     st.rerun()
+
+    # 페이지네이션 버튼 (12건 초과 시)
+    if _total_gal > _GAL_PAGE_SIZE:
+        _gp1, _gp2, _gp3 = st.columns([1, 3, 1])
+        with _gp1:
+            if st.button("◀", disabled=st.session_state["gallery_page"] == 0, key="gal_prev"):
+                st.session_state["gallery_page"] -= 1
+                st.rerun()
+        with _gp2:
+            _cur_page = st.session_state["gallery_page"]
+            _total_pages = (_total_gal + _GAL_PAGE_SIZE - 1) // _GAL_PAGE_SIZE
+            st.caption(f"페이지 {_cur_page + 1} / {_total_pages} (전체 {_total_gal}건)")
+        with _gp3:
+            _has_next = (_cur_page + 1) * _GAL_PAGE_SIZE < _total_gal
+            if st.button("▶", disabled=not _has_next, key="gal_next"):
+                st.session_state["gallery_page"] += 1
+                st.rerun()

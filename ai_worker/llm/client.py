@@ -3,11 +3,32 @@ import logging
 import re
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from config.settings import get_ollama_host, OLLAMA_MODEL
 from db.models import ScriptData  # re-export — 기존 import 경로 호환
 
 logger = logging.getLogger(__name__)
+
+
+def _build_ollama_session() -> requests.Session:
+    """재시도 전략이 포함된 requests 세션 생성."""
+    session = requests.Session()
+    retry = Retry(
+        total=2,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["POST"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+# 모듈 레벨 세션 (재사용으로 커넥션 풀 활용)
+_ollama_session = _build_ollama_session()
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +75,7 @@ _SCRIPT_PROMPT_V2 = """\
 # 내부 헬퍼
 # ---------------------------------------------------------------------------
 
-def _call_ollama(prompt: str, model: str, num_predict: int = 400) -> str:
+def _call_ollama(prompt: str, model: str, num_predict: int = 400, timeout: int = 180) -> str:
     url = f"{get_ollama_host()}/api/generate"
     payload = {
         "model": model,
@@ -62,9 +83,14 @@ def _call_ollama(prompt: str, model: str, num_predict: int = 400) -> str:
         "stream": False,
         "options": {"num_predict": num_predict, "temperature": 0.7},
     }
-    resp = requests.post(url, json=payload, timeout=180)
-    resp.raise_for_status()
-    return resp.json().get("response", "").strip()
+    try:
+        resp = _ollama_session.post(url, json=payload, timeout=(10, timeout))
+        resp.raise_for_status()
+        return resp.json().get("response", "").strip()
+    except requests.Timeout:
+        raise TimeoutError(f"Ollama 응답 타임아웃 ({timeout}초 초과)")
+    except requests.RequestException as e:
+        raise ConnectionError(f"Ollama 연결 오류: {e}") from e
 
 
 def _fix_control_chars(s: str) -> str:
@@ -304,6 +330,7 @@ def call_ollama_raw(
     model: str | None = None,
     max_tokens: int = 512,
     temperature: float = 0.5,
+    timeout: int = 120,
 ) -> str:
     """범용 Ollama API 호출. JSON 파싱 없이 원시 응답 반환.
 
@@ -312,10 +339,11 @@ def call_ollama_raw(
         model: Ollama 모델명 (None이면 기본값)
         max_tokens: 최대 토큰 수
         temperature: 샘플링 온도
+        timeout: 읽기 타임아웃 (초, 기본 2분)
 
     Returns:
         LLM 원시 응답 텍스트
     """
     _model = model or OLLAMA_MODEL
-    raw = _call_ollama(prompt, _model, num_predict=max_tokens)
+    raw = _call_ollama(prompt, _model, num_predict=max_tokens, timeout=timeout)
     return raw

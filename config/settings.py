@@ -1,5 +1,6 @@
 import json
 import os
+import time as _time_cfg
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -114,17 +115,33 @@ def get_pipeline_defaults() -> dict[str, str]:
     return dict(_PIPELINE_DEFAULTS)
 
 
+_pipeline_config_cache: dict = {"data": None, "ts": 0.0}
+_PIPELINE_CONFIG_TTL = 5  # 5초 캐싱 — 매 rerun마다 디스크 읽기 방지
+
+
 def load_pipeline_config() -> dict[str, str]:
+    """pipeline.json 로드 (5초 인메모리 캐싱으로 반복 파일 I/O 방지)."""
+    _now = _time_cfg.time()
+    if (
+        _pipeline_config_cache["data"] is not None
+        and _now - _pipeline_config_cache["ts"] < _PIPELINE_CONFIG_TTL
+    ):
+        return dict(_pipeline_config_cache["data"])
     if _PIPELINE_CONFIG_PATH.exists():
         with open(_PIPELINE_CONFIG_PATH, encoding="utf-8") as f:
-            return {**_PIPELINE_DEFAULTS, **json.load(f)}
-    return dict(_PIPELINE_DEFAULTS)
+            data = {**_PIPELINE_DEFAULTS, **json.load(f)}
+    else:
+        data = dict(_PIPELINE_DEFAULTS)
+    _pipeline_config_cache.update({"data": data, "ts": _now})
+    return dict(data)
 
 
 def save_pipeline_config(cfg: dict[str, str]) -> None:
     _PIPELINE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_PIPELINE_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+    # 캐시 즉시 무효화 — 저장 후 바로 반영되도록
+    _pipeline_config_cache.update({"data": None, "ts": 0.0})
 
 # ---------------------------------------------------------------------------
 # Platform credentials (API keys / OAuth tokens)

@@ -1,11 +1,11 @@
 """편집실 (Editor) 탭."""
 
 import logging
-import time
+import threading
+import time as _perf_time
 from pathlib import Path
 
 import streamlit as st
-from sqlalchemy.orm import selectinload
 
 from config.settings import load_pipeline_config, MEDIA_DIR, ASSETS_DIR
 from db.models import Post, PostStatus, Content, ScriptData
@@ -222,21 +222,42 @@ def render() -> None:
         st.header("✏️ 편집실")
     with _ed_ref:
         if st.button("🔄 새로고침", key="editor_refresh_btn", width="stretch"):
-            st.rerun()
+            st.session_state["hidden_editor_ids"] = set()
+            st.rerun(scope="fragment")
 
     if "editor_idx" not in st.session_state:
         st.session_state["editor_idx"] = 0
+    if "editor_page_offset" not in st.session_state:
+        st.session_state["editor_page_offset"] = 0
+    if "hidden_editor_ids" not in st.session_state:
+        st.session_state["hidden_editor_ids"] = set()
 
-    # ── 1. 편집 대기 게시글 로드 (comments eagerly load) ───────────────────────
+    _EDITOR_PAGE_SIZE = 30  # 한 번에 로드할 최대 게시물 수
+
+    # ── 1. 편집 대기 게시글 로드 (페이지네이션 적용) ───────────────────────────
+    # 성능: selectinload(Post.comments) 제거 — 30개 전체 댓글 로드 → 선택 게시글만 로드
+    _t0_db = _perf_time.perf_counter()
     with SessionLocal() as _ds:
+        _total_editing = (
+            _ds.query(Post)
+            .filter(Post.status == PostStatus.EDITING)
+            .count()
+        )
         approved_posts = (
             _ds.query(Post)
-            .options(selectinload(Post.comments))
             .filter(Post.status == PostStatus.EDITING)
             .order_by(Post.created_at.desc())
+            .offset(st.session_state["editor_page_offset"])
+            .limit(_EDITOR_PAGE_SIZE)
             .all()
         )
-    # 세션 닫힘 — ORM 컬럼/eagerly-loaded 관계는 detached 상태에서도 접근 가능
+    _dur_db = (_perf_time.perf_counter() - _t0_db) * 1000
+    if _dur_db > 100:
+        log.warning("[PERF] editor DB 게시글 로드: %.0fms (SLOW)", _dur_db)
+
+    # 낙관적 UI — 자동생성으로 전송한 게시글은 즉시 목록에서 제외
+    _hidden = st.session_state["hidden_editor_ids"]
+    approved_posts = [p for p in approved_posts if p.id not in _hidden]
 
     if not approved_posts:
         st.info("✏️ 편집 대기 게시글이 없습니다. 수신함에서 먼저 승인하세요.")
@@ -250,7 +271,7 @@ def render() -> None:
     with nav_col:
         if st.button("◀", width="stretch", help="이전 게시글", disabled=idx == 0):
             st.session_state["editor_idx"] = max(0, idx - 1)
-            st.rerun()
+            st.rerun(scope="fragment")
     with sel_col:
         post_labels = [f"[{p.id}] {p.title[:45]}" for p in approved_posts]
         new_idx = st.selectbox(
@@ -260,26 +281,58 @@ def render() -> None:
         )
         if new_idx != idx:
             st.session_state["editor_idx"] = new_idx
-            st.rerun()
+            st.rerun(scope="fragment")
     with auto_col:
         if st.button(
             "🤖 자동생성", width="stretch",
             help="AI 워커에 자동 처리를 맡기고 다음 게시글로 이동합니다",
         ):
             _pid_auto = approved_posts[idx].id
-            try:
-                update_status(_pid_auto, PostStatus.APPROVED)
-                st.session_state["editor_idx"] = max(0, idx - 1)
-            except Exception as _ae:
-                st.error(f"자동 전송 실패: {_ae}")
-            st.rerun()
+            # 진행 중인 LLM/TTS 태스크 즉시 정리 (monitor fragment가 rerun 유발하지 않도록)
+            clear_llm_task(_pid_auto)
+            clear_tts_task(_pid_auto)
+            # 낙관적 UI — 목록에서 즉시 제거
+            st.session_state["hidden_editor_ids"].add(_pid_auto)
+            # DB 업데이트는 백그라운드로 위임
+            threading.Thread(
+                target=update_status,
+                args=(_pid_auto, PostStatus.APPROVED),
+                daemon=True,
+            ).start()
+            # UI는 즉시 다음 게시글로 이동
+            st.session_state["editor_idx"] = max(0, idx - 1)
+            st.rerun(scope="fragment")
+
+    # ── 페이지네이션 버튼 (30건 초과 시) ──────────────────────────────────────
+    if _total_editing > _EDITOR_PAGE_SIZE:
+        _pg_prev, _pg_info, _pg_next = st.columns([1, 3, 1])
+        with _pg_prev:
+            if st.button("◀ 이전 페이지", disabled=st.session_state["editor_page_offset"] == 0):
+                st.session_state["editor_page_offset"] = max(
+                    0, st.session_state["editor_page_offset"] - _EDITOR_PAGE_SIZE
+                )
+                st.session_state["editor_idx"] = 0
+                st.rerun(scope="fragment")
+        with _pg_info:
+            _cur_offset = st.session_state["editor_page_offset"]
+            st.caption(
+                f"전체 {_total_editing}건 중 "
+                f"{_cur_offset + 1}~{min(_cur_offset + _EDITOR_PAGE_SIZE, _total_editing)}건 표시"
+            )
+        with _pg_next:
+            _has_next = st.session_state["editor_page_offset"] + _EDITOR_PAGE_SIZE < _total_editing
+            if st.button("다음 페이지 ▶", disabled=not _has_next):
+                st.session_state["editor_page_offset"] += _EDITOR_PAGE_SIZE
+                st.session_state["editor_idx"] = 0
+                st.rerun(scope="fragment")
 
     selected_post = approved_posts[idx]
     selected_post_id = selected_post.id
     _pid = selected_post_id
     st.caption(f"{idx + 1} / {n_posts}  |  Post ID: {selected_post_id}")
 
-    # ── 3. Content / ScriptData 로드 (별도 짧은 세션) ────────────────────────────
+    # ── 3. Content / ScriptData + 선택 게시글 댓글 로드 (단일 세션) ──────────────
+    from db.models import Comment
     with SessionLocal() as _cs:
         existing_content = (
             _cs.query(Content)
@@ -292,6 +345,14 @@ def render() -> None:
                 script_data = ScriptData.from_json(existing_content.summary_text)
             except Exception:
                 pass
+        # 선택 게시글의 댓글만 로드 (기존: 30개 전체 selectinload → 1개만 쿼리)
+        _selected_comments = (
+            _cs.query(Comment)
+            .filter(Comment.post_id == selected_post_id)
+            .order_by(Comment.likes.desc())
+            .limit(5)
+            .all()
+        )
 
     cfg_editor = load_pipeline_config()
 
@@ -301,7 +362,7 @@ def render() -> None:
         if _llm_task["status"] == "done":
             _inject_ai_result(_pid, _llm_task["result"])
             clear_llm_task(_pid)
-            st.rerun()
+            st.rerun(scope="fragment")
         elif _llm_task["status"] == "error":
             st.error(f"❌ 대본 생성 실패: {_llm_task['error']}")
             clear_llm_task(_pid)
@@ -311,7 +372,7 @@ def render() -> None:
         if _tts_task["status"] == "done":
             st.session_state[f"tts_audio_{_pid}"] = _tts_task["path"]
             clear_tts_task(_pid)
-            st.rerun()
+            st.rerun(scope="fragment")
         elif _tts_task["status"] == "error":
             st.error(f"❌ TTS 미리듣기 실패: {_tts_task['error']}")
             clear_tts_task(_pid)
@@ -330,11 +391,12 @@ def render() -> None:
             f" | 🌐 {selected_post.site_code}"
         )
 
-        render_image_slider(
-            selected_post.images,
-            key_prefix=f"editor_{selected_post_id}",
-            width=360,
-        )
+        with st.expander("📷 이미지 미리보기", expanded=False):
+            render_image_slider(
+                selected_post.images,
+                key_prefix=f"editor_{selected_post_id}",
+                width=360,
+            )
 
         if selected_post.content:
             st.markdown(
@@ -342,10 +404,8 @@ def render() -> None:
                 + ("..." if len(selected_post.content) > 600 else "")
             )
 
-        # 댓글 — selectinload로 미리 로드됨 (별도 세션 불필요)
-        best_coms = sorted(
-            selected_post.comments, key=lambda c: c.likes or 0, reverse=True
-        )[:3]
+        # 댓글 — 선택 게시글만 별도 쿼리로 로드 (likes 내림차순, limit 5)
+        best_coms = _selected_comments[:3]
         if best_coms:
             st.markdown("**💬 베스트 댓글**")
             for c in best_coms:
@@ -394,11 +454,7 @@ def render() -> None:
                 if not check_ollama_health():
                     st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
                 else:
-                    best_list = sorted(
-                        selected_post.comments,
-                        key=lambda c: c.likes or 0,
-                        reverse=True,
-                    )[:5]
+                    best_list = _selected_comments[:5]
                     comment_texts = [
                         f"{c.author}: {c.content[:100]}" for c in best_list
                     ]
@@ -412,7 +468,7 @@ def render() -> None:
                         call_type="generate_script_editor",
                     )
                     if submitted:
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     else:
                         st.info("이미 생성 중입니다.")
 
@@ -518,7 +574,7 @@ def render() -> None:
                     output_path=preview_path,
                 )
                 if submitted:
-                    st.rerun()
+                    st.rerun(scope="fragment")
                 else:
                     st.info("이미 생성 중입니다.")
 
@@ -608,15 +664,52 @@ def render() -> None:
                     try:
                         _persist_script(new_status=PostStatus.APPROVED)
                         st.session_state["editor_idx"] = max(0, idx - 1)
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     except Exception as exc:
                         st.error(f"확정 실패: {exc}")
 
-    # ── 6. 비동기 작업 폴링 — 실행 중인 작업이 있으면 자동 새로고침 ──────────────
-    _task_running = (
-        (_llm_task is not None and _llm_task.get("status") == "running")
-        or (_tts_task is not None and _tts_task.get("status") == "running")
-    )
-    if _task_running:
-        time.sleep(1.5)
-        st.rerun()
+    # ── 6. 비동기 작업 상태 모니터 (fragment — 2초마다 이 블록만 조용히 갱신) ────
+    @st.fragment(run_every="2s")
+    def _task_status_monitor(pid: int) -> None:
+        """LLM / TTS 작업 완료를 2초 간격으로 감지.
+        완료 시점에만 전체 rerun을 트리거하고, 그 전까지는 이 fragment만 갱신.
+        """
+        _l = get_llm_task(pid)
+        _t = get_tts_task(pid)
+
+        if _l:
+            if _l["status"] == "done":
+                _inject_ai_result(pid, _l["result"])
+                clear_llm_task(pid)
+                st.toast("✅ AI 대본 생성 완료!")
+                st.rerun()
+            elif _l["status"] == "error":
+                st.error(f"❌ 대본 생성 실패: {_l.get('error', '알 수 없는 오류')}")
+                clear_llm_task(pid)
+
+        if _t:
+            if _t["status"] == "done":
+                st.session_state[f"tts_audio_{pid}"] = _t["path"]
+                clear_tts_task(pid)
+                st.toast("✅ TTS 미리듣기 완료!")
+                st.rerun()
+            elif _t["status"] == "error":
+                st.error(f"❌ TTS 실패: {_t.get('error', '알 수 없는 오류')}")
+                clear_tts_task(pid)
+
+        _any_running = (
+            (_l is not None and _l.get("status") == "running")
+            or (_t is not None and _t.get("status") == "running")
+        )
+        if not _any_running:
+            return  # 실행 중인 작업 없음
+
+        if _any_running:
+            _msgs = []
+            if _l and _l["status"] == "running":
+                _msgs.append("🤖 AI 대본")
+            if _t and _t["status"] == "running":
+                _msgs.append("🎙️ TTS")
+            st.caption(f"{'·'.join(_msgs)} 생성 중... (자동 감지)")
+
+    _task_status_monitor(_pid)

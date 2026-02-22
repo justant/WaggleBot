@@ -1,6 +1,7 @@
 """대시보드 공통 유틸리티 — 상태, 시간, 통계 헬퍼."""
 
 import logging
+import time as _time_util
 from datetime import timezone, timedelta
 
 import requests as _http
@@ -74,6 +75,25 @@ def update_status(post_id: int, new_status: PostStatus) -> None:
             log.warning("Post %d 상태 업데이트: 0 rows (이미 변경됨?)", post_id)
 
 
+def batch_update_status(post_ids: list[int], new_status: PostStatus) -> int:
+    """여러 게시글 상태를 단일 SQL UPDATE로 일괄 변경 (루프 N회 → 1회)."""
+    from datetime import datetime, timezone
+    from sqlalchemy import update as _sql_update
+
+    if not post_ids:
+        return 0
+    with SessionLocal() as session:
+        result = session.execute(
+            _sql_update(Post)
+            .where(Post.id.in_(post_ids))
+            .values(status=new_status, updated_at=datetime.now(timezone.utc))
+        )
+        session.commit()
+        cnt = result.rowcount
+        log.info("Batch %d posts → %s (%d rows)", len(post_ids), new_status.value, cnt)
+        return cnt
+
+
 def delete_post(post_id: int):
     """게시글 삭제 (Content → Post 순서로 삭제해 FK 제약 위반 방지)"""
     with SessionLocal() as session:
@@ -121,11 +141,23 @@ STATUS_EMOJI = {
 # Ollama 헬스체크
 # ---------------------------------------------------------------------------
 
+_ollama_health_cache: dict = {"status": None, "checked_at": 0.0}
+_OLLAMA_HEALTH_TTL = 30  # 30초 캐싱
+
+
 def check_ollama_health() -> bool:
-    """Ollama 서버 응답 여부를 빠르게 확인 (2초 타임아웃)."""
+    """Ollama 서버 응답 여부를 확인 (30초 캐싱으로 반복 요청 방지)."""
     from config.settings import get_ollama_host
+    _now = _time_util.time()
+    if (
+        _ollama_health_cache["status"] is not None
+        and _now - _ollama_health_cache["checked_at"] < _OLLAMA_HEALTH_TTL
+    ):
+        return _ollama_health_cache["status"]
     try:
         _http.get(f"{get_ollama_host()}/api/tags", timeout=2)
+        _ollama_health_cache.update({"status": True, "checked_at": _now})
         return True
     except Exception:
+        _ollama_health_cache.update({"status": False, "checked_at": _now})
         return False

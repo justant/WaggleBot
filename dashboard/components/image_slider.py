@@ -11,7 +11,7 @@ def _fetch_image(url: str) -> bytes | None:
     """이미지를 캐시하여 반복 요청 방지 (5분 TTL)."""
     try:
         resp = _http.get(
-            url, timeout=8,
+            url, timeout=3,
             headers={"Referer": url, "User-Agent": "Mozilla/5.0"},
         )
         resp.raise_for_status()
@@ -20,8 +20,12 @@ def _fetch_image(url: str) -> bytes | None:
         return None
 
 
+@st.fragment
 def render_image_slider(images_raw: "str | list | None", key_prefix: str, width: int = 320) -> None:
     """이미지 URL 목록을 슬라이드로 렌더링한다.
+
+    @st.fragment로 감싸서 이미지 ◀/▶ 네비게이션 시
+    부모(editor 탭 전체)가 재실행되지 않도록 한다.
 
     - 서버에서 이미지를 프록시로 가져와 핫링크 차단 우회
     - 여러 장이면 ◀ / ▶ 버튼으로 슬라이드 이동
@@ -47,13 +51,13 @@ def render_image_slider(images_raw: "str | list | None", key_prefix: str, width:
         with nav_l:
             if st.button("◀", key=f"img_prev_{key_prefix}", disabled=(cur == 0)):
                 st.session_state[slide_key] = cur - 1
-                st.rerun()
+                st.rerun(scope="fragment")
         with nav_mid:
             st.caption(f"{cur + 1} / {len(imgs)}")
         with nav_r:
             if st.button("▶", key=f"img_next_{key_prefix}", disabled=(cur == len(imgs) - 1)):
                 st.session_state[slide_key] = cur + 1
-                st.rerun()
+                st.rerun(scope="fragment")
 
     img_data = _fetch_image(imgs[cur])
     if img_data:
