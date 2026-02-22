@@ -55,6 +55,7 @@ def crawl_job():
                     log.error("Failed to get crawler '%s': %s", site_code, e)
                 except Exception:
                     log.exception("Error running crawler '%s'", site_code)
+                    session.rollback()
 
         finally:
             session.close()

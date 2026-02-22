@@ -222,6 +222,30 @@ def _get_encoder_args(codec: str) -> list[str]:
 # 이미지 유틸리티
 # ---------------------------------------------------------------------------
 
+_dc_session: requests.Session | None = None
+
+
+def _get_dc_session() -> requests.Session:
+    """DCInside 이미지 다운로드용 세션 (쿠키 워밍업 포함)."""
+    global _dc_session
+    if _dc_session is not None:
+        return _dc_session
+    _dc_session = requests.Session()
+    _dc_session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    })
+    try:
+        _dc_session.get("https://www.dcinside.com/", timeout=10)
+        logger.debug("DCInside 이미지 세션 워밍업 OK (cookies=%d)",
+                     len(_dc_session.cookies))
+    except Exception:
+        logger.debug("DCInside 이미지 세션 워밍업 실패 — 쿠키 없이 시도")
+    return _dc_session
+
+
 def _load_image(src: str, cache_dir: Path) -> Optional[Image.Image]:
     """URL 또는 로컬 경로에서 이미지 로드. 실패 시 None."""
     if src.startswith("http://") or src.startswith("https://"):
@@ -229,10 +253,22 @@ def _load_image(src: str, cache_dir: Path) -> Optional[Image.Image]:
         cache_path = cache_dir / f"img_{url_hash}.jpg"
         if not cache_path.exists():
             try:
-                _hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
                 if "dcinside.com" in src:
-                    _hdrs["Referer"] = "https://gall.dcinside.com/"
-                resp = requests.get(src, timeout=10, headers=_hdrs)
+                    sess = _get_dc_session()
+                    resp = sess.get(src, timeout=10, headers={
+                        "Referer": "https://gall.dcinside.com/",
+                        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                        "Sec-Fetch-Dest": "image",
+                        "Sec-Fetch-Mode": "no-cors",
+                        "Sec-Fetch-Site": "cross-site",
+                    })
+                else:
+                    _hdrs = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                      "Chrome/131.0.0.0 Safari/537.36",
+                    }
+                    resp = requests.get(src, timeout=10, headers=_hdrs)
                 resp.raise_for_status()
                 cache_path.write_bytes(resp.content)
             except Exception as e:

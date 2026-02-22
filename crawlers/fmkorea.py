@@ -1,10 +1,10 @@
 import logging
 import re
-import time
 
 import requests
 from bs4 import BeautifulSoup
 
+from config.crawler import CRAWL_DELAY_COMMENT, CRAWL_DELAY_POST, CRAWL_DELAY_SECTION
 from crawlers.base import BaseCrawler
 from crawlers.plugin_manager import CrawlerRegistry
 
@@ -30,12 +30,25 @@ class FMKoreaCrawler(BaseCrawler):
     def __init__(self) -> None:
         super().__init__()
         self._session.headers.update({
-            "Referer": BASE_URL + "/",
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-User": "?1",
         })
+        self._warmup()
+
+    def _warmup(self) -> None:
+        """홈페이지 방문으로 쿠키 수집 — 첫 접근 시 Referer 없이 방문."""
+        try:
+            resp = self._session.get(BASE_URL + "/", timeout=15)
+            resp.raise_for_status()
+            log.info("FMKorea warmup OK (status=%d, cookies=%d)",
+                     resp.status_code, len(self._session.cookies))
+        except requests.RequestException:
+            log.warning("FMKorea warmup 실패 — 쿠키 없이 계속 진행")
+        # 이후 요청은 홈페이지를 Referer로 사용
+        self._session.headers["Referer"] = BASE_URL + "/"
+        self._human_delay(CRAWL_DELAY_SECTION)
 
     # ------------------------------------------------------------------
     # Listing
@@ -47,13 +60,12 @@ class FMKoreaCrawler(BaseCrawler):
 
         for section in self.SECTIONS:
             try:
-                resp = self._get(section["url"])
+                resp = self._get_with_block_retry(section["url"])
             except requests.HTTPError as e:
                 if e.response is not None and e.response.status_code in (429, 430):
-                    retry_after = e.response.headers.get("Retry-After", "300")
                     log.warning(
-                        "FMKorea 봇 차단 (%d) — 섹션 '%s' 건너뜀. %s초 후 재시도 가능.",
-                        e.response.status_code, section["name"], retry_after,
+                        "FMKorea 봇 차단 (%d) — 섹션 '%s' 재시도 소진.",
+                        e.response.status_code, section["name"],
                     )
                 else:
                     log.exception("Failed to fetch listing: %s", section["url"])
@@ -61,6 +73,9 @@ class FMKoreaCrawler(BaseCrawler):
             except requests.RequestException:
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue
+
+            # 섹션 응답 후 Referer 갱신
+            self._session.headers["Referer"] = section["url"]
 
             soup = BeautifulSoup(resp.content, "html.parser")
             section_count = 0
@@ -88,7 +103,7 @@ class FMKoreaCrawler(BaseCrawler):
                 section_count += 1
 
             log.info("Section '%s': %d new posts", section["name"], section_count)
-            time.sleep(2)  # 섹션 간 딜레이 — rate limit 방지
+            self._human_delay(CRAWL_DELAY_SECTION)
 
         log.info("Total unique posts from listing: %d", len(posts))
         return posts
@@ -106,7 +121,9 @@ class FMKoreaCrawler(BaseCrawler):
     # ------------------------------------------------------------------
 
     def parse_post(self, url: str) -> dict:
-        resp = self._get(url)
+        resp = self._get_with_block_retry(url)
+        # 응답 후 Referer를 해당 포스트 URL로 갱신
+        self._session.headers["Referer"] = url
         soup = BeautifulSoup(resp.content, "html.parser")
 
         # 제목: h1 > span.np_18px_span 또는 h1 직접
@@ -167,7 +184,7 @@ class FMKoreaCrawler(BaseCrawler):
         if cm:
             comment_count = max(comment_count, int(cm.group(1)))
 
-        time.sleep(0.5)
+        self._human_delay(CRAWL_DELAY_POST)
 
         return {
             "title": title,
@@ -199,7 +216,7 @@ class FMKoreaCrawler(BaseCrawler):
             return []
 
         try:
-            resp = self._get(
+            resp = self._get_with_block_retry(
                 COMMENT_API,
                 params={
                     "act": "dispBoardGetMoreCommentList",
@@ -207,12 +224,18 @@ class FMKoreaCrawler(BaseCrawler):
                     "mid": mid,
                     "cpage": "1",
                 },
-                headers={"X-Requested-With": "XMLHttpRequest"},
+                headers={
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-origin",
+                },
             )
         except requests.RequestException:
             log.warning("Failed to fetch comments for srl=%s", document_srl)
             return []
 
+        self._human_delay(CRAWL_DELAY_COMMENT)
         return self._parse_comments(BeautifulSoup(resp.text, "html.parser"))
 
     def _parse_comments(self, soup: BeautifulSoup) -> list[dict]:

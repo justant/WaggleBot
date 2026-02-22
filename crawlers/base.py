@@ -11,7 +11,15 @@ from typing import Callable, TypeVar
 import requests
 from sqlalchemy.orm import Session
 
-from config.settings import REQUEST_HEADERS, REQUEST_TIMEOUT, USER_AGENTS
+from config.settings import (
+    BLOCK_RETRY_BACKOFF,
+    BLOCK_RETRY_BASE_DELAY,
+    BLOCK_RETRY_MAX,
+    BLOCK_RETRY_MAX_DELAY,
+    BROWSER_PROFILES,
+    REQUEST_HEADERS,
+    REQUEST_TIMEOUT,
+)
 from db.models import Post, Comment, PostStatus
 
 log = logging.getLogger(__name__)
@@ -72,13 +80,73 @@ class BaseCrawler(ABC):
     def __init__(self) -> None:
         self._session = requests.Session()
         self._session.headers.update(REQUEST_HEADERS)
+        self._apply_browser_profile()
 
-    def _rotate_ua(self) -> None:
-        self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
+    # ------------------------------------------------------------------
+    # Browser fingerprint helpers
+    # ------------------------------------------------------------------
+
+    def _apply_browser_profile(self) -> None:
+        """세션 시작 시 1회 호출. UA + Client Hints 세트를 일관되게 적용."""
+        profile = random.choice(BROWSER_PROFILES)
+        self._session.headers["User-Agent"] = profile["user_agent"]
+        # Chromium 계열만 Client Hints 전송 (Firefox/Safari는 키 자체가 없음)
+        if "sec_ch_ua" in profile:
+            self._session.headers["Sec-CH-UA"] = profile["sec_ch_ua"]
+            self._session.headers["Sec-CH-UA-Mobile"] = profile["sec_ch_ua_mobile"]
+            self._session.headers["Sec-CH-UA-Platform"] = profile["sec_ch_ua_platform"]
+        else:
+            # Firefox/Safari 프로필 → Client Hints 헤더 제거
+            for key in ("Sec-CH-UA", "Sec-CH-UA-Mobile", "Sec-CH-UA-Platform"):
+                self._session.headers.pop(key, None)
+
+    @staticmethod
+    def _human_delay(delay_range: tuple[float, float]) -> None:
+        """사람처럼 불규칙한 대기."""
+        time.sleep(random.uniform(delay_range[0], delay_range[1]))
+
+    def _get_with_block_retry(
+        self, url: str, max_retries: int = BLOCK_RETRY_MAX, **kwargs
+    ) -> requests.Response:
+        """429/430 봇 차단 시 지수적 대기 후 재시도. 일반 _get() 실패는 그대로 raise."""
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        current_delay = BLOCK_RETRY_BASE_DELAY
+
+        for attempt in range(max_retries + 1):
+            try:
+                resp = self._session.get(url, **kwargs)
+                resp.raise_for_status()
+                return resp
+            except requests.HTTPError as e:
+                if (
+                    e.response is not None
+                    and e.response.status_code in (429, 430)
+                    and attempt < max_retries
+                ):
+                    # Retry-After 헤더 존중
+                    retry_after = e.response.headers.get("Retry-After")
+                    wait = (
+                        min(float(retry_after), BLOCK_RETRY_MAX_DELAY)
+                        if retry_after
+                        else min(current_delay, BLOCK_RETRY_MAX_DELAY)
+                    )
+                    log.warning(
+                        "봇 차단 %d — %s (재시도 %d/%d, %.0f초 대기)",
+                        e.response.status_code, url,
+                        attempt + 1, max_retries, wait,
+                    )
+                    time.sleep(wait)
+                    current_delay *= BLOCK_RETRY_BACKOFF
+                    # 재시도마다 브라우저 프로필 교체
+                    self._apply_browser_profile()
+                    continue
+                raise
+
+        # unreachable, but satisfy type checker
+        raise requests.RequestException(f"Block retry exhausted for {url}")
 
     @retry(max_attempts=3, delay=1.0, skip_on_status=(429, 430))
     def _get(self, url: str, **kwargs) -> requests.Response:
-        self._rotate_ua()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
         resp = self._session.get(url, **kwargs)
         resp.raise_for_status()
@@ -86,7 +154,6 @@ class BaseCrawler(ABC):
 
     @retry(max_attempts=3, delay=1.0)
     def _post(self, url: str, **kwargs) -> requests.Response:
-        self._rotate_ua()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
         resp = self._session.post(url, **kwargs)
         resp.raise_for_status()
@@ -120,26 +187,34 @@ class BaseCrawler(ABC):
         listings = self.fetch_listing()
         log.info("[%s] Found %d posts in listing", self.site_code, len(listings))
 
+        saved = 0
+        skipped = 0
         for item in listings:
             origin_id = str(item["origin_id"])
             try:
                 detail = self.parse_post(item["url"])
             except Exception:
                 log.exception("Failed to parse %s", item["url"])
+                skipped += 1
                 continue
 
             try:
-                with session.begin_nested():
-                    self._upsert(session, origin_id, detail)
+                self._upsert(session, origin_id, detail)
+                session.commit()
+                saved += 1
             except Exception as e:
+                session.rollback()
                 # 중복 키 등 제약 위반 — 해당 포스트만 건너뜀, 배치 계속 진행
                 log.warning(
                     "[%s] upsert 건너뜀: origin_id=%s — %s",
                     self.site_code, origin_id, e,
                 )
+                skipped += 1
 
-        session.commit()
-        log.info("[%s] Crawl batch committed", self.site_code)
+        log.info(
+            "[%s] Crawl batch done: saved=%d, skipped=%d, total=%d",
+            self.site_code, saved, skipped, len(listings),
+        )
 
     @staticmethod
     def calculate_engagement_score(

@@ -13,6 +13,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # re-export — 기존 import 경로 호환
 # ---------------------------------------------------------------------------
 from config.crawler import (  # noqa: E402
+    BLOCK_RETRY_BACKOFF,
+    BLOCK_RETRY_BASE_DELAY,
+    BLOCK_RETRY_MAX,
+    BLOCK_RETRY_MAX_DELAY,
+    BROWSER_PROFILES,
+    CRAWL_DELAY_COMMENT,
+    CRAWL_DELAY_POST,
+    CRAWL_DELAY_SECTION,
     CRAWL_INTERVAL_HOURS,
     ENABLED_CRAWLERS,
     REQUEST_HEADERS,
