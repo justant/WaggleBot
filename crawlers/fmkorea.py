@@ -29,7 +29,13 @@ class FMKoreaCrawler(BaseCrawler):
 
     def __init__(self) -> None:
         super().__init__()
-        self._session.headers["Referer"] = BASE_URL + "/"
+        self._session.headers.update({
+            "Referer": BASE_URL + "/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+        })
 
     # ------------------------------------------------------------------
     # Listing
@@ -42,6 +48,16 @@ class FMKoreaCrawler(BaseCrawler):
         for section in self.SECTIONS:
             try:
                 resp = self._get(section["url"])
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code in (429, 430):
+                    retry_after = e.response.headers.get("Retry-After", "300")
+                    log.warning(
+                        "FMKorea 봇 차단 (%d) — 섹션 '%s' 건너뜀. %s초 후 재시도 가능.",
+                        e.response.status_code, section["name"], retry_after,
+                    )
+                else:
+                    log.exception("Failed to fetch listing: %s", section["url"])
+                continue
             except requests.RequestException:
                 log.exception("Failed to fetch listing: %s", section["url"])
                 continue

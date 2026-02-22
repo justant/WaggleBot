@@ -24,6 +24,7 @@ def retry(
     delay: float = 1.0,
     backoff: float = 2.0,
     exceptions: tuple = (requests.RequestException,),
+    skip_on_status: tuple[int, ...] = (),
 ) -> Callable:
     """HTTP 요청 재시도 데코레이터.
 
@@ -32,6 +33,7 @@ def retry(
         delay: 첫 대기 시간 (초)
         backoff: 대기 시간 배수
         exceptions: 재시도할 예외 타입
+        skip_on_status: 재시도 없이 즉시 raise할 HTTP 상태코드 (봇 차단 등)
     """
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
@@ -42,6 +44,14 @@ def retry(
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
+                    # 봇 차단 등 즉시 포기할 상태코드는 재시도 없이 raise
+                    if (
+                        skip_on_status
+                        and isinstance(e, requests.HTTPError)
+                        and e.response is not None
+                        and e.response.status_code in skip_on_status
+                    ):
+                        raise
                     last_exception = e
                     if attempt < max_attempts:
                         log.warning(
@@ -66,7 +76,7 @@ class BaseCrawler(ABC):
     def _rotate_ua(self) -> None:
         self._session.headers["User-Agent"] = random.choice(USER_AGENTS)
 
-    @retry(max_attempts=3, delay=1.0)
+    @retry(max_attempts=3, delay=1.0, skip_on_status=(429, 430))
     def _get(self, url: str, **kwargs) -> requests.Response:
         self._rotate_ua()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)

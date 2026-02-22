@@ -19,7 +19,11 @@ USER_AGENTS: list[str] = [
 ]
 
 REQUEST_HEADERS: dict[str, str] = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "15"))
