@@ -267,7 +267,7 @@ def render() -> None:
     n_posts = len(approved_posts)
     idx = min(st.session_state["editor_idx"], n_posts - 1)
 
-    nav_col, sel_col, auto_col = st.columns([1, 5, 1])
+    nav_col, sel_col = st.columns([1, 7])
     with nav_col:
         if st.button("◀", width="stretch", help="이전 게시글", disabled=idx == 0):
             st.session_state["editor_idx"] = max(0, idx - 1)
@@ -281,26 +281,6 @@ def render() -> None:
         )
         if new_idx != idx:
             st.session_state["editor_idx"] = new_idx
-            st.rerun(scope="fragment")
-    with auto_col:
-        if st.button(
-            "🤖 자동생성", width="stretch",
-            help="AI 워커에 자동 처리를 맡기고 다음 게시글로 이동합니다",
-        ):
-            _pid_auto = approved_posts[idx].id
-            # 진행 중인 LLM/TTS 태스크 즉시 정리 (monitor fragment가 rerun 유발하지 않도록)
-            clear_llm_task(_pid_auto)
-            clear_tts_task(_pid_auto)
-            # 낙관적 UI — 목록에서 즉시 제거
-            st.session_state["hidden_editor_ids"].add(_pid_auto)
-            # DB 업데이트는 백그라운드로 위임
-            threading.Thread(
-                target=update_status,
-                args=(_pid_auto, PostStatus.APPROVED),
-                daemon=True,
-            ).start()
-            # UI는 즉시 다음 게시글로 이동
-            st.session_state["editor_idx"] = max(0, idx - 1)
             st.rerun(scope="fragment")
 
     # ── 페이지네이션 버튼 (30건 초과 시) ──────────────────────────────────────
@@ -641,7 +621,25 @@ def render() -> None:
                 return False
             return True
 
-        save_c, confirm_c = st.columns(2)
+        auto_c, save_c, confirm_c = st.columns(3)
+        with auto_c:
+            if st.button(
+                "🤖 자동생성", width="stretch",
+                key=f"auto_gen_{selected_post_id}",
+                help="AI 워커에 자동 처리를 맡기고 다음 게시글로 이동합니다",
+                disabled=_llm_running,
+            ):
+                _pid_auto = approved_posts[idx].id
+                clear_llm_task(_pid_auto)
+                clear_tts_task(_pid_auto)
+                st.session_state["hidden_editor_ids"].add(_pid_auto)
+                threading.Thread(
+                    target=update_status,
+                    args=(_pid_auto, PostStatus.APPROVED),
+                    daemon=True,
+                ).start()
+                st.session_state["editor_idx"] = max(0, idx - 1)
+                st.rerun(scope="fragment")
         with save_c:
             if st.button(
                 "💾 저장", width="stretch",
