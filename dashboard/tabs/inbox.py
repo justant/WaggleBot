@@ -6,8 +6,8 @@ import threading
 import streamlit as st
 from sqlalchemy import func, or_
 
-from config.settings import load_pipeline_config, OLLAMA_MODEL
-from crawlers.plugin_manager import list_crawlers
+from config.settings import load_pipeline_config, OLLAMA_MODEL, ENABLED_CRAWLERS
+from crawlers.plugin_manager import list_crawlers, CrawlerRegistry
 from db.models import Post, PostStatus
 from db.session import SessionLocal
 
@@ -20,6 +20,48 @@ from dashboard.workers.ai_analysis_tasks import (
 )
 
 log = logging.getLogger(__name__)
+
+_crawl_lock = threading.Lock()
+
+
+def _run_crawl_job() -> dict[str, str]:
+    """활성화된 크롤러를 순차 실행한다. (백그라운드 스레드용)
+
+    Returns:
+        결과 딕셔너리 {"status": "done"|"error", "message": str}
+    """
+    if not _crawl_lock.acquire(blocking=False):
+        return {"status": "error", "message": "이미 크롤링이 실행 중입니다."}
+
+    try:
+        enabled_sites = [s.strip() for s in ENABLED_CRAWLERS if s.strip()]
+        if not enabled_sites:
+            return {"status": "error", "message": "활성화된 크롤러가 없습니다."}
+
+        results: list[str] = []
+        with SessionLocal() as session:
+            for site_code in enabled_sites:
+                try:
+                    crawler = CrawlerRegistry.get_crawler(site_code)
+                    crawler.run(session)
+                    results.append(f"✅ {site_code}")
+                except Exception:
+                    log.exception("Manual crawl failed: %s", site_code)
+                    session.rollback()
+                    results.append(f"❌ {site_code}")
+
+        return {"status": "done", "message": " | ".join(results)}
+    finally:
+        _crawl_lock.release()
+
+
+def _trigger_crawl() -> None:
+    """백그라운드 크롤링 실행 후 session_state에 결과 저장."""
+    try:
+        result = _run_crawl_job()
+        st.session_state["crawl_result"] = result
+    finally:
+        st.session_state["crawl_running"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -77,16 +119,35 @@ def render() -> None:
     # ---------------------------------------------------------------------------
     # 헤더 & 필터
     # ---------------------------------------------------------------------------
-    hdr_col, ref_col = st.columns([5, 1])
+    # 크롤링 완료 알림 (이전 사이클 결과)
+    _cr = st.session_state.pop("crawl_result", None)
+    if _cr:
+        if _cr["status"] == "done":
+            st.toast(f"🕷️ 크롤링 완료: {_cr['message']}", icon="✅")
+        else:
+            st.toast(f"🕷️ {_cr['message']}", icon="⚠️")
+
+    hdr_col, crawl_col, ref_col = st.columns([4, 1, 1])
     with hdr_col:
         st.header("📥 수신함 (Collected)")
         if auto_approve_enabled:
             st.caption(f"🤖 자동 승인 활성화 중 — Score ≥ {auto_threshold} 자동 처리")
         else:
             st.caption("검토 대기 중인 게시글을 승인하거나 거절하세요")
+    with crawl_col:
+        _crawl_running = st.session_state.get("crawl_running", False)
+        if st.button(
+            "🕷️ 크롤링 중…" if _crawl_running else "🕷️ 크롤링",
+            disabled=_crawl_running,
+            width="stretch",
+            key="crawl_trigger_btn",
+            help="활성화된 크롤러를 수동으로 즉시 실행합니다",
+        ):
+            st.session_state["crawl_running"] = True
+            threading.Thread(target=_trigger_crawl, daemon=True).start()
+            st.toast("🕷️ 크롤링을 시작합니다…", icon="⏳")
     with ref_col:
         if st.button("🔄 새로고침", width="stretch"):
-            # 새로고침 시 hidden_post_ids 초기화 (DB 상태와 동기화)
             st.session_state["hidden_post_ids"] = set()
             st.session_state["inbox_page"] = 0
             st.rerun()

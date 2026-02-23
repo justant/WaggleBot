@@ -1,10 +1,16 @@
 import logging
 import re
 
+import cloudscraper
 import requests
 from bs4 import BeautifulSoup
 
-from config.crawler import CRAWL_DELAY_COMMENT, CRAWL_DELAY_POST, CRAWL_DELAY_SECTION
+from config.crawler import (
+    CRAWL_DELAY_COMMENT,
+    CRAWL_DELAY_POST,
+    CRAWL_DELAY_SECTION,
+    REQUEST_HEADERS,
+)
 from crawlers.base import BaseCrawler
 from crawlers.plugin_manager import CrawlerRegistry
 
@@ -29,6 +35,15 @@ class FMKoreaCrawler(BaseCrawler):
 
     def __init__(self) -> None:
         super().__init__()
+        # cloudscraper 세션으로 교체 — TLS 핑거프린트 + JS 챌린지 봇 차단 우회
+        self._session = cloudscraper.create_scraper(
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "mobile": False,
+            },
+        )
+        self._session.headers.update(REQUEST_HEADERS)
         self._session.headers.update({
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",

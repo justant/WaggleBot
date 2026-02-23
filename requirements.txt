@@ -1,6 +1,7 @@
 sqlalchemy>=2.0
 pymysql
 requests
+cloudscraper
 beautifulsoup4
 apscheduler>=3.10
 python-dotenv

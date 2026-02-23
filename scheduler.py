@@ -96,6 +96,7 @@ def start_scheduler():
         hours=CRAWL_INTERVAL_HOURS,
         id="crawler_job",
         max_instances=1,
+        misfire_grace_time=600,  # 10분까지 지연 허용 (Docker 환경 대응)
     )
 
     log.info(
