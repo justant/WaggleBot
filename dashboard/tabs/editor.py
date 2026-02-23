@@ -12,7 +12,7 @@ from db.models import Post, PostStatus, Content, ScriptData
 from db.session import SessionLocal
 
 from dashboard.components.status_utils import (
-    to_kst, stats_display, check_ollama_health, update_status,
+    to_kst, stats_display, check_ollama_health, update_status, delete_post,
 )
 from dashboard.components.image_slider import render_image_slider
 from dashboard.components.style_presets import load_style_presets
@@ -350,10 +350,19 @@ def render() -> None:
         if _llm_task["status"] == "done":
             _inject_ai_result(_pid, _llm_task["result"])
             clear_llm_task(_pid)
-            _safe_rerun_fragment()
+            st.session_state.pop(f"_llm_gen_requested_{_pid}", None)
+            # 전체 rerun 필수: _scene_editor_frag (nested fragment)가
+            # fragment-scoped rerun에서는 재실행되지 않아 body가 갱신 안 됨
+            st.rerun()
         elif _llm_task["status"] == "error":
             st.error(f"❌ 대본 생성 실패: {_llm_task['error']}")
             clear_llm_task(_pid)
+            st.session_state.pop(f"_llm_gen_requested_{_pid}", None)
+    elif st.session_state.pop(f"_llm_gen_requested_{_pid}", None) and script_data:
+        # 인메모리 태스크가 GC됐지만(5분 TTL) DB에 결과가 저장된 경우:
+        # DB script_data로 강제 주입 → 전체 rerun으로 nested fragment 갱신
+        _inject_ai_result(_pid, script_data)
+        st.rerun()
 
     _tts_task = get_tts_task(_pid)
     if _tts_task:
@@ -456,6 +465,7 @@ def render() -> None:
                         call_type="generate_script_editor",
                     )
                     if submitted:
+                        st.session_state[f"_llm_gen_requested_{_pid}"] = _perf_time.time()
                         _safe_rerun_fragment()
                     else:
                         st.info("이미 생성 중입니다.")
@@ -629,7 +639,39 @@ def render() -> None:
                 return False
             return True
 
-        auto_c, save_c, confirm_c = st.columns(3)
+        del_c, auto_c, save_c, confirm_c = st.columns(4)
+        with del_c:
+            _del_key = f"del_confirm_{selected_post_id}"
+            if _del_key not in st.session_state:
+                st.session_state[_del_key] = False
+            if st.session_state[_del_key]:
+                st.caption("정말 삭제?")
+                _y, _n = st.columns(2)
+                with _y:
+                    if st.button("삭제", key=f"del_yes_{selected_post_id}", type="primary", width="stretch"):
+                        clear_llm_task(selected_post_id)
+                        clear_tts_task(selected_post_id)
+                        threading.Thread(
+                            target=delete_post,
+                            args=(selected_post_id,),
+                            daemon=True,
+                        ).start()
+                        st.session_state["hidden_editor_ids"].add(selected_post_id)
+                        st.session_state["editor_idx"] = max(0, idx - 1)
+                        st.session_state[_del_key] = False
+                        _safe_rerun_fragment()
+                with _n:
+                    if st.button("취소", key=f"del_no_{selected_post_id}", width="stretch"):
+                        st.session_state[_del_key] = False
+                        _safe_rerun_fragment()
+            else:
+                if st.button(
+                    "🗑️ 삭제", width="stretch",
+                    key=f"del_post_{selected_post_id}",
+                    help="이 게시글을 영구 삭제합니다 (복구 불가)",
+                ):
+                    st.session_state[_del_key] = True
+                    _safe_rerun_fragment()
         with auto_c:
             if st.button(
                 "🤖 자동생성", width="stretch",
@@ -687,11 +729,13 @@ def render() -> None:
             if _l["status"] == "done":
                 _inject_ai_result(pid, _l["result"])
                 clear_llm_task(pid)
+                st.session_state.pop(f"_llm_gen_requested_{pid}", None)
                 st.toast("✅ AI 대본 생성 완료!")
                 st.rerun()
             elif _l["status"] == "error":
                 st.error(f"❌ 대본 생성 실패: {_l.get('error', '알 수 없는 오류')}")
                 clear_llm_task(pid)
+                st.session_state.pop(f"_llm_gen_requested_{pid}", None)
 
         if _t:
             if _t["status"] == "done":
