@@ -25,6 +25,14 @@ from dashboard.workers.editor_tasks import (
 log = logging.getLogger(__name__)
 
 
+def _safe_rerun_fragment() -> None:
+    """fragment rerun 컨텍스트에서만 scope='fragment' 사용, 아니면 전체 rerun."""
+    try:
+        st.rerun(scope="fragment")
+    except st.errors.StreamlitAPIException:
+        st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # 탭 전용 헬퍼
 # ---------------------------------------------------------------------------
@@ -223,7 +231,7 @@ def render() -> None:
     with _ed_ref:
         if st.button("🔄 새로고침", key="editor_refresh_btn", width="stretch"):
             st.session_state["hidden_editor_ids"] = set()
-            st.rerun(scope="fragment")
+            _safe_rerun_fragment()
 
     if "editor_idx" not in st.session_state:
         st.session_state["editor_idx"] = 0
@@ -271,7 +279,7 @@ def render() -> None:
     with nav_col:
         if st.button("◀", width="stretch", help="이전 게시글", disabled=idx == 0):
             st.session_state["editor_idx"] = max(0, idx - 1)
-            st.rerun(scope="fragment")
+            _safe_rerun_fragment()
     with sel_col:
         post_labels = [f"[{p.id}] {p.title[:45]}" for p in approved_posts]
         new_idx = st.selectbox(
@@ -281,7 +289,7 @@ def render() -> None:
         )
         if new_idx != idx:
             st.session_state["editor_idx"] = new_idx
-            st.rerun(scope="fragment")
+            _safe_rerun_fragment()
 
     # ── 페이지네이션 버튼 (30건 초과 시) ──────────────────────────────────────
     if _total_editing > _EDITOR_PAGE_SIZE:
@@ -292,7 +300,7 @@ def render() -> None:
                     0, st.session_state["editor_page_offset"] - _EDITOR_PAGE_SIZE
                 )
                 st.session_state["editor_idx"] = 0
-                st.rerun(scope="fragment")
+                _safe_rerun_fragment()
         with _pg_info:
             _cur_offset = st.session_state["editor_page_offset"]
             st.caption(
@@ -304,7 +312,7 @@ def render() -> None:
             if st.button("다음 페이지 ▶", disabled=not _has_next):
                 st.session_state["editor_page_offset"] += _EDITOR_PAGE_SIZE
                 st.session_state["editor_idx"] = 0
-                st.rerun(scope="fragment")
+                _safe_rerun_fragment()
 
     selected_post = approved_posts[idx]
     selected_post_id = selected_post.id
@@ -342,7 +350,7 @@ def render() -> None:
         if _llm_task["status"] == "done":
             _inject_ai_result(_pid, _llm_task["result"])
             clear_llm_task(_pid)
-            st.rerun(scope="fragment")
+            _safe_rerun_fragment()
         elif _llm_task["status"] == "error":
             st.error(f"❌ 대본 생성 실패: {_llm_task['error']}")
             clear_llm_task(_pid)
@@ -352,7 +360,7 @@ def render() -> None:
         if _tts_task["status"] == "done":
             st.session_state[f"tts_audio_{_pid}"] = _tts_task["path"]
             clear_tts_task(_pid)
-            st.rerun(scope="fragment")
+            _safe_rerun_fragment()
         elif _tts_task["status"] == "error":
             st.error(f"❌ TTS 미리듣기 실패: {_tts_task['error']}")
             clear_tts_task(_pid)
@@ -448,7 +456,7 @@ def render() -> None:
                         call_type="generate_script_editor",
                     )
                     if submitted:
-                        st.rerun(scope="fragment")
+                        _safe_rerun_fragment()
                     else:
                         st.info("이미 생성 중입니다.")
 
@@ -554,7 +562,7 @@ def render() -> None:
                     output_path=preview_path,
                 )
                 if submitted:
-                    st.rerun(scope="fragment")
+                    _safe_rerun_fragment()
                 else:
                     st.info("이미 생성 중입니다.")
 
@@ -639,7 +647,7 @@ def render() -> None:
                     daemon=True,
                 ).start()
                 st.session_state["editor_idx"] = max(0, idx - 1)
-                st.rerun(scope="fragment")
+                _safe_rerun_fragment()
         with save_c:
             if st.button(
                 "💾 저장", width="stretch",
@@ -662,7 +670,7 @@ def render() -> None:
                     try:
                         _persist_script(new_status=PostStatus.APPROVED)
                         st.session_state["editor_idx"] = max(0, idx - 1)
-                        st.rerun(scope="fragment")
+                        _safe_rerun_fragment()
                     except Exception as exc:
                         st.error(f"확정 실패: {exc}")
 

@@ -24,6 +24,14 @@ log = logging.getLogger(__name__)
 _crawl_lock = threading.Lock()
 
 
+def _safe_rerun_fragment() -> None:
+    """fragment rerun 컨텍스트에서만 scope='fragment' 사용, 아니면 전체 rerun."""
+    try:
+        st.rerun(scope="fragment")
+    except st.errors.StreamlitAPIException:
+        st.rerun()
+
+
 def _run_crawl_job() -> dict[str, str]:
     """활성화된 크롤러를 순차 실행한다. (백그라운드 스레드용)
 
@@ -401,7 +409,7 @@ def render() -> None:
                         # 완료 → ai_analysis cache에 저장 후 task 정리
                         st.session_state["ai_analysis"][post.id] = _task["result"]
                         clear_analysis_task(post.id)
-                        st.rerun(scope="fragment")
+                        _safe_rerun_fragment()
 
                     else:
                         if st.button("🔍 AI 적합도 분석", key=ai_key, width="content"):
@@ -414,7 +422,7 @@ def render() -> None:
                                     content=post.content or "",
                                     model=inbox_cfg.get("llm_model", OLLAMA_MODEL),
                                 )
-                                st.rerun(scope="fragment")
+                                _safe_rerun_fragment()
 
                 with col_act:
                     st.write("")
@@ -434,7 +442,7 @@ def render() -> None:
                         # 낙관적 UI — session_state에서 즉시 제거
                         st.session_state["hidden_post_ids"].add(post.id)
                         st.session_state["selected_posts"].discard(post.id)
-                        st.rerun(scope="fragment")
+                        _safe_rerun_fragment()
                     if st.button(
                         "❌",
                         key=f"decline_{tier_key}_{post.id}",
@@ -448,7 +456,7 @@ def render() -> None:
                         ).start()
                         st.session_state["hidden_post_ids"].add(post.id)
                         st.session_state["selected_posts"].discard(post.id)
-                        st.rerun(scope="fragment")
+                        _safe_rerun_fragment()
 
         # ---------------------------------------------------------------------------
         # 티어별 렌더링 — @st.fragment로 감싸 버튼 클릭 시 해당 티어만 재실행

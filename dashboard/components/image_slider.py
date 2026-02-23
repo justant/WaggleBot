@@ -6,6 +6,14 @@ import requests as _http
 import streamlit as st
 
 
+def _safe_rerun_fragment() -> None:
+    """fragment rerun 컨텍스트에서만 scope='fragment' 사용, 아니면 전체 rerun."""
+    try:
+        st.rerun(scope="fragment")
+    except st.errors.StreamlitAPIException:
+        st.rerun()
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_image(url: str) -> bytes | None:
     """이미지를 캐시하여 반복 요청 방지 (5분 TTL)."""
@@ -51,13 +59,13 @@ def render_image_slider(images_raw: "str | list | None", key_prefix: str, width:
         with nav_l:
             if st.button("◀", key=f"img_prev_{key_prefix}", disabled=(cur == 0)):
                 st.session_state[slide_key] = cur - 1
-                st.rerun(scope="fragment")
+                _safe_rerun_fragment()
         with nav_mid:
             st.caption(f"{cur + 1} / {len(imgs)}")
         with nav_r:
             if st.button("▶", key=f"img_next_{key_prefix}", disabled=(cur == len(imgs) - 1)):
                 st.session_state[slide_key] = cur + 1
-                st.rerun(scope="fragment")
+                _safe_rerun_fragment()
 
     img_data = _fetch_image(imgs[cur])
     if img_data:
