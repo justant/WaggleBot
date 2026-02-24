@@ -62,47 +62,101 @@ def update_status(post_id: int, new_status: PostStatus) -> None:
     from datetime import datetime, timezone
     from sqlalchemy import update as _sql_update
 
-    with SessionLocal() as session:
-        result = session.execute(
-            _sql_update(Post)
-            .where(Post.id == post_id)
-            .values(status=new_status, updated_at=datetime.now(timezone.utc))
-        )
-        session.commit()
-        if result.rowcount > 0:
-            log.info("Post %d → %s", post_id, new_status.value)
-        else:
-            log.warning("Post %d 상태 업데이트: 0 rows (이미 변경됨?)", post_id)
+    try:
+        with SessionLocal() as session:
+            result = session.execute(
+                _sql_update(Post)
+                .where(Post.id == post_id)
+                .values(status=new_status, updated_at=datetime.now(timezone.utc))
+            )
+            session.commit()
+            if result.rowcount > 0:
+                log.info("Post %d → %s", post_id, new_status.value)
+            else:
+                log.warning("Post %d 상태 업데이트: 0 rows (이미 변경됨?)", post_id)
+    except Exception as exc:
+        log.exception("Post %d 상태 업데이트 실패: %s", post_id, exc)
+        try:
+            import streamlit as _st_fb
+            _st_fb.session_state["_status_update_error"] = {
+                "post_id": post_id,
+                "target": new_status.value,
+                "error": str(exc),
+            }
+        except Exception:
+            pass
 
 
 def batch_update_status(post_ids: list[int], new_status: PostStatus) -> int:
-    """여러 게시글 상태를 단일 SQL UPDATE로 일괄 변경 (루프 N회 → 1회)."""
+    """여러 게시글 상태를 단일 SQL UPDATE로 일괄 변경 (루프 N회 → 1회).
+
+    성공/실패 결과를 session_state에 기록해 UI 피드백으로 표시.
+    """
     from datetime import datetime, timezone
     from sqlalchemy import update as _sql_update
 
     if not post_ids:
         return 0
-    with SessionLocal() as session:
-        result = session.execute(
-            _sql_update(Post)
-            .where(Post.id.in_(post_ids))
-            .values(status=new_status, updated_at=datetime.now(timezone.utc))
-        )
-        session.commit()
-        cnt = result.rowcount
-        log.info("Batch %d posts → %s (%d rows)", len(post_ids), new_status.value, cnt)
-        return cnt
+    try:
+        with SessionLocal() as session:
+            result = session.execute(
+                _sql_update(Post)
+                .where(Post.id.in_(post_ids))
+                .values(status=new_status, updated_at=datetime.now(timezone.utc))
+            )
+            session.commit()
+            cnt = result.rowcount
+            log.info("Batch %d posts → %s (%d rows)", len(post_ids), new_status.value, cnt)
+            # 성공 피드백 저장
+            try:
+                import streamlit as _st_fb
+                _st_fb.session_state["_batch_result"] = {
+                    "status": "done",
+                    "count": cnt,
+                    "target": new_status.value,
+                }
+            except Exception:
+                pass
+            return cnt
+    except Exception as exc:
+        log.exception("Batch update failed: %s", exc)
+        try:
+            import streamlit as _st_fb
+            _st_fb.session_state["_batch_result"] = {
+                "status": "error",
+                "error": str(exc),
+                "target": new_status.value,
+            }
+        except Exception:
+            pass
+        return 0
 
 
 def delete_post(post_id: int):
-    """게시글 삭제 (Content → Post 순서로 삭제해 FK 제약 위반 방지)"""
+    """게시글 삭제 (Content → Post 순서로 삭제해 FK 제약 위반 방지).
+
+    삭제 전 (site_code, origin_id)를 crawl_blocklist에 등록하여 재수집을 방지한다.
+    """
+    from db.models import CrawlBlocklist
+
     with SessionLocal() as session:
-        content = session.query(Content).filter_by(post_id=post_id).first()
-        if content:
-            session.delete(content)
-            session.flush()
         post = session.get(Post, post_id)
         if post:
+            # 블록리스트 등록 (재수집 방지)
+            exists = session.query(CrawlBlocklist).filter_by(
+                site_code=post.site_code, origin_id=post.origin_id
+            ).first()
+            if not exists:
+                session.add(CrawlBlocklist(
+                    site_code=post.site_code, origin_id=post.origin_id
+                ))
+                session.flush()
+
+            # Content → Post 순서로 삭제
+            content = session.query(Content).filter_by(post_id=post_id).first()
+            if content:
+                session.delete(content)
+                session.flush()
             session.delete(post)
         session.commit()
         log.info("Post %d deleted", post_id)
@@ -134,6 +188,19 @@ STATUS_EMOJI = {
     PostStatus.UPLOADED: "📤",
     PostStatus.DECLINED: "❌",
     PostStatus.FAILED: "⚠️",
+}
+
+# 접근성용 텍스트 라벨 (색상/이모지 외에 텍스트로 상태 구분 가능)
+STATUS_TEXT = {
+    PostStatus.COLLECTED: "수집됨",
+    PostStatus.EDITING: "편집중",
+    PostStatus.APPROVED: "승인됨",
+    PostStatus.PROCESSING: "처리중",
+    PostStatus.PREVIEW_RENDERED: "미리보기",
+    PostStatus.RENDERED: "렌더완료",
+    PostStatus.UPLOADED: "업로드됨",
+    PostStatus.DECLINED: "거절됨",
+    PostStatus.FAILED: "실패",
 }
 
 

@@ -268,6 +268,15 @@ class BaseCrawler(ABC):
                 self.site_code, origin_id, age_hours, score,
             )
         else:
+            # 블록리스트 확인 — 삭제된 게시글이면 스킵
+            from db.models import CrawlBlocklist
+            blocked = session.query(CrawlBlocklist).filter_by(
+                site_code=self.site_code, origin_id=origin_id
+            ).first()
+            if blocked:
+                log.debug("Blocked %s:%s (blocklist)", self.site_code, origin_id)
+                return
+
             # 신규 게시글: 본문 30자 미만이면 추론 불가 → 수집 제외
             content = detail.get("content") or ""
             if len(content) < 30:

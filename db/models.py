@@ -133,6 +133,18 @@ class Content(Base):
             )
 
 
+class CrawlBlocklist(Base):
+    """삭제된 게시글의 (site_code, origin_id)를 기록하여 재수집을 영구 차단."""
+    __tablename__ = "crawl_blocklist"
+    __table_args__ = (
+        UniqueConstraint("site_code", "origin_id", name="uq_blocklist_site_origin"),
+    )
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    site_code = Column(String(32), nullable=False)
+    origin_id = Column(String(64), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+
+
 class LLMLog(Base):
     """LLM 호출 이력 — 프롬프트 튜닝용 상세 로그.
 
