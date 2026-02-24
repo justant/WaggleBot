@@ -132,6 +132,8 @@ class DcInsideCrawler(BaseCrawler):
         # 본문
         body_el = soup.select_one("div.writing_view_box")
         content = body_el.get_text("\n", strip=True) if body_el else ""
+        # 출처 표기 제거 (예: "출처: 부동산 갤러리 [원본 보기]")
+        content = re.sub(r"출처\s*:.*?(?:\[원본\s*보기\])?$", "", content, flags=re.MULTILINE).strip()
 
         # 이미지 (DCInside lazy load: data-lazy > data-src > data-lazy-src > src 순으로 확인)
         images: list[str] = []

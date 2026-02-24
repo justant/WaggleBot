@@ -268,11 +268,11 @@ class BaseCrawler(ABC):
                 self.site_code, origin_id, age_hours, score,
             )
         else:
-            # 신규 게시글: 본문 10자 미만이면 추론 불가 → 수집 제외
+            # 신규 게시글: 본문 30자 미만이면 추론 불가 → 수집 제외
             content = detail.get("content") or ""
-            if len(content) < 10:
+            if len(content) < 30:
                 log.debug(
-                    "Skip %s:%s — 본문 %d자 (10자 미만)",
+                    "Skip %s:%s — 본문 %d자 (30자 미만)",
                     self.site_code, origin_id, len(content),
                 )
                 return
