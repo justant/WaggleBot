@@ -73,6 +73,95 @@ def _load_slang_map() -> dict[str, str]:
 
 _SLANG_MAP: dict[str, str] = _load_slang_map()
 
+# ── 발음 교정 사전 (Fish Speech G2P가 처리 못하는 한국어 음운 규칙) ──
+_PRONUNCIATION_MAP_PATH = Path(__file__).parent.parent.parent / "assets" / "pronunciation_map.json"
+
+# 내장 발음 사전: 맞춤법 표기 → 실제 발음형
+# Fish Speech의 내장 G2P가 경음화·비음화·유음화 등 한국어 음운 규칙을
+# 제대로 적용하지 못하는 단어를 발음형으로 미리 변환한다.
+_PRONUNCIATION_MAP_BUILTIN: dict[str, str] = {
+    # 경음화 (받침 ㄷ/ㅂ/ㄱ + ㄱ/ㄷ/ㅂ/ㅅ/ㅈ → 경음)
+    "댓글": "대끌",
+    "맛집": "마찝",
+    "꽃길": "꼳낄",
+    "숫자": "숟짜",
+    "곳곳": "곧꼳",
+    "낱개": "나깨",
+    "갯벌": "개뻘",
+    "웃기": "욷끼",
+    "있다": "읻따",
+    "없다": "업따",
+    "있고": "읻꼬",
+    "없고": "업꼬",
+    "있는": "인는",
+    "없는": "엄는",
+    "있습니다": "읻씀니다",
+    "없습니다": "업씀니다",
+    "있었": "이썯",
+    "없었": "업썯",
+    "했습니다": "해씀니다",
+    "됐습니다": "돼씀니다",
+    # 비음화 (받침 ㄱ/ㄷ/ㅂ + ㄴ/ㅁ → 비음)
+    "작년": "장년",
+    "국내": "궁내",
+    "국민": "궁민",
+    "학년": "항년",
+    "합니다": "함니다",
+    "십만": "심만",
+    "백만": "뱅만",
+    # 유음화 (ㄴ+ㄹ, ㄹ+ㄴ → ㄹㄹ)
+    "관련": "괄련",
+    "연락": "열락",
+    # 구개음화
+    "같이": "가치",
+    "굳이": "구지",
+    "붙이": "부치",
+    # ㅎ 약화/탈락
+    "좋아": "조아",
+    "좋은": "조은",
+    "좋다": "조타",
+    "놓다": "노타",
+    "넣다": "너타",
+    "않다": "안타",
+    "않은": "아는",
+    "않아": "아나",
+    "많다": "만타",
+    "많은": "마는",
+    "많이": "마니",
+    "괜찮": "괜찬",
+    # 겹받침
+    "읽다": "익따",
+    "읽고": "익꼬",
+    "읽는": "잉는",
+    "없는": "엄는",
+    "삶": "삼",
+    "젊은": "절문",
+    "밟다": "밥따",
+    # 연음
+    "높이": "노피",
+    # 자주 틀리는 일상어
+    "뭐라고": "뭐라고",
+    "남겨주세요": "남겨주세요",
+}
+
+
+def _load_pronunciation_map() -> dict[str, str]:
+    """assets/pronunciation_map.json에서 발음 사전 로드. 파일 없으면 내장 사전 사용."""
+    base = dict(_PRONUNCIATION_MAP_BUILTIN)
+    if _PRONUNCIATION_MAP_PATH.exists():
+        try:
+            loaded: dict[str, str] = json.loads(
+                _PRONUNCIATION_MAP_PATH.read_text(encoding="utf-8")
+            )
+            base.update(loaded)
+            logger.debug("pronunciation_map.json 로드: %d 항목", len(loaded))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("pronunciation_map.json 로드 실패, 내장 사전만 사용: %s", exc)
+    return base
+
+
+_PRONUNCIATION_MAP: dict[str, str] = _load_pronunciation_map()
+
 # ── 숫자 읽기 변환 테이블 ──
 _SINO_DIGITS: dict[str, str] = {
     "0": "영", "1": "일", "2": "이", "3": "삼", "4": "사",
@@ -152,6 +241,13 @@ def _has_jongseong(char: str) -> bool:
     return (ord(char) - 0xAC00) % 28 != 0
 
 
+def _has_rieul_jongseong(char: str) -> bool:
+    """ㄹ 받침 여부 확인."""
+    if not char or not ('가' <= char <= '힣'):
+        return False
+    return (ord(char) - 0xAC00) % 28 == 8  # ㄹ = jongseong index 8
+
+
 def _fix_particles(text: str) -> str:
     """받침 유무에 따른 조사 자동 교정.
 
@@ -172,8 +268,16 @@ def _fix_particles(text: str) -> str:
             + re.escape(with_jong) + '|' + re.escape(without_jong)
             + r')(?=\s|$|[^가-힣])'
         )
-        def _replace(m, wj=with_jong, woj=without_jong) -> str:
-            return m.group(1) + (wj if _has_jongseong(m.group(1)) else woj)
+        if with_jong == "으로":
+            # ㄹ받침 + 로 → "로" (예외: ㄹ받침은 "으로"가 아닌 "로")
+            def _replace(m, wj=with_jong, woj=without_jong) -> str:
+                prev = m.group(1)
+                if _has_rieul_jongseong(prev) or not _has_jongseong(prev):
+                    return prev + woj  # 로
+                return prev + wj       # 으로
+        else:
+            def _replace(m, wj=with_jong, woj=without_jong) -> str:
+                return m.group(1) + (wj if _has_jongseong(m.group(1)) else woj)
         text = pattern.sub(_replace, text)
     return text
 
@@ -235,6 +339,12 @@ def _normalize_for_tts(text: str) -> str:
     text = re.sub(rf'(\d+)\s*({all_counters})', _convert_number_with_counter, text)
     text = re.sub(r'(\d+)\s*%', lambda m: _sino_number(int(m.group(1))) + " 퍼센트", text)
     text = re.sub(r'\d+', _convert_standalone_number, text)
+
+    # 3-1. 발음 교정 사전 적용 (Fish Speech G2P 보완)
+    for spelling, pron in sorted(
+        _PRONUNCIATION_MAP.items(), key=lambda x: -len(x[0])
+    ):
+        text = text.replace(spelling, pron)
 
     # 4. 특수문자 정리
     text = text.replace("。", ".").replace("、", ",")   # 중국어/일본어 구두점
