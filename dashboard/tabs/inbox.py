@@ -18,6 +18,7 @@ from dashboard.components.image_slider import render_image_slider
 from dashboard.workers.ai_analysis_tasks import (
     get_analysis_task, submit_analysis_task, clear_analysis_task,
 )
+from dashboard.workers.editor_tasks import auto_submit_llm_for_posts
 
 log = logging.getLogger(__name__)
 
@@ -286,6 +287,13 @@ def render() -> None:
                     args=(_ids, PostStatus.EDITING),
                     daemon=True,
                 ).start()
+                # LLM 대본 자동 생성 트리거
+                _llm_model = inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                threading.Thread(
+                    target=auto_submit_llm_for_posts,
+                    args=(_ids, _llm_model),
+                    daemon=True,
+                ).start()
                 st.session_state["hidden_post_ids"].update(_ids)
                 st.session_state["selected_posts"] = set()
                 st.rerun()
@@ -439,6 +447,13 @@ def render() -> None:
                             args=(post.id, PostStatus.EDITING),
                             daemon=True,
                         ).start()
+                        # LLM 대본 자동 생성 트리거
+                        _llm_model = inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                        threading.Thread(
+                            target=auto_submit_llm_for_posts,
+                            args=([post.id], _llm_model),
+                            daemon=True,
+                        ).start()
                         # 낙관적 UI — session_state에서 즉시 제거
                         st.session_state["hidden_post_ids"].add(post.id)
                         st.session_state["selected_posts"].discard(post.id)
@@ -487,6 +502,13 @@ def render() -> None:
                     threading.Thread(
                         target=batch_update_status,
                         args=(_ids, PostStatus.EDITING),
+                        daemon=True,
+                    ).start()
+                    # LLM 대본 자동 생성 트리거
+                    _llm_model = inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                    threading.Thread(
+                        target=auto_submit_llm_for_posts,
+                        args=(_ids, _llm_model),
                         daemon=True,
                     ).start()
                     st.session_state["hidden_post_ids"].update(_ids)

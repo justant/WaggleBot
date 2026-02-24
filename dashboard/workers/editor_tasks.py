@@ -191,3 +191,40 @@ def submit_tts_task(
 
     threading.Thread(target=_run, daemon=True, name=f"tts-prev-{post_id}").start()
     return True
+
+
+# ---------------------------------------------------------------------------
+# 수신함 승인 시 자동 LLM 트리거
+# ---------------------------------------------------------------------------
+
+def auto_submit_llm_for_posts(post_ids: list[int], model: str | None = None) -> None:
+    """승인된 게시글에 대해 LLM 대본 생성을 자동 제출 (백그라운드 스레드에서 호출)."""
+    from db.models import Post, Comment
+    from db.session import SessionLocal
+
+    with SessionLocal() as db:
+        for pid in post_ids:
+            post = db.query(Post).filter(Post.id == pid).first()
+            if not post:
+                continue
+            comments = (
+                db.query(Comment)
+                .filter(Comment.post_id == pid)
+                .order_by(Comment.likes.desc())
+                .limit(5)
+                .all()
+            )
+            comment_texts = [f"{c.author}: {c.content[:100]}" for c in comments]
+            submitted = submit_llm_task(
+                pid,
+                title=post.title,
+                body=post.content or "",
+                comments=comment_texts,
+                model=model,
+                extra_instructions=None,
+                call_type="generate_script_auto",
+            )
+            if submitted:
+                log.info("수신함 승인 → LLM 자동 제출: post_id=%d", pid)
+            else:
+                log.debug("수신함 승인 → LLM 이미 실행 중: post_id=%d", pid)

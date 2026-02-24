@@ -532,7 +532,7 @@ def render() -> None:
         # ── 재생성 파라미터 & LLM 생성 버튼 ────────────────────────────────────
         _llm_running = _llm_task is not None and _llm_task.get("status") == "running"
 
-        with st.expander("⚙️ 재생성 파라미터", expanded=script_data is None):
+        with st.expander("⚙️ 재생성 파라미터", expanded=False):
             _STYLE_PRESETS: dict[str, str] = {
                 p["name"]: p["prompt"] for p in load_style_presets()
             }
@@ -551,40 +551,41 @@ def render() -> None:
                 (_STYLE_PRESETS[style_choice] + " " + extra_inst).strip() or None
             )
 
-            if _llm_running:
-                st.info("🤖 AI 대본 생성 중... 완료되면 자동으로 반영됩니다.")
-                st.button(
-                    "🔄 대본 재생성" if script_data else "🤖 AI 대본 생성",
-                    width="stretch", type="primary",
-                    key=f"gen_{selected_post_id}",
-                    disabled=True,
-                )
-            elif st.button(
+        # 버튼은 expander 밖: 항상 표시 (재생성 가능)
+        if _llm_running:
+            st.info("🤖 AI 대본 생성 중... 완료되면 자동으로 반영됩니다.")
+            st.button(
                 "🔄 대본 재생성" if script_data else "🤖 AI 대본 생성",
                 width="stretch", type="primary",
                 key=f"gen_{selected_post_id}",
-            ):
-                if not check_ollama_health():
-                    st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+                disabled=True,
+            )
+        elif st.button(
+            "🔄 대본 재생성" if script_data else "🤖 AI 대본 생성",
+            width="stretch", type="primary",
+            key=f"gen_{selected_post_id}",
+        ):
+            if not check_ollama_health():
+                st.error("❌ LLM 서버에 연결할 수 없습니다. 설정 탭에서 Ollama 상태를 확인하세요.")
+            else:
+                best_list = _selected_comments[:5]
+                comment_texts = [
+                    f"{c.author}: {c.content[:100]}" for c in best_list
+                ]
+                submitted = submit_llm_task(
+                    _pid,
+                    title=selected_post.title,
+                    body=selected_post.content or "",
+                    comments=comment_texts,
+                    model=cfg_editor.get("llm_model"),
+                    extra_instructions=full_extra,
+                    call_type="generate_script_editor",
+                )
+                if submitted:
+                    st.session_state[f"_llm_gen_requested_{_pid}"] = _perf_time.time()
+                    _safe_rerun_fragment()
                 else:
-                    best_list = _selected_comments[:5]
-                    comment_texts = [
-                        f"{c.author}: {c.content[:100]}" for c in best_list
-                    ]
-                    submitted = submit_llm_task(
-                        _pid,
-                        title=selected_post.title,
-                        body=selected_post.content or "",
-                        comments=comment_texts,
-                        model=cfg_editor.get("llm_model"),
-                        extra_instructions=full_extra,
-                        call_type="generate_script_editor",
-                    )
-                    if submitted:
-                        st.session_state[f"_llm_gen_requested_{_pid}"] = _perf_time.time()
-                        _safe_rerun_fragment()
-                    else:
-                        st.info("이미 생성 중입니다.")
+                    st.info("이미 생성 중입니다.")
 
         st.divider()
 
