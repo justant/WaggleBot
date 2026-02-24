@@ -135,12 +135,16 @@ class DcInsideCrawler(BaseCrawler):
         # 출처 표기 제거 (예: "출처: 부동산 갤러리 [원본 보기]")
         content = re.sub(r"출처\s*:.*?(?:\[원본\s*보기\])?$", "", content, flags=re.MULTILINE).strip()
 
-        # 이미지 (DCInside lazy load: data-lazy > data-src > data-lazy-src > src 순으로 확인)
+        # 이미지 (DCInside lazy load 방식)
+        # - 초반 1~2장: src에 직접 실제 URL 존재
+        # - 3장 이후 (class="lazy"): src=로딩 placeholder, data-original에 실제 URL
+        _DC_PLACEHOLDERS = ("gallview_loading_ori.gif", "trans.gif", "img.gif")
         images: list[str] = []
         if body_el:
-            for img in body_el.select("img"):
+            for img in body_el.select("img:not(.og-img)"):  # og-img는 메타 썸네일
                 src = (
-                    img.get("data-lazy")       # DCInside 실제 이미지 URL
+                    img.get("data-original")    # lazy load 3장 이후 실제 URL
+                    or img.get("data-lazy")
                     or img.get("data-src")
                     or img.get("data-lazy-src")
                     or img.get("src")
@@ -149,12 +153,8 @@ class DcInsideCrawler(BaseCrawler):
                 # 프로토콜 상대 URL 처리 (//dcimg...)
                 if src.startswith("//"):
                     src = "https:" + src
-                # 플레이스홀더 gif 및 비이미지 제외
-                if (
-                    src.startswith("http")
-                    and not src.endswith("img.gif")
-                    and "img.gif" not in src
-                ):
+                # 플레이스홀더 및 비이미지 제외
+                if src.startswith("http") and not any(ph in src for ph in _DC_PLACEHOLDERS):
                     images.append(src)
 
         # 통계
