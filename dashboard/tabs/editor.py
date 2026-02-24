@@ -58,24 +58,31 @@ def _suggest_bgm(mood: str) -> str:
     return all_files[0].name  # 매칭 없으면 첫 번째 파일
 
 
-def _body_to_scene_strs(body: list) -> list[str]:
-    """ScriptData.body (list[dict] v2) → 씬 편집기용 list[str] 변환."""
-    result: list[str] = []
+def _split_body_items(body: list) -> tuple[list[str], list[dict]]:
+    """ScriptData.body → (body scene strings, comment dicts with text+author) 분리."""
+    body_strs: list[str] = []
+    comment_dicts: list[dict] = []
     for item in body:
         if isinstance(item, dict):
-            result.append("\n".join(item.get("lines", [""])))
+            if item.get("type") == "comment":
+                comment_dicts.append({
+                    "text": "\n".join(item.get("lines", [""])),
+                    "author": item.get("author", ""),
+                })
+            else:
+                body_strs.append("\n".join(item.get("lines", [""])))
         else:
-            result.append(str(item))
-    return result
+            body_strs.append(str(item))
+    return body_strs, comment_dicts
 
 
-def _collect_scenes(pid: int, n: int) -> list[str]:
-    """씬 편집기의 현재 입력 값을 body_scenes_{pid} 형식(줄바꿈 조인)으로 수집."""
+def _collect_scenes(pid: int, n: int, prefix: str = "bscene") -> list[str]:
+    """씬 편집기의 현재 입력 값을 수집. prefix로 body(bscene)/comment(cscene) 구분."""
     result: list[str] = []
     for _i in range(n):
-        _nl = st.session_state.get(f"bscene_{pid}_{_i}_nlines", 1)
-        _l0 = st.session_state.get(f"bscene_{pid}_{_i}_L0", "")
-        _l1 = st.session_state.get(f"bscene_{pid}_{_i}_L1", "")
+        _nl = st.session_state.get(f"{prefix}_{pid}_{_i}_nlines", 1)
+        _l0 = st.session_state.get(f"{prefix}_{pid}_{_i}_L0", "")
+        _l1 = st.session_state.get(f"{prefix}_{pid}_{_i}_L1", "")
         if _nl >= 2 and _l1:
             result.append(f"{_l0}\n{_l1}")
         else:
@@ -83,116 +90,223 @@ def _collect_scenes(pid: int, n: int) -> list[str]:
     return result
 
 
+def _collect_authors(pid: int, n: int, prefix: str = "cscene") -> list[str]:
+    """댓글 씬의 작성자 값을 수집."""
+    return [st.session_state.get(f"{prefix}_{pid}_{_i}_author", "") for _i in range(n)]
+
+
 @st.fragment
 def _scene_editor_frag(pid: int, init_body: list) -> None:
-    """씬 기반 본문 편집기.
+    """씬 기반 본문/댓글 편집기.
 
+    - 본문(body)과 댓글(comment)을 분리하여 각각 편집
     - 줄당 st.text_input(max_chars=21) → 21자 초과 입력 자체 차단
     - 씬당 최대 2줄: 2줄일 때 "+ 줄 추가" 버튼 숨김
+    - 씬 사이에 "+" 삽입 버튼 배치 (맨 위/사이/맨 아래)
     - 씬 추가/삭제/줄 추가/삭제 시 fragment만 재실행
     """
-    _sk = f"body_scenes_{pid}"
+    _bsk = f"body_scenes_{pid}"
+    _csk = f"comment_scenes_{pid}"
+    _cak = f"comment_authors_{pid}"
 
-    if _sk not in st.session_state:
-        _init = _body_to_scene_strs(init_body)
-        st.session_state[_sk] = _init if _init else [""]
+    # 초기화: 둘 다 있어야 함 (하위 호환: 기존 body_scenes만 있으면 재초기화)
+    if _bsk not in st.session_state or _csk not in st.session_state:
+        for _dk in list(st.session_state.keys()):
+            if _dk.startswith(f"bscene_{pid}_") or _dk.startswith(f"cscene_{pid}_"):
+                del st.session_state[_dk]
+        _body_strs, _comment_dicts = _split_body_items(init_body)
+        st.session_state[_bsk] = _body_strs if _body_strs else [""]
+        st.session_state[_csk] = (
+            [d["text"] for d in _comment_dicts] if _comment_dicts else []
+        )
+        st.session_state[_cak] = (
+            [d["author"] for d in _comment_dicts] if _comment_dicts else []
+        )
 
-    _scenes: list[str] = st.session_state[_sk]
-    _n = len(_scenes)
+    # ── 공통 씬 리스트 렌더 함수 ─────────────────────────────────────────────
+    def _render_scene_list(
+        scenes_key: str,
+        prefix: str,
+        label: str,
+        show_author: bool,
+    ) -> None:
+        """body 또는 comment 한 섹션의 씬 리스트를 렌더링하고 액션을 처리."""
+        _scenes: list[str] = st.session_state[scenes_key]
+        _n = len(_scenes)
 
-    for _i, _st_txt in enumerate(_scenes):
-        _nk  = f"bscene_{pid}_{_i}_nlines"
-        _l0k = f"bscene_{pid}_{_i}_L0"
-        _l1k = f"bscene_{pid}_{_i}_L1"
-        if _nk not in st.session_state:
-            _parts = [l for l in _st_txt.split("\n") if l]
-            _nl = min(len(_parts), 2) if _parts else 1
-            st.session_state[_nk]  = _nl
-            st.session_state[_l0k] = _parts[0] if len(_parts) > 0 else ""
-            st.session_state[_l1k] = _parts[1] if len(_parts) > 1 else ""
-
-    st.markdown("**📝 본문 항목** (씬 단위 · 각 줄 최대 21자 · 최대 2줄)")
-
-    _del_idx: int | None      = None
-    _add_line_idx: int | None = None
-    _del_line_idx: int | None = None
-
-    for _si in range(_n):
-        _nk  = f"bscene_{pid}_{_si}_nlines"
-        _l0k = f"bscene_{pid}_{_si}_L0"
-        _l1k = f"bscene_{pid}_{_si}_L1"
-        _nl  = st.session_state.get(_nk, 1)
-
-        with st.container(border=True):
-            _hc, _dc = st.columns([9, 1])
-            with _hc:
-                st.markdown(f"**씬 {_si + 1}**")
-            with _dc:
-                if st.button("✕", key=f"dsc_{pid}_{_si}", help="씬 삭제"):
-                    _del_idx = _si
-
-            if _nl == 1:
-                _lc, _bc = st.columns([9, 1])
-                with _lc:
-                    st.text_input(
-                        "줄 1", key=_l0k, max_chars=21,
-                        label_visibility="collapsed", placeholder="줄 1 (최대 21자)",
-                    )
-                with _bc:
-                    if st.button("+ 줄", key=f"aln_{pid}_{_si}", help="줄 추가"):
-                        _add_line_idx = _si
-            else:
-                st.text_input(
-                    "줄 1", key=_l0k, max_chars=21,
-                    label_visibility="collapsed", placeholder="줄 1 (최대 21자)",
+        # 씬 키 초기화
+        for _i, _st_txt in enumerate(_scenes):
+            _nk = f"{prefix}_{pid}_{_i}_nlines"
+            if _nk not in st.session_state:
+                _parts = [l for l in _st_txt.split("\n") if l]
+                _nl = min(len(_parts), 2) if _parts else 1
+                st.session_state[_nk] = _nl
+                st.session_state[f"{prefix}_{pid}_{_i}_L0"] = (
+                    _parts[0] if len(_parts) > 0 else ""
+                )
+                st.session_state[f"{prefix}_{pid}_{_i}_L1"] = (
+                    _parts[1] if len(_parts) > 1 else ""
+                )
+            if show_author and f"{prefix}_{pid}_{_i}_author" not in st.session_state:
+                _authors = st.session_state.get(_cak, [])
+                st.session_state[f"{prefix}_{pid}_{_i}_author"] = (
+                    _authors[_i] if _i < len(_authors) else ""
                 )
 
-            if _nl >= 2:
-                _l2c, _dlc = st.columns([9, 1])
-                with _l2c:
+        st.markdown(f"**{label}** (씬 단위 · 각 줄 최대 21자 · 최대 2줄)")
+
+        _del_idx: int | None = None
+        _add_line_idx: int | None = None
+        _del_line_idx: int | None = None
+        _insert_idx: int | None = None
+
+        # 맨 위 삽입 버튼
+        _p1, _p2, _p3 = st.columns([5, 2, 5])
+        with _p2:
+            if st.button("＋", key=f"ins_{prefix}_{pid}_0", help="씬 삽입"):
+                _insert_idx = 0
+
+        for _si in range(_n):
+            _nk = f"{prefix}_{pid}_{_si}_nlines"
+            _l0k = f"{prefix}_{pid}_{_si}_L0"
+            _l1k = f"{prefix}_{pid}_{_si}_L1"
+            _nl = st.session_state.get(_nk, 1)
+
+            with st.container(border=True):
+                _hc, _dc = st.columns([9, 1])
+                with _hc:
+                    st.markdown(f"**씬 {_si + 1}**")
+                with _dc:
+                    if st.button("✕", key=f"dsc_{prefix}_{pid}_{_si}", help="씬 삭제"):
+                        _del_idx = _si
+
+                # 작성자 필드 (댓글 전용)
+                if show_author:
                     st.text_input(
-                        "줄 2", key=_l1k, max_chars=21,
-                        label_visibility="collapsed", placeholder="줄 2 (최대 21자)",
+                        "작성자", key=f"{prefix}_{pid}_{_si}_author",
+                        max_chars=20, placeholder="작성자 닉네임",
                     )
-                with _dlc:
-                    if st.button("✕", key=f"dln_{pid}_{_si}", help="줄 삭제"):
-                        _del_line_idx = _si
 
-    if st.button("+ 씬 추가", key=f"asc_{pid}"):
-        _cur = _collect_scenes(pid, _n)
-        _new_i = len(_cur)
-        _cur.append("")
-        st.session_state[_sk] = _cur
-        st.session_state[f"bscene_{pid}_{_new_i}_nlines"] = 1
-        st.session_state[f"bscene_{pid}_{_new_i}_L0"]     = ""
-        st.session_state[f"bscene_{pid}_{_new_i}_L1"]     = ""
-        st.rerun(scope="fragment")
+                if _nl == 1:
+                    _lc, _bc = st.columns([9, 1])
+                    with _lc:
+                        st.text_input(
+                            "줄 1", key=_l0k, max_chars=21,
+                            label_visibility="collapsed",
+                            placeholder="줄 1 (최대 21자)",
+                        )
+                    with _bc:
+                        if st.button(
+                            "+ 줄", key=f"aln_{prefix}_{pid}_{_si}",
+                            help="줄 추가",
+                        ):
+                            _add_line_idx = _si
+                else:
+                    st.text_input(
+                        "줄 1", key=_l0k, max_chars=21,
+                        label_visibility="collapsed",
+                        placeholder="줄 1 (최대 21자)",
+                    )
 
-    if _add_line_idx is not None:
-        st.session_state[_sk] = _collect_scenes(pid, _n)
-        st.session_state[f"bscene_{pid}_{_add_line_idx}_nlines"] = 2
-        st.rerun(scope="fragment")
-    elif _del_line_idx is not None:
-        st.session_state[_sk] = _collect_scenes(pid, _n)
-        st.session_state[f"bscene_{pid}_{_del_line_idx}_nlines"] = 1
-        st.session_state[f"bscene_{pid}_{_del_line_idx}_L1"]     = ""
-        st.rerun(scope="fragment")
-    elif _del_idx is not None:
-        _cur = _collect_scenes(pid, _n)
-        _cur.pop(_del_idx)
-        for _dk in list(st.session_state.keys()):
-            if _dk.startswith(f"bscene_{pid}_"):
-                del st.session_state[_dk]
-        st.session_state[_sk] = _cur
-        for _ri, _rt in enumerate(_cur):
-            _parts = [l for l in _rt.split("\n") if l]
-            _nl2   = min(len(_parts), 2) if _parts else 1
-            st.session_state[f"bscene_{pid}_{_ri}_nlines"] = _nl2
-            st.session_state[f"bscene_{pid}_{_ri}_L0"]     = _parts[0] if _parts else ""
-            st.session_state[f"bscene_{pid}_{_ri}_L1"]     = _parts[1] if len(_parts) > 1 else ""
-        st.rerun(scope="fragment")
+                if _nl >= 2:
+                    _l2c, _dlc = st.columns([9, 1])
+                    with _l2c:
+                        st.text_input(
+                            "줄 2", key=_l1k, max_chars=21,
+                            label_visibility="collapsed",
+                            placeholder="줄 2 (최대 21자)",
+                        )
+                    with _dlc:
+                        if st.button(
+                            "✕", key=f"dln_{prefix}_{pid}_{_si}",
+                            help="줄 삭제",
+                        ):
+                            _del_line_idx = _si
+
+            # 씬 사이 삽입 버튼
+            _p1, _p2, _p3 = st.columns([5, 2, 5])
+            with _p2:
+                if st.button(
+                    "＋", key=f"ins_{prefix}_{pid}_{_si + 1}",
+                    help="씬 삽입",
+                ):
+                    _insert_idx = _si + 1
+
+        # ── 액션 처리 ────────────────────────────────────────────────────────
+        def _rebuild_keys(cur: list[str], authors: list[str] | None = None) -> None:
+            """씬 키를 전체 재구성."""
+            for _dk in list(st.session_state.keys()):
+                if _dk.startswith(f"{prefix}_{pid}_"):
+                    del st.session_state[_dk]
+            st.session_state[scenes_key] = cur
+            for _ri, _rt in enumerate(cur):
+                _parts = [l for l in _rt.split("\n") if l]
+                _nl2 = min(len(_parts), 2) if _parts else 1
+                st.session_state[f"{prefix}_{pid}_{_ri}_nlines"] = _nl2
+                st.session_state[f"{prefix}_{pid}_{_ri}_L0"] = (
+                    _parts[0] if _parts else ""
+                )
+                st.session_state[f"{prefix}_{pid}_{_ri}_L1"] = (
+                    _parts[1] if len(_parts) > 1 else ""
+                )
+            if show_author and authors is not None:
+                st.session_state[_cak] = authors
+                for _ri, _a in enumerate(authors):
+                    st.session_state[f"{prefix}_{pid}_{_ri}_author"] = _a
+
+        if _insert_idx is not None:
+            _cur = _collect_scenes(pid, _n, prefix)
+            _cur.insert(_insert_idx, "")
+            _au: list[str] | None = None
+            if show_author:
+                _au = _collect_authors(pid, _n, prefix)
+                _au.insert(_insert_idx, "")
+            _rebuild_keys(_cur, _au)
+            st.rerun(scope="fragment")
+        elif _add_line_idx is not None:
+            st.session_state[scenes_key] = _collect_scenes(pid, _n, prefix)
+            st.session_state[f"{prefix}_{pid}_{_add_line_idx}_nlines"] = 2
+            st.rerun(scope="fragment")
+        elif _del_line_idx is not None:
+            st.session_state[scenes_key] = _collect_scenes(pid, _n, prefix)
+            st.session_state[f"{prefix}_{pid}_{_del_line_idx}_nlines"] = 1
+            st.session_state[f"{prefix}_{pid}_{_del_line_idx}_L1"] = ""
+            st.rerun(scope="fragment")
+        elif _del_idx is not None:
+            _cur = _collect_scenes(pid, _n, prefix)
+            _cur.pop(_del_idx)
+            _au = None
+            if show_author:
+                _au = _collect_authors(pid, _n, prefix)
+                if _del_idx < len(_au):
+                    _au.pop(_del_idx)
+            # body: 최소 1씬 유지 / comment: 빈 리스트 허용
+            if not show_author and not _cur:
+                _cur = [""]
+            if show_author and _au is not None and not _au and not _cur:
+                pass  # 댓글 전체 삭제 허용
+            _rebuild_keys(_cur, _au)
+            st.rerun(scope="fragment")
+        else:
+            st.session_state[scenes_key] = _collect_scenes(pid, _n, prefix)
+            if show_author:
+                st.session_state[_cak] = _collect_authors(pid, _n, prefix)
+
+    # ── 본문 섹션 렌더 ───────────────────────────────────────────────────────
+    _render_scene_list(_bsk, "bscene", "📝 본문 항목", show_author=False)
+
+    # ── 댓글 섹션 렌더 ───────────────────────────────────────────────────────
+    _c_scenes = st.session_state.get(_csk, [])
+    if _c_scenes:
+        st.divider()
+        _render_scene_list(_csk, "cscene", "💬 댓글 항목", show_author=True)
     else:
-        st.session_state[_sk] = _collect_scenes(pid, _n)
+        _p1, _p2, _p3 = st.columns([3, 4, 3])
+        with _p2:
+            if st.button("+ 댓글 항목 추가", key=f"add_csection_{pid}"):
+                st.session_state[_csk] = [""]
+                st.session_state[_cak] = [""]
+                st.rerun(scope="fragment")
 
     st.session_state[f"scene_valid_{pid}"] = True
 
@@ -200,21 +314,23 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
 def _inject_ai_result(pid: int, script_data: ScriptData) -> None:
     """비동기 LLM 결과를 session_state에 주입한다 (다음 rerun에서 위젯에 반영)."""
     mood_options = ["funny", "serious", "shocking", "heartwarming"]
-    _new_sc = _body_to_scene_strs(script_data.body)
+    _body_strs, _comment_dicts = _split_body_items(script_data.body)
     st.session_state[f"_ai_result_{pid}"] = {
-        "hook":        script_data.hook,
-        "closer":      script_data.closer,
-        "title":       script_data.title_suggestion,
-        "tags":        ", ".join(script_data.tags),
-        "mood":        script_data.mood if script_data.mood in mood_options else "funny",
-        "body_scenes": _new_sc if _new_sc else [""],
+        "hook":             script_data.hook,
+        "closer":           script_data.closer,
+        "title":            script_data.title_suggestion,
+        "tags":             ", ".join(script_data.tags),
+        "mood":             script_data.mood if script_data.mood in mood_options else "funny",
+        "body_scenes":      _body_strs if _body_strs else [""],
+        "comment_scenes":   [d["text"] for d in _comment_dicts] if _comment_dicts else [],
+        "comment_authors":  [d["author"] for d in _comment_dicts] if _comment_dicts else [],
     }
     for _ok in list(st.session_state.keys()):
         if _ok in (
             f"hook_{pid}", f"closer_{pid}",
             f"title_{pid}", f"tags_{pid}", f"mood_{pid}",
-            f"body_scenes_{pid}",
-        ) or _ok.startswith(f"bscene_{pid}_"):
+            f"body_scenes_{pid}", f"comment_scenes_{pid}", f"comment_authors_{pid}",
+        ) or _ok.startswith(f"bscene_{pid}_") or _ok.startswith(f"cscene_{pid}_"):
             del st.session_state[_ok]
 
 
@@ -486,8 +602,10 @@ def render() -> None:
             _pm = _ai_pending["mood"]
             st.session_state[f"mood_{_pid}"]   = _pm if _pm in mood_options else "funny"
             st.session_state[f"body_scenes_{_pid}"] = _ai_pending["body_scenes"]
+            st.session_state[f"comment_scenes_{_pid}"] = _ai_pending["comment_scenes"]
+            st.session_state[f"comment_authors_{_pid}"] = _ai_pending["comment_authors"]
             for _ok in list(st.session_state.keys()):
-                if _ok.startswith(f"bscene_{_pid}_"):
+                if _ok.startswith(f"bscene_{_pid}_") or _ok.startswith(f"cscene_{_pid}_"):
                     del st.session_state[_ok]
         else:
             # 최초 방문: DB 값으로 초기화 (이후 방문은 기존 state 유지)
@@ -516,8 +634,25 @@ def render() -> None:
         for _sc_txt in st.session_state.get(f"body_scenes_{_pid}", []):
             _sc_lines = [l.strip() for l in _sc_txt.split("\n") if l.strip()]
             if _sc_lines:
-                _body_scenes_v2.append({"line_count": len(_sc_lines), "lines": _sc_lines})
+                _body_scenes_v2.append({
+                    "type": "body", "line_count": len(_sc_lines), "lines": _sc_lines,
+                })
                 body_lines.append(" ".join(_sc_lines))
+
+        _comment_scenes_v2: list[dict] = []
+        comment_lines: list[str] = []
+        _c_authors = st.session_state.get(f"comment_authors_{_pid}", [])
+        for _ci, _sc_txt in enumerate(
+            st.session_state.get(f"comment_scenes_{_pid}", [])
+        ):
+            _sc_lines = [l.strip() for l in _sc_txt.split("\n") if l.strip()]
+            if _sc_lines:
+                _author = _c_authors[_ci] if _ci < len(_c_authors) else ""
+                _comment_scenes_v2.append({
+                    "type": "comment", "author": _author,
+                    "line_count": len(_sc_lines), "lines": _sc_lines,
+                })
+                comment_lines.append(" ".join(_sc_lines))
 
         closer = st.text_area(
             "🔚 마무리 (Closer)",
@@ -537,7 +672,7 @@ def render() -> None:
         st.divider()
 
         # ── 예상 길이 + TTS 미리듣기 ─────────────────────────────────────────────
-        plain_preview = " ".join([hook] + body_lines + [closer])
+        plain_preview = " ".join([hook] + body_lines + comment_lines + [closer])
         char_count = len(plain_preview)
         est_seconds = round(char_count / 5.5)
         len_color = "green" if 35 <= est_seconds <= 60 else "orange"
@@ -585,9 +720,10 @@ def render() -> None:
         # ── 저장 / 확정 ───────────────────────────────────────────────────────────
         def _build_script() -> ScriptData:
             _tags = [t.strip() for t in tags_input.split(",") if t.strip()]
+            _all_body = _body_scenes_v2 + _comment_scenes_v2
             return ScriptData(
                 hook=hook,
-                body=_body_scenes_v2,
+                body=_all_body,
                 closer=closer,
                 title_suggestion=title_sug,
                 tags=_tags,
@@ -625,8 +761,8 @@ def render() -> None:
             if not hook.strip():
                 st.error("🎣 후킹(Hook)을 입력하세요.")
                 return False
-            if not body_lines:
-                st.error("📝 본문 항목을 1개 이상 입력하세요.")
+            if not body_lines and not comment_lines:
+                st.error("📝 본문 또는 댓글 항목을 1개 이상 입력하세요.")
                 return False
             if not closer.strip():
                 st.error("🔚 마무리(Closer)를 입력하세요.")
