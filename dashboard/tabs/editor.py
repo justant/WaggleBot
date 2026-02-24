@@ -391,20 +391,29 @@ def render() -> None:
     n_posts = len(approved_posts)
     idx = min(st.session_state["editor_idx"], n_posts - 1)
 
-    nav_col, sel_col = st.columns([1, 7])
-    with nav_col:
-        if st.button("◀", width="stretch", help="이전 게시글", disabled=idx == 0):
-            st.session_state["editor_idx"] = max(0, idx - 1)
+    post_labels = [f"[{p.id}] {p.title[:45]}" for p in approved_posts]
+    new_idx = st.selectbox(
+        "게시글 선택", range(n_posts), index=idx,
+        format_func=lambda i: post_labels[i],
+        placeholder="편집할 게시글 선택",
+    )
+    if new_idx != idx:
+        st.session_state["editor_idx"] = new_idx
+        _safe_rerun_fragment()
+
+    nav_prev, nav_info, nav_next = st.columns([1, 3, 1])
+    with nav_prev:
+        if st.button("◀ 이전", width="stretch", disabled=idx == 0):
+            st.session_state["editor_idx"] = idx - 1
             _safe_rerun_fragment()
-    with sel_col:
-        post_labels = [f"[{p.id}] {p.title[:45]}" for p in approved_posts]
-        new_idx = st.selectbox(
-            "게시글 선택", range(n_posts), index=idx,
-            format_func=lambda i: post_labels[i],
-            placeholder="편집할 게시글 선택",
+    with nav_info:
+        st.markdown(
+            f"<div style='text-align:center;padding-top:6px'>{idx + 1} / {n_posts}</div>",
+            unsafe_allow_html=True,
         )
-        if new_idx != idx:
-            st.session_state["editor_idx"] = new_idx
+    with nav_next:
+        if st.button("다음 ▶", width="stretch", disabled=idx >= n_posts - 1):
+            st.session_state["editor_idx"] = idx + 1
             _safe_rerun_fragment()
 
     # ── 페이지네이션 버튼 (30건 초과 시) ──────────────────────────────────────
@@ -433,7 +442,6 @@ def render() -> None:
     selected_post = approved_posts[idx]
     selected_post_id = selected_post.id
     _pid = selected_post_id
-    st.caption(f"{idx + 1} / {n_posts}  |  Post ID: {selected_post_id}")
 
     # ── 3. Content / ScriptData + 선택 게시글 댓글 로드 (단일 세션) ──────────────
     from db.models import Comment

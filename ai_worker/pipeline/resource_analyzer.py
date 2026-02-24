@@ -10,7 +10,7 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 # 한국어 평균 문장당 글자 수 (경험적 기준값)
-_KO_CHARS_PER_SENTENCE = 45
+_KO_CHARS_PER_SENTENCE = 25
 
 Strategy = Literal["img_heavy", "balanced", "text_heavy"]
 
