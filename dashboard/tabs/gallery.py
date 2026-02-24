@@ -11,7 +11,7 @@ from db.models import Post, PostStatus, Content, ScriptData
 from db.session import SessionLocal
 
 from dashboard.components.status_utils import (
-    stats_display, delete_post, STATUS_COLORS, STATUS_EMOJI,
+    stats_display, delete_post, STATUS_COLORS, STATUS_EMOJI, STATUS_TEXT,
 )
 from dashboard.workers.hd_render import (
     hd_render_pending, hd_render_errors, enqueue_hd_render,
@@ -86,9 +86,11 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
                                     for k, v in (_uc.upload_meta or {}).items()
                                     if isinstance(v, dict) and v.get("error")
                                 }
-                                _err_msg = " / ".join(
-                                    f"{p}: {e}" for p, e in _fail_info.items()
-                                ) or "업로드 실패"
+                                # 플랫폼별 에러를 줄바꿈으로 구분
+                                _err_lines = [
+                                    f"[{p}] {e}" for p, e in _fail_info.items()
+                                ]
+                                _err_msg = "\n".join(_err_lines) or "업로드 실패"
                                 with _upload_lock:
                                     _upload_tasks[pid] = {"status": "error", "error": _err_msg}
                     except Exception as _e:
@@ -123,12 +125,37 @@ def render() -> None:
         if st.button("🔄 새로고침", key="gallery_refresh_btn", width="stretch"):
             st.rerun()
 
+    # HD 렌더 또는 업로드 진행 중일 때 자동 감지 fragment
+    @st.fragment(run_every="10s")
+    def _gallery_task_monitor() -> None:
+        """HD 렌더/업로드 완료 시 자동 새로고침."""
+        _has_pending = bool(hd_render_pending) or any(
+            t.get("status") == "running" for t in _upload_tasks.values()
+        )
+        _has_done = bool(hd_render_errors) or any(
+            t.get("status") in ("done", "error") for t in _upload_tasks.values()
+        )
+        if _has_done:
+            st.rerun()  # 완료 감지 → 전체 갱신
+        elif _has_pending:
+            st.caption("⏳ 렌더링/업로드 작업 진행 중... (자동 감지)")
+
+    _gallery_task_monitor()
+
+    # HD 렌더 진행 상태 표시
+    if hd_render_pending:
+        st.info(f"🎬 HD 렌더링 진행 중: {len(hd_render_pending)}건 (완료 시 자동 새로고침)")
+    if hd_render_errors:
+        for _err_pid, _err_msg in list(hd_render_errors.items()):
+            st.error(f"❌ Post #{_err_pid} HD 렌더링 실패: {_err_msg}")
+            hd_render_errors.pop(_err_pid, None)
+
     _gal_filter = st.multiselect(
         "상태 필터",
         ["PREVIEW_RENDERED", "RENDERED", "UPLOADED"],
         default=["PREVIEW_RENDERED", "RENDERED", "UPLOADED"],
         key="gallery_status_filter",
-        label_visibility="collapsed",
+        placeholder="상태 선택 (기본: 전체)",
     )
     _gal_statuses = (
         [PostStatus(s) for s in _gal_filter]
@@ -175,10 +202,11 @@ def render() -> None:
 
                     # 컨테이너
                     with st.container(border=True):
-                        # 상태 배지
+                        # 상태 배지 (색상 + 이모지 + 텍스트)
                         color = STATUS_COLORS[post.status]
                         emoji = STATUS_EMOJI[post.status]
-                        st.markdown(f":{color}[{emoji} {post.status.value}]")
+                        text = STATUS_TEXT.get(post.status, post.status.value)
+                        st.markdown(f":{color}[{emoji} {post.status.value} — {text}]")
 
                         # 제목
                         st.markdown(f"**{post.title[:40]}**")

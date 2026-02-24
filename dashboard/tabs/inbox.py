@@ -136,6 +136,32 @@ def render() -> None:
         else:
             st.toast(f"🕷️ {_cr['message']}", icon="⚠️")
 
+    # 크롤링 진행 중일 때 자동 완료 감지
+    @st.fragment(run_every="5s")
+    def _crawl_monitor() -> None:
+        """크롤링 완료 자동 감지 → 전체 새로고침."""
+        if st.session_state.get("crawl_running"):
+            st.caption("🕷️ 크롤링 진행 중...")
+        elif st.session_state.get("crawl_result"):
+            st.rerun()  # 결과 감지 → 전체 갱신
+
+    if st.session_state.get("crawl_running"):
+        _crawl_monitor()
+
+    # 배치 작업 결과 피드백 (이전 사이클)
+    _batch_res = st.session_state.pop("_batch_result", None)
+    if _batch_res:
+        if _batch_res["status"] == "done":
+            st.toast(
+                f"✅ {_batch_res['count']}건 → {_batch_res['target']} 처리 완료",
+                icon="✅",
+            )
+        elif _batch_res["status"] == "error":
+            st.error(
+                f"❌ 일괄 처리 실패 ({_batch_res['target']}): {_batch_res.get('error', '알 수 없는 오류')}. "
+                "새로고침 후 다시 시도하세요."
+            )
+
     hdr_col, crawl_col, ref_col = st.columns([4, 1, 1])
     with hdr_col:
         st.header("📥 수신함 (Collected)")
@@ -171,7 +197,7 @@ def render() -> None:
         _pct = _total_decided / _total_ever
         st.progress(_pct, text=f"전체 처리율: {_total_decided}/{_total_ever} ({_pct*100:.1f}%)")
 
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([3, 2, 2, 1])
     with filter_col1:
         site_filter = st.multiselect(
             "사이트 필터", [c["site_code"] for c in list_crawlers()], default=[], placeholder="전체"
@@ -184,6 +210,19 @@ def render() -> None:
         sort_by = st.selectbox(
             "정렬", ["인기도순", "최신순", "조회수순", "추천수순"], index=0
         )
+    with filter_col4:
+        st.write("")  # 라벨 높이 맞춤
+        _has_active_filter = bool(site_filter) or image_filter != "전체" or sort_by != "인기도순"
+        if st.button(
+            "🔄 초기화",
+            key="reset_filters",
+            width="stretch",
+            disabled=not _has_active_filter,
+            help="모든 필터를 기본값으로 되돌립니다",
+        ):
+            st.session_state["_inbox_filters"] = None
+            st.session_state["inbox_page"] = 0
+            st.rerun()
 
     # 필터 변경 시 페이지 초기화
     _current_filters = (tuple(sorted(site_filter)), image_filter, sort_by)
@@ -339,11 +378,11 @@ def render() -> None:
             has_img = bool(post.images and post.images != "[]")
 
             if score >= 80:
-                score_badge, score_color = f"🔥 {score:.0f}", "red"
+                score_badge, score_color = f"🔥 {score:.0f} 추천", "red"
             elif score >= 30:
-                score_badge, score_color = f"📊 {score:.0f}", "orange"
+                score_badge, score_color = f"📊 {score:.0f} 일반", "orange"
             else:
-                score_badge, score_color = f"📉 {score:.0f}", "gray"
+                score_badge, score_color = f"📉 {score:.0f} 낮음", "gray"
 
             with st.container(border=True):
                 col_chk, col_main, col_act = st.columns([0.5, 5, 1.2])
@@ -364,21 +403,18 @@ def render() -> None:
                     img_icon = " 🖼" if has_img else ""
                     st.markdown(f"**{post.title}{img_icon}**")
 
-                    meta = [
-                        f":{score_color}[{score_badge} pts]",
-                        f"🌐 {post.site_code}",
-                        f"👁️ {views:,}",
-                        f"👍 {likes:,}",
-                    ]
-                    if n_comments:
-                        meta.append(f"💬 {n_comments:,}")
-                    meta.append(f"🕐 {to_kst(post.created_at)}")
-                    st.caption(" | ".join(meta))
-
-                    # 예상 조회수 (score 기반 rough estimate)
-                    low_est  = max(100, int(score * 40))
-                    high_est = max(500, int(score * 120))
-                    st.caption(f"📊 예상 조회수: {low_est:,}~{high_est:,}")
+                    # 메타데이터: 구조화된 레이아웃
+                    _m1, _m2, _m3 = st.columns([2, 3, 2])
+                    with _m1:
+                        st.caption(f":{score_color}[{score_badge} pts]  ·  🌐 {post.site_code}")
+                    with _m2:
+                        _cmt_str = f"  ·  💬 {n_comments:,}" if n_comments else ""
+                        st.caption(f"👁️ {views:,}  ·  👍 {likes:,}{_cmt_str}")
+                    with _m3:
+                        # 예상 조회수 (score 기반 rough estimate)
+                        low_est  = max(100, int(score * 40))
+                        high_est = max(500, int(score * 120))
+                        st.caption(f"📊 {low_est:,}~{high_est:,}  ·  🕐 {to_kst(post.created_at)}")
 
                     with st.expander("📄 내용 미리보기"):
                         if post.content:
@@ -487,8 +523,8 @@ def render() -> None:
         # ---------------------------------------------------------------------------
         tier_h_label = f"🏆 추천 (Score 80+) — {len(high_posts)}건"
         if high_posts:
-            # 티어별 일괄 승인 버튼
-            th_c1, th_c2 = st.columns([4, 1])
+            # 티어별 일괄 승인/거절 버튼
+            th_c1, th_c2, th_c3 = st.columns([3, 1, 1])
             with th_c1:
                 st.subheader(tier_h_label)
             with th_c2:
@@ -504,11 +540,25 @@ def render() -> None:
                         args=(_ids, PostStatus.EDITING),
                         daemon=True,
                     ).start()
-                    # LLM 대본 자동 생성 트리거
                     _llm_model = inbox_cfg.get("llm_model", OLLAMA_MODEL)
                     threading.Thread(
                         target=auto_submit_llm_for_posts,
                         args=(_ids, _llm_model),
+                        daemon=True,
+                    ).start()
+                    st.session_state["hidden_post_ids"].update(_ids)
+                    st.session_state["selected_posts"] -= set(_ids)
+                    st.rerun()
+            with th_c3:
+                if st.button(
+                    f"❌ 전체 거절 ({len(high_posts)}건)",
+                    key="decline_all_high",
+                    width="stretch",
+                ):
+                    _ids = [p.id for p in high_posts]
+                    threading.Thread(
+                        target=batch_update_status,
+                        args=(_ids, PostStatus.DECLINED),
                         daemon=True,
                     ).start()
                     st.session_state["hidden_post_ids"].update(_ids)
@@ -527,8 +577,30 @@ def render() -> None:
         tier_n_label = f"📋 일반 (Score 30~79) — {len(normal_posts)}건"
         with st.expander(tier_n_label, expanded=False):
             if normal_posts:
-                tn_c1, tn_c2 = st.columns([4, 1])
+                tn_c1, tn_c2, tn_c3 = st.columns([3, 1, 1])
                 with tn_c2:
+                    if st.button(
+                        f"✅ 전체 승인 ({len(normal_posts)}건)",
+                        key="approve_all_normal",
+                        width="stretch",
+                        type="primary",
+                    ):
+                        _ids = [p.id for p in normal_posts]
+                        threading.Thread(
+                            target=batch_update_status,
+                            args=(_ids, PostStatus.EDITING),
+                            daemon=True,
+                        ).start()
+                        _llm_model = inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                        threading.Thread(
+                            target=auto_submit_llm_for_posts,
+                            args=(_ids, _llm_model),
+                            daemon=True,
+                        ).start()
+                        st.session_state["hidden_post_ids"].update(_ids)
+                        st.session_state["selected_posts"] -= set(_ids)
+                        st.rerun()
+                with tn_c3:
                     if st.button(
                         f"❌ 전체 거절 ({len(normal_posts)}건)",
                         key="decline_all_normal",
@@ -548,13 +620,35 @@ def render() -> None:
                 st.caption("해당 게시글 없음")
 
         # ---------------------------------------------------------------------------
-        # 📉 낮음 티어 (Score 0~29) — 기본 접힘 + 전체 거절
+        # 📉 낮음 티어 (Score 0~29) — 기본 접힘 + 전체 승인/거절
         # ---------------------------------------------------------------------------
         tier_l_label = f"📉 낮음 (Score 0~29) — {len(low_posts)}건"
         with st.expander(tier_l_label, expanded=False):
             if low_posts:
-                tl_c1, tl_c2 = st.columns([4, 1])
+                tl_c1, tl_c2, tl_c3 = st.columns([3, 1, 1])
                 with tl_c2:
+                    if st.button(
+                        f"✅ 전체 승인 ({len(low_posts)}건)",
+                        key="approve_all_low",
+                        width="stretch",
+                        type="primary",
+                    ):
+                        _ids = [p.id for p in low_posts]
+                        threading.Thread(
+                            target=batch_update_status,
+                            args=(_ids, PostStatus.EDITING),
+                            daemon=True,
+                        ).start()
+                        _llm_model = inbox_cfg.get("llm_model", OLLAMA_MODEL)
+                        threading.Thread(
+                            target=auto_submit_llm_for_posts,
+                            args=(_ids, _llm_model),
+                            daemon=True,
+                        ).start()
+                        st.session_state["hidden_post_ids"].update(_ids)
+                        st.session_state["selected_posts"] -= set(_ids)
+                        st.rerun()
+                with tl_c3:
                     if st.button(
                         f"❌ 전체 거절 ({len(low_posts)}건)",
                         key="decline_all_low",

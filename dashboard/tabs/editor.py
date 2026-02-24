@@ -153,7 +153,7 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
                     _authors[_i] if _i < len(_authors) else ""
                 )
 
-        st.markdown(f"**{label}** (씬 단위 · 각 줄 최대 21자 · 최대 2줄)")
+        st.markdown(f"**{label}** — 씬 단위 편집 (줄당 21자, 씬당 최대 2줄)")
 
         _del_idx: int | None = None
         _add_line_idx: int | None = None
@@ -401,7 +401,7 @@ def render() -> None:
         new_idx = st.selectbox(
             "게시글 선택", range(n_posts), index=idx,
             format_func=lambda i: post_labels[i],
-            label_visibility="collapsed",
+            placeholder="편집할 게시글 선택",
         )
         if new_idx != idx:
             st.session_state["editor_idx"] = new_idx
@@ -553,7 +553,13 @@ def render() -> None:
 
         # 버튼은 expander 밖: 항상 표시 (재생성 가능)
         if _llm_running:
-            st.info("🤖 AI 대본 생성 중... 완료되면 자동으로 반영됩니다.")
+            _gen_start = st.session_state.get(f"_llm_gen_requested_{_pid}")
+            _elapsed_str = ""
+            if _gen_start:
+                _elapsed_sec = int(_perf_time.time() - _gen_start)
+                _elapsed_str = f" ({_elapsed_sec}초 경과)"
+            st.info(f"🤖 AI 대본 생성 중...{_elapsed_str} 완료되면 자동으로 반영됩니다.")
+            st.progress(0.0, text="LLM 처리 대기 중")
             st.button(
                 "🔄 대본 재생성" if script_data else "🤖 AI 대본 생성",
                 width="stretch", type="primary",
@@ -694,6 +700,7 @@ def render() -> None:
         with info_c2:
             if _tts_running:
                 st.info("🎙️ TTS 생성 중...")
+                st.progress(0.0, text="TTS 처리 대기 중")
             elif st.button(
                 "▶ TTS 미리듣기", width="stretch",
                 key=f"tts_preview_{selected_post_id}",
@@ -810,28 +817,45 @@ def render() -> None:
                     st.session_state[_del_key] = True
                     _safe_rerun_fragment()
         with auto_c:
-            if st.button(
-                "🤖 자동생성", width="stretch",
-                key=f"auto_gen_{selected_post_id}",
-                help="AI 워커에 자동 처리를 맡기고 다음 게시글로 이동합니다",
-                disabled=_llm_running,
-            ):
-                _pid_auto = approved_posts[idx].id
-                clear_llm_task(_pid_auto)
-                clear_tts_task(_pid_auto)
-                st.session_state["hidden_editor_ids"].add(_pid_auto)
-                threading.Thread(
-                    target=update_status,
-                    args=(_pid_auto, PostStatus.APPROVED),
-                    daemon=True,
-                ).start()
-                st.session_state["editor_idx"] = max(0, idx - 1)
-                _safe_rerun_fragment()
+            _auto_key = f"auto_confirm_{selected_post_id}"
+            if _auto_key not in st.session_state:
+                st.session_state[_auto_key] = False
+            if st.session_state[_auto_key]:
+                st.caption("대본 없이 전송?")
+                _ay, _an = st.columns(2)
+                with _ay:
+                    if st.button("전송", key=f"auto_yes_{selected_post_id}", type="primary", width="stretch"):
+                        _pid_auto = approved_posts[idx].id
+                        clear_llm_task(_pid_auto)
+                        clear_tts_task(_pid_auto)
+                        st.session_state["hidden_editor_ids"].add(_pid_auto)
+                        threading.Thread(
+                            target=update_status,
+                            args=(_pid_auto, PostStatus.APPROVED),
+                            daemon=True,
+                        ).start()
+                        st.session_state[_auto_key] = False
+                        st.toast("⏩ AI 워커 대기열로 전송됨")
+                        st.session_state["editor_idx"] = max(0, idx - 1)
+                        _safe_rerun_fragment()
+                with _an:
+                    if st.button("취소", key=f"auto_no_{selected_post_id}", width="stretch"):
+                        st.session_state[_auto_key] = False
+                        _safe_rerun_fragment()
+            else:
+                if st.button(
+                    "⏩ AI 워커 전송", width="stretch",
+                    key=f"auto_gen_{selected_post_id}",
+                    help="편집 없이 AI 워커에 전송합니다 (APPROVED 상태로 전환)",
+                    disabled=_llm_running,
+                ):
+                    st.session_state[_auto_key] = True
+                    _safe_rerun_fragment()
         with save_c:
             if st.button(
                 "💾 저장", width="stretch",
                 key=f"draft_save_{selected_post_id}",
-                help="편집 내용을 저장합니다. 편집실에 계속 머뭅니다.",
+                help="현재 편집 내용만 저장합니다 (상태 변경 없음, 편집실 유지)",
             ):
                 if _validate_editor():
                     try:
@@ -840,18 +864,35 @@ def render() -> None:
                     except Exception as exc:
                         st.error(f"저장 실패: {exc}")
         with confirm_c:
-            if st.button(
-                "✅ 확정", width="stretch", type="primary",
-                key=f"confirm_{selected_post_id}",
-                help="저장 후 AI 워커 처리 대기열로 이동합니다.",
-            ):
-                if _validate_editor():
-                    try:
-                        _persist_script(new_status=PostStatus.APPROVED)
-                        st.session_state["editor_idx"] = max(0, idx - 1)
+            _cfm_key = f"confirm_flag_{selected_post_id}"
+            if _cfm_key not in st.session_state:
+                st.session_state[_cfm_key] = False
+            if st.session_state[_cfm_key]:
+                st.caption("저장 후 전송?")
+                _cy, _cn = st.columns(2)
+                with _cy:
+                    if st.button("확정", key=f"cfm_yes_{selected_post_id}", type="primary", width="stretch"):
+                        st.session_state[_cfm_key] = False
+                        if _validate_editor():
+                            try:
+                                _persist_script(new_status=PostStatus.APPROVED)
+                                st.toast("✅ 확정 완료 — AI 워커 대기열로 이동")
+                                st.session_state["editor_idx"] = max(0, idx - 1)
+                                _safe_rerun_fragment()
+                            except Exception as exc:
+                                st.error(f"확정 실패: {exc}")
+                with _cn:
+                    if st.button("취소", key=f"cfm_no_{selected_post_id}", width="stretch"):
+                        st.session_state[_cfm_key] = False
                         _safe_rerun_fragment()
-                    except Exception as exc:
-                        st.error(f"확정 실패: {exc}")
+            else:
+                if st.button(
+                    "✅ 확정 (저장+전송)", width="stretch", type="primary",
+                    key=f"confirm_{selected_post_id}",
+                    help="편집 내용을 저장하고 AI 워커 처리 대기열로 전송합니다",
+                ):
+                    st.session_state[_cfm_key] = True
+                    _safe_rerun_fragment()
 
     # ── 6. 비동기 작업 상태 모니터 (fragment — 2초마다 이 블록만 조용히 갱신) ────
     @st.fragment(run_every="10s")

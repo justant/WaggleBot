@@ -24,17 +24,21 @@ log = logging.getLogger(__name__)
 # 탭 전용 헬퍼
 # ---------------------------------------------------------------------------
 
-def _write_youtube_token(token_json_str: str) -> bool:
-    """credentials.json의 token_json을 youtube_token.json 파일로 동기화."""
+def _write_youtube_token(token_json_str: str) -> str | None:
+    """credentials.json의 token_json을 youtube_token.json 파일로 동기화.
+
+    Returns:
+        None on success, error message string on failure.
+    """
     from config.settings import _PROJECT_ROOT
     token_path = _PROJECT_ROOT / "config" / "youtube_token.json"
     try:
         json.loads(token_json_str)  # JSON 유효성 검사
         token_path.write_text(token_json_str, encoding="utf-8")
         log.info("youtube_token.json 갱신 완료")
-        return True
-    except json.JSONDecodeError:
-        return False
+        return None
+    except json.JSONDecodeError as e:
+        return f"JSON 파싱 오류 (위치: {e.lineno}줄 {e.colno}열): {e.msg}"
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +236,9 @@ def render() -> None:
 
                             # YouTube: token_json → youtube_token.json 동기화
                             if platform == "youtube" and "token_json" in updated_keys:
-                                if not _write_youtube_token(merged["token_json"]):
-                                    st.error("token_json이 유효한 JSON 형식이 아닙니다.")
+                                _token_err = _write_youtube_token(merged["token_json"])
+                                if _token_err:
+                                    st.error(f"token_json 오류: {_token_err}")
                                     st.stop()
 
                             st.session_state[edit_key] = False
@@ -311,6 +316,14 @@ def render() -> None:
     st.divider()
 
     # 저장 / 기본값 복원 버튼
+    # TTS 엔진 변경 시 댓글 낭독자 음성 리셋 경고
+    _prev_engine = load_pipeline_config().get("tts_engine")
+    if _prev_engine and _prev_engine != selected_engine and _selected_comment_voices:
+        st.warning(
+            f"⚠️ TTS 엔진이 `{_prev_engine}` → `{selected_engine}`(으)로 변경되었습니다. "
+            "댓글 낭독자 음성이 새 엔진의 목소리로 재설정됩니다."
+        )
+
     _save_col, _reset_col = st.columns(2)
     with _save_col:
         if st.button("💾 설정 저장", type="primary", key="save_settings_btn", width="stretch"):
@@ -331,11 +344,26 @@ def render() -> None:
             save_pipeline_config(_new_cfg)
             st.success("✅ 설정이 저장되었습니다.")
     with _reset_col:
-        if st.button("↩️ 기본값 복원", key="restore_defaults_btn", width="stretch"):
-            # 위젯 key 수정은 렌더 전에만 가능 → pending 플래그 세팅 후 rerun
-            save_pipeline_config(get_pipeline_defaults())
-            st.session_state["_settings_reset_pending"] = True
-            st.rerun()
+        _reset_confirm_key = "_reset_defaults_confirm"
+        if _reset_confirm_key not in st.session_state:
+            st.session_state[_reset_confirm_key] = False
+        if st.session_state[_reset_confirm_key]:
+            st.caption("⚠️ 모든 설정을 초기화합니다")
+            _ry, _rn = st.columns(2)
+            with _ry:
+                if st.button("초기화", key="reset_yes", type="primary", width="stretch"):
+                    save_pipeline_config(get_pipeline_defaults())
+                    st.session_state[_reset_confirm_key] = False
+                    st.session_state["_settings_reset_pending"] = True
+                    st.rerun()
+            with _rn:
+                if st.button("취소", key="reset_no", width="stretch"):
+                    st.session_state[_reset_confirm_key] = False
+                    st.rerun()
+        else:
+            if st.button("↩️ 기본값 복원", key="restore_defaults_btn", width="stretch"):
+                st.session_state[_reset_confirm_key] = True
+                st.rerun()
 
     st.divider()
 

@@ -132,7 +132,6 @@ def render() -> None:
             "분석 기간",
             [7, 14, 30],
             format_func=lambda d: f"최근 {d}일",
-            label_visibility="collapsed",
         )
     with hdr_c2:
         if st.button("🔄 새로고침", key="analytics_refresh", width="stretch"):
@@ -351,7 +350,18 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                 with _insight_lock:
                     _insight_tasks.pop(period_days, None)
             elif _itask["status"] == "error":
-                st.error(f"인사이트 생성 실패: {_itask.get('error', '알 수 없는 오류')}")
+                _ie = _itask.get("error", "알 수 없는 오류")
+                _is_timeout = "timeout" in _ie.lower() or "timed out" in _ie.lower()
+                if _is_timeout:
+                    st.warning(
+                        f"⏱️ 인사이트 생성 시간 초과: {_ie}\n\n"
+                        "LLM 서버 부하가 높을 수 있습니다. 잠시 후 다시 시도하세요."
+                    )
+                else:
+                    st.error(
+                        f"❌ 인사이트 생성 실패: {_ie}\n\n"
+                        "설정 탭에서 Ollama 연결 상태를 확인하세요."
+                    )
                 with _insight_lock:
                     _insight_tasks.pop(period_days, None)
 
@@ -420,7 +430,11 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                 _feedback_task.clear()
             st.rerun()
         elif _ftask.get("status") == "error":
-            st.error(f"피드백 반영 실패: {_ftask.get('error', '알 수 없는 오류')}")
+            _fb_err = _ftask.get("error", "알 수 없는 오류")
+            st.error(
+                f"❌ 피드백 반영 실패: {_fb_err}\n\n"
+                "설정 탭에서 Ollama 연결 상태를 확인한 후 다시 시도하세요."
+            )
             with _feedback_lock:
                 _feedback_task.clear()
 
