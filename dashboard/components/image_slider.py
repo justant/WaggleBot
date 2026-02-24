@@ -1,9 +1,27 @@
 """이미지 슬라이더 컴포넌트."""
 
 import json
+from urllib.parse import urlparse
 
 import requests as _http
 import streamlit as st
+
+# 핫링크 방지 사이트별 Referer 매핑
+_REFERER_MAP: dict[str, str] = {
+    "dcinside.co.kr": "https://gall.dcinside.com/",
+    "dcinside.com": "https://gall.dcinside.com/",
+}
+
+
+def _get_referer(url: str) -> str:
+    """이미지 URL의 도메인에 맞는 Referer를 반환한다."""
+    hostname = urlparse(url).hostname or ""
+    for domain, referer in _REFERER_MAP.items():
+        if hostname.endswith(domain):
+            return referer
+    # 기본: 이미지 URL의 origin을 Referer로 사용
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}/"
 
 
 def _safe_rerun_fragment() -> None:
@@ -20,7 +38,10 @@ def _fetch_image(url: str) -> bytes | None:
     try:
         resp = _http.get(
             url, timeout=3,
-            headers={"Referer": url, "User-Agent": "Mozilla/5.0"},
+            headers={
+                "Referer": _get_referer(url),
+                "User-Agent": "Mozilla/5.0",
+            },
         )
         resp.raise_for_status()
         return resp.content
