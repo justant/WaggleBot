@@ -9,8 +9,10 @@ __pycache__/
 .vscode/
 
 # --- 앱 데이터 및 시크릿 (보안/용량) ---
+secrets/
 config/credentials.json
 config/youtube_token.json
+config/tiktok_token.json
 media/*
 checkpoints/*
 

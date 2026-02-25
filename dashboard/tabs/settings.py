@@ -41,6 +41,30 @@ def _write_youtube_token(token_json_str: str) -> str | None:
         return f"JSON 파싱 오류 (위치: {e.lineno}줄 {e.colno}열): {e.msg}"
 
 
+def _write_tiktok_token(creds: dict) -> str | None:
+    """credentials.json의 TikTok 필드를 tiktok_token.json 파일로 동기화.
+
+    Returns:
+        None on success, error message string on failure.
+    """
+    from config.settings import _PROJECT_ROOT
+    token_path = _PROJECT_ROOT / "config" / "tiktok_token.json"
+    try:
+        # client_key/secret + access_token → tiktok_token.json
+        token_data = {
+            "client_key": creds.get("client_key", ""),
+            "client_secret": creds.get("client_secret", ""),
+            "access_token": creds.get("access_token", ""),
+        }
+        token_path.write_text(
+            json.dumps(token_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        log.info("tiktok_token.json 갱신 완료")
+        return None
+    except Exception as e:
+        return f"TikTok 토큰 동기화 오류: {e}"
+
+
 # ---------------------------------------------------------------------------
 # 탭 렌더
 # ---------------------------------------------------------------------------
@@ -159,7 +183,7 @@ def render() -> None:
     # 업로드 설정
     st.subheader("📤 업로드 설정")
 
-    available_platforms = ["youtube"]
+    available_platforms = ["youtube", "tiktok"]
     selected_platforms = st.multiselect(
         "업로드 플랫폼",
         available_platforms,
@@ -239,6 +263,13 @@ def render() -> None:
                                 _token_err = _write_youtube_token(merged["token_json"])
                                 if _token_err:
                                     st.error(f"token_json 오류: {_token_err}")
+                                    st.stop()
+
+                            # TikTok: credentials → tiktok_token.json 동기화
+                            if platform == "tiktok":
+                                _tk_err = _write_tiktok_token(merged)
+                                if _tk_err:
+                                    st.error(_tk_err)
                                     st.stop()
 
                             st.session_state[edit_key] = False

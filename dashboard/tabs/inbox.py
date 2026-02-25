@@ -309,9 +309,10 @@ def render() -> None:
         bc0, bc1, bc2 = st.columns([1, 1, 1])
         with bc0:
             st.checkbox(
-                "전체 선택/해제",
+                "전체 선택",
                 key="inbox_select_all_cb",
                 on_change=_on_select_all_toggle,
+                label_visibility="collapsed",
             )
         with bc1:
             if st.button(

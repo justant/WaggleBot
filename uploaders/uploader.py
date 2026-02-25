@@ -36,10 +36,27 @@ def upload_post(post: Post, content: Content, session: Session) -> bool:
         upload_meta = {}
     thumbnail_path = upload_meta.get("thumbnail_path", "")
 
+    # ScriptData에서 LLM 생성 태그 추출
+    script = content.get_script()
+    script_tags: list[str] = script.tags if script and script.tags else []
+
+    # description: 제목 + LLM 태그를 해시태그로 변환 + 기본 해시태그
+    tag_hashtags = " ".join(
+        f"#{t.lstrip('#')}" for t in script_tags if t.strip()
+    )
+    desc_parts = [post.title]
+    if tag_hashtags:
+        desc_parts.append(tag_hashtags)
+    desc_parts.append("#Shorts #커뮤니티")
+    description = "\n\n".join(desc_parts)
+
+    # tags: LLM 태그 + 기본 태그 병합 (중복 제거)
+    all_tags = list(dict.fromkeys(script_tags + ["Shorts", "커뮤니티", post.site_code]))
+
     metadata = {
         "title": post.title[:100],
-        "description": f"{post.title}\n\n#Shorts #커뮤니티",
-        "tags": ["Shorts", "커뮤니티", post.site_code],
+        "description": description,
+        "tags": all_tags,
         "privacy": privacy,
         "thumbnail_path": thumbnail_path,
     }

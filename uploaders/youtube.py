@@ -115,8 +115,18 @@ class YouTubeUploader(BaseUploader):
         if thumbnail_path:
             try:
                 self._upload_thumbnail(video_id, Path(thumbnail_path))
-            except Exception:
-                logger.warning("썸네일 업로드 실패 (비치명적)", exc_info=True)
+            except Exception as exc:
+                from googleapiclient.errors import HttpError
+
+                if isinstance(exc, HttpError) and exc.resp.status == 403:
+                    logger.warning(
+                        "썸네일 업로드 권한 없음 (video_id=%s) — "
+                        "YouTube 채널 전화 인증이 필요합니다. "
+                        "https://www.youtube.com/verify 에서 인증하세요.",
+                        video_id,
+                    )
+                else:
+                    logger.warning("썸네일 업로드 실패 (비치명적): %s", exc)
 
         return {"platform": self.platform, "platform_id": video_id, "url": url}
 
