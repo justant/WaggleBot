@@ -1,16 +1,28 @@
 """이미지 슬라이더 컴포넌트."""
 
 import json
+import logging
 from urllib.parse import urlparse
 
-import requests as _http
+import requests
 import streamlit as st
+
+log = logging.getLogger(__name__)
+
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 
 # 핫링크 방지 사이트별 Referer 매핑
 _REFERER_MAP: dict[str, str] = {
     "dcinside.co.kr": "https://gall.dcinside.com/",
     "dcinside.com": "https://gall.dcinside.com/",
 }
+
+# DCInside 전용 세션 (쿠키 워밍업 포함)
+_dc_session: requests.Session | None = None
 
 
 def _get_referer(url: str) -> str:
@@ -19,9 +31,39 @@ def _get_referer(url: str) -> str:
     for domain, referer in _REFERER_MAP.items():
         if hostname.endswith(domain):
             return referer
-    # 기본: 이미지 URL의 origin을 Referer로 사용
     parsed = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}/"
+
+
+def _is_dc_url(url: str) -> bool:
+    """DCInside CDN URL 여부 확인."""
+    hostname = urlparse(url).hostname or ""
+    return any(hostname.endswith(d) for d in ("dcinside.com", "dcinside.co.kr"))
+
+
+def _get_dc_session() -> requests.Session:
+    """DCInside 이미지 다운로드용 세션 (쿠키 워밍업 포함).
+
+    DCInside CDN은 쿠키 없이 요청하면 403/이미지 차단하는 경우가 있으므로
+    메인 페이지에서 세션 쿠키를 먼저 획득한다.
+    """
+    global _dc_session
+    if _dc_session is not None:
+        return _dc_session
+    _dc_session = requests.Session()
+    _dc_session.headers.update({
+        "User-Agent": _UA,
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    })
+    try:
+        _dc_session.get("https://www.dcinside.com/", timeout=10)
+        log.debug(
+            "DCInside 이미지 세션 워밍업 OK (cookies=%d)",
+            len(_dc_session.cookies),
+        )
+    except Exception:
+        log.debug("DCInside 이미지 세션 워밍업 실패 — 쿠키 없이 시도")
+    return _dc_session
 
 
 def _safe_rerun_fragment() -> None:
@@ -34,18 +76,44 @@ def _safe_rerun_fragment() -> None:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_image(url: str) -> bytes | None:
-    """이미지를 캐시하여 반복 요청 방지 (5분 TTL)."""
+    """이미지를 캐시하여 반복 요청 방지 (5분 TTL).
+
+    DCInside 이미지는 전용 세션(쿠키 + Referer + Sec-Fetch 헤더)을 사용하여
+    핫링크 차단 및 봇 차단을 우회한다.
+    """
     try:
-        resp = _http.get(
-            url, timeout=3,
-            headers={
-                "Referer": _get_referer(url),
-                "User-Agent": "Mozilla/5.0",
-            },
-        )
+        if _is_dc_url(url):
+            sess = _get_dc_session()
+            resp = sess.get(
+                url,
+                timeout=(5, 15),
+                headers={
+                    "Referer": "https://gall.dcinside.com/",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "Sec-Fetch-Dest": "image",
+                    "Sec-Fetch-Mode": "no-cors",
+                    "Sec-Fetch-Site": "cross-site",
+                },
+            )
+        else:
+            resp = requests.get(
+                url,
+                timeout=(5, 10),
+                headers={
+                    "Referer": _get_referer(url),
+                    "User-Agent": _UA,
+                    "Accept": "image/*,*/*;q=0.8",
+                },
+            )
         resp.raise_for_status()
-        return resp.content
-    except Exception:
+        data = resp.content
+        # 200바이트 미만은 플레이스홀더 GIF일 가능성 높음 (1×1 GIF ≈ 43B)
+        if len(data) < 200:
+            log.warning("이미지 크기 의심 (%d bytes, 플레이스홀더?): %s", len(data), url)
+            return None
+        return data
+    except Exception as e:
+        log.warning("이미지 로드 실패: %s — %s", url, e)
         return None
 
 

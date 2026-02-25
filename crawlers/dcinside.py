@@ -138,7 +138,10 @@ class DcInsideCrawler(BaseCrawler):
         # 이미지 (DCInside lazy load 방식)
         # - 초반 1~2장: src에 직접 실제 URL 존재
         # - 3장 이후 (class="lazy"): src=로딩 placeholder, data-original에 실제 URL
-        _DC_PLACEHOLDERS = ("gallview_loading_ori.gif", "trans.gif", "img.gif")
+        _DC_PLACEHOLDERS = (
+            "gallview_loading_ori.gif", "trans.gif", "img.gif",
+            "loading_image.gif", "blank.gif",
+        )
         images: list[str] = []
         if body_el:
             for img in body_el.select("img:not(.og-img)"):  # og-img는 메타 썸네일
@@ -156,6 +159,26 @@ class DcInsideCrawler(BaseCrawler):
                 # 플레이스홀더 및 비이미지 제외
                 if src.startswith("http") and not any(ph in src for ph in _DC_PLACEHOLDERS):
                     images.append(src)
+
+            # 정규식 fallback: <img> 태그 속성 파싱으로 누락된 이미지 보완
+            # data-original 등이 서버 응답에서 누락되는 경우 대비
+            _seen = set(images)
+            _body_html = str(body_el)
+            for _raw in re.findall(
+                r'(?:https?:)?//(?:dcimg\d*|image)\.dcinside\.com/[^\s"\'<>]+',
+                _body_html,
+            ):
+                _url = "https:" + _raw if _raw.startswith("//") else _raw
+                if (
+                    _url not in _seen
+                    and not any(ph in _url for ph in _DC_PLACEHOLDERS)
+                    and ("viewimage.php" in _url or re.search(r'\.(?:jpg|jpeg|png|gif|webp)', _url, re.IGNORECASE))
+                ):
+                    images.append(_url)
+                    _seen.add(_url)
+
+            if images:
+                log.info("DCInside 이미지 %d장 수집 (URL 예시: %s)", len(images), images[0][:80])
 
         # 통계
         page_text = soup.get_text()

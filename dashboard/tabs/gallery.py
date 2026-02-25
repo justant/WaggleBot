@@ -1,12 +1,13 @@
 """갤러리 (Gallery) 탭."""
 
+import json
 import threading as _gal_threading
 from pathlib import Path
 
 import streamlit as st
 from sqlalchemy import func
 
-from config.settings import MEDIA_DIR
+from config.settings import MEDIA_DIR, load_pipeline_config
 from db.models import Post, PostStatus, Content, ScriptData
 from db.session import SessionLocal
 
@@ -17,9 +18,22 @@ from dashboard.workers.hd_render import (
     hd_render_pending, hd_render_errors, enqueue_hd_render,
 )
 
-# 업로드 작업 레지스트리 (post_id → {"status": ..., "error": ...})
-_upload_tasks: dict[int, dict] = {}
+# 플랫폼별 업로드 작업 레지스트리: "{post_id}_{platform}" → {"status": ..., "error": ...}
+_upload_tasks: dict[str, dict] = {}
 _upload_lock = _gal_threading.Lock()
+
+# 플랫폼별 표시 정보 (label, help)
+_PLATFORM_DISPLAY: dict[str, tuple[str, str]] = {
+    "youtube": ("▶️ YouTube", "YouTube에 업로드"),
+    "tiktok": ("🎵 TikTok", "TikTok에 업로드"),
+}
+
+
+@st.cache_data(ttl=60)
+def _get_upload_platforms() -> tuple[str, ...]:
+    """설정에서 업로드 대상 플랫폼 목록을 가져온다 (60초 캐시)."""
+    cfg = load_pipeline_config()
+    return tuple(json.loads(cfg.get("upload_platforms", '["youtube"]')))
 
 
 # ---------------------------------------------------------------------------
@@ -28,16 +42,16 @@ _upload_lock = _gal_threading.Lock()
 
 @st.fragment
 def _gallery_action_btn(post_id: int, content_id: int) -> None:
-    """갤러리 btn_col1 fragment.
-
-    성능 개선: run_every="3s" 제거 — 12개 아이템 × 3초 = 초당 4회 DB 쿼리 방지.
-    상태 변화는 '새로고침' 버튼 또는 전체 rerun 시 반영.
-    버튼 클릭 시 fragment만 재실행 → 전체 페이지 lock 없음.
-    """
+    """갤러리 btn_col1 fragment — HD 렌더/플랫폼별 업로드 버튼."""
     with SessionLocal() as _s:
         _post = _s.get(Post, post_id)
+        _content = _s.query(Content).filter_by(post_id=post_id).first()
         if _post is None:
             return
+        _upload_meta: dict = {}
+        if _content and _content.upload_meta:
+            _raw = _content.upload_meta
+            _upload_meta = json.loads(_raw) if isinstance(_raw, str) else (_raw or {})
 
     _hd_err = hd_render_errors.pop(post_id, None)
     if _hd_err:
@@ -51,55 +65,100 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
             disabled=True,
             help="고화질 렌더링이 대기 중이거나 진행 중입니다.",
         )
-    elif _post.status == PostStatus.RENDERED:
-        _upload_task = _upload_tasks.get(post_id)
+    elif _post.status in (PostStatus.RENDERED, PostStatus.UPLOADED):
+        # ── 플랫폼별 업로드 버튼 ──
+        platforms = _get_upload_platforms()
+        _cols = st.columns(len(platforms)) if len(platforms) > 1 else [st.container()]
 
-        if _upload_task and _upload_task["status"] == "running":
-            st.button("📤 업로드 중...", key=f"upload_{content_id}", width="stretch", disabled=True)
-        elif _upload_task and _upload_task["status"] == "error":
-            st.error(f"업로드 실패: {_upload_task.get('error', '')}")
-            with _upload_lock:
-                _upload_tasks.pop(post_id, None)
-        elif _upload_task and _upload_task["status"] == "done":
-            st.success("업로드 완료!")
-            with _upload_lock:
-                _upload_tasks.pop(post_id, None)
-            st.rerun()
-        else:
-            if st.button("📤 업로드", key=f"upload_{content_id}", width="stretch"):
-                def _do_upload(pid: int) -> None:
-                    try:
-                        from uploaders.uploader import upload_post
-                        with SessionLocal() as _us:
-                            _up = _us.get(Post, pid)
-                            _uc = _us.query(Content).filter_by(post_id=pid).first()
-                            ok = upload_post(_up, _uc, _us)
-                            if ok:
-                                _up.status = PostStatus.UPLOADED
-                                _us.commit()
+        for _i, _plat in enumerate(platforms):
+            with _cols[_i]:
+                _task_key = f"{post_id}_{_plat}"
+                _task = _upload_tasks.get(_task_key)
+                _label, _help = _PLATFORM_DISPLAY.get(
+                    _plat, (f"📤 {_plat}", f"{_plat}에 업로드"),
+                )
+                _already = (
+                    _plat in _upload_meta
+                    and isinstance(_upload_meta[_plat], dict)
+                    and not _upload_meta[_plat].get("error")
+                )
+
+                if _task and _task["status"] == "running":
+                    st.button(
+                        f"⏳ {_plat}",
+                        key=f"up_{content_id}_{_plat}",
+                        width="stretch",
+                        disabled=True,
+                    )
+                elif _task and _task["status"] == "error":
+                    st.error(f"{_plat}: {_task.get('error', '')}")
+                    with _upload_lock:
+                        _upload_tasks.pop(_task_key, None)
+                elif _task and _task["status"] == "done":
+                    st.success(f"{_plat} ✅")
+                    with _upload_lock:
+                        _upload_tasks.pop(_task_key, None)
+                    st.rerun()
+                elif _already:
+                    st.button(
+                        f"✅ {_plat}",
+                        key=f"up_{content_id}_{_plat}",
+                        width="stretch",
+                        disabled=True,
+                        help="이미 업로드됨",
+                    )
+                else:
+                    if st.button(
+                        _label,
+                        key=f"up_{content_id}_{_plat}",
+                        width="stretch",
+                        help=_help,
+                    ):
+                        _target = _plat  # 클로저 캡처용
+
+                        def _do_upload(pid: int, plat: str) -> None:
+                            _tk = f"{pid}_{plat}"
+                            try:
+                                from uploaders.uploader import upload_post
+
+                                with SessionLocal() as _us:
+                                    _up = _us.get(Post, pid)
+                                    _uc = _us.query(Content).filter_by(post_id=pid).first()
+                                    ok = upload_post(_up, _uc, _us, target_platform=plat)
+                                    if ok:
+                                        if _up.status == PostStatus.RENDERED:
+                                            _up.status = PostStatus.UPLOADED
+                                        _us.commit()
+                                        with _upload_lock:
+                                            _upload_tasks[_tk] = {"status": "done"}
+                                    else:
+                                        _us.refresh(_uc)
+                                        _pm = (_uc.upload_meta or {}).get(plat, {})
+                                        _err = (
+                                            _pm.get("error", "업로드 실패")
+                                            if isinstance(_pm, dict)
+                                            else "업로드 실패"
+                                        )
+                                        with _upload_lock:
+                                            _upload_tasks[_tk] = {
+                                                "status": "error",
+                                                "error": _err,
+                                            }
+                            except Exception as _e:
                                 with _upload_lock:
-                                    _upload_tasks[pid] = {"status": "done"}
-                            else:
-                                _us.refresh(_uc)
-                                _fail_info = {
-                                    k: v.get("error", "알 수 없는 오류")
-                                    for k, v in (_uc.upload_meta or {}).items()
-                                    if isinstance(v, dict) and v.get("error")
-                                }
-                                # 플랫폼별 에러를 줄바꿈으로 구분
-                                _err_lines = [
-                                    f"[{p}] {e}" for p, e in _fail_info.items()
-                                ]
-                                _err_msg = "\n".join(_err_lines) or "업로드 실패"
-                                with _upload_lock:
-                                    _upload_tasks[pid] = {"status": "error", "error": _err_msg}
-                    except Exception as _e:
+                                    _upload_tasks[f"{pid}_{plat}"] = {
+                                        "status": "error",
+                                        "error": str(_e),
+                                    }
+
                         with _upload_lock:
-                            _upload_tasks[pid] = {"status": "error", "error": str(_e)}
+                            _upload_tasks[_task_key] = {"status": "running"}
+                        _gal_threading.Thread(
+                            target=_do_upload,
+                            args=(post_id, _target),
+                            daemon=True,
+                        ).start()
 
-                with _upload_lock:
-                    _upload_tasks[post_id] = {"status": "running"}
-                _gal_threading.Thread(target=_do_upload, args=(post_id,), daemon=True).start()
     elif _post.status == PostStatus.PREVIEW_RENDERED:
         if st.button(
             "🎬 고화질",
@@ -248,6 +307,7 @@ def render() -> None:
                             if post.status in (
                                 PostStatus.PREVIEW_RENDERED,
                                 PostStatus.RENDERED,
+                                PostStatus.UPLOADED,
                             ) or post.id in hd_render_pending:
                                 _gallery_action_btn(post.id, content.id)
 

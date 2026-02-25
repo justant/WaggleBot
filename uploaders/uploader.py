@@ -12,14 +12,27 @@ from uploaders import get_uploader
 logger = logging.getLogger(__name__)
 
 
-def upload_post(post: Post, content: Content, session: Session) -> bool:
+def upload_post(
+    post: Post,
+    content: Content,
+    session: Session,
+    *,
+    target_platform: str | None = None,
+) -> bool:
     """승인된 영상을 설정된 플랫폼들에 업로드.
 
+    Args:
+        target_platform: 특정 플랫폼만 업로드할 경우 플랫폼 이름 (예: "youtube").
+                         None이면 설정된 모든 플랫폼에 업로드.
+
     Returns:
-        모든 플랫폼 업로드 성공 시 True
+        모든 대상 플랫폼 업로드 성공 시 True
     """
     cfg = load_pipeline_config()
-    platforms = json.loads(cfg.get("upload_platforms", '["youtube"]'))
+    if target_platform:
+        platforms = [target_platform]
+    else:
+        platforms = json.loads(cfg.get("upload_platforms", '["youtube"]'))
     privacy = cfg.get("upload_privacy", "unlisted")
 
     video_path = _resolve_video_path(content.video_path)
