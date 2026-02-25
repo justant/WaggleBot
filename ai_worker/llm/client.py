@@ -80,7 +80,7 @@ _SCRIPT_PROMPT_V2 = """\
    - (O) 올바른 예: ["길거리에서 스쳐 지나가는", "사람들 얼굴을 비교해대느라"] (각각 13자, 14자)
    - 빈 문자열("")이나 중복된 키(key)를 생성하는 것을 절대 금지합니다.
 4. 본문 끝까지 작성 (생략/요약 절대 금지): 원문의 첫 문장부터 마지막 결말 부분까지 절대 중간에 자르거나 요약하지 마세요. 서사의 모든 내용을 끝까지 대본으로 풀어내세요.
-5. 베스트 댓글 필수 인용: 본문 스토리가 완전히 끝난 후, JSON 배열의 맨 마지막에는 제공된 베스트 댓글을 빠짐없이 무조건 `comment` 타입으로 추가하세요. 만약 입력된 베스트 댓글이 아예 없다면, 절대 가짜 댓글을 지어내지 말고 바로 closer로 넘어가세요.
+5. 베스트 댓글 필수 인용 (최소 3개): 본문 스토리가 완전히 끝난 후, 제공된 베스트 댓글을 빠짐없이 무조건 `"type": "comment"` 항목으로 body 배열 맨 뒤에 추가하세요. 댓글이 3개 이상 제공되었으면 최소 3개를 반드시 포함하세요. 댓글이 1~2개면 전부 포함하세요. 댓글이 아예 없을 때만 comment 항목을 생략하세요. 가짜 댓글을 지어내는 것은 절대 금지합니다.
 6. 어조 및 시점: 원문 글쓴이의 시점을 유지하되, 시청자에게 말하듯 친근한 구어체(~했다, ~음)를 쓰세요.
 7. 감정 분류: 글의 분위기를 (touching, humor, anger, sadness, horror, info, controversy, daily, shock) 중 가장 적합한 하나로 골라 `mood` 필드에 기입하세요.
 8. 고유명사 및 팩트 보존 (환각 금지): 한국어만 사용하며, 원문에 등장하는 사람 이름(예: 시볼드), 지명, 고유명사를 마음대로 바꾸거나 없는 사실(예: 스티브 쿡)을 절대 지어내지 마세요.
@@ -278,6 +278,91 @@ def _parse_script_json(raw: str) -> ScriptData:
 
 
 # ---------------------------------------------------------------------------
+# 댓글 후처리
+# ---------------------------------------------------------------------------
+
+_MAX_LINE_CHARS = 20
+
+
+def _split_comment_lines(text: str) -> list[str]:
+    """댓글 텍스트를 자막 줄 단위(20자)로 어절 분할."""
+    if len(text) <= _MAX_LINE_CHARS:
+        return [text]
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip() if current else word
+        if len(candidate) <= _MAX_LINE_CHARS:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines if lines else [text[:_MAX_LINE_CHARS]]
+
+
+def _ensure_comments(
+    script: ScriptData,
+    input_comments: list[str],
+    min_comments: int = 3,
+) -> ScriptData:
+    """LLM이 댓글을 누락했을 때 입력 댓글을 body 끝에 자동 추가."""
+    if not input_comments:
+        return script
+
+    existing_count = sum(
+        1 for item in script.body if item.get("type") == "comment"
+    )
+    target = min(min_comments, len(input_comments))
+    if existing_count >= target:
+        return script
+
+    # 이미 포함된 댓글 내용 (중복 방지)
+    existing_texts: set[str] = set()
+    for item in script.body:
+        if item.get("type") == "comment":
+            existing_texts.add(" ".join(item.get("lines", [])))
+
+    needed = target - existing_count
+    for comment_str in input_comments:
+        if needed <= 0:
+            break
+        # "author: content" 형식 파싱
+        parts = comment_str.split(":", 1)
+        if len(parts) == 2:
+            author = parts[0].strip()
+            content = parts[1].strip()
+        else:
+            author = ""
+            content = comment_str.strip()
+
+        if not content or content in existing_texts:
+            continue
+
+        lines = _split_comment_lines(content)
+        script.body.append({
+            "type": "comment",
+            "author": author,
+            "line_count": len(lines),
+            "lines": lines,
+        })
+        existing_texts.add(content)
+        needed -= 1
+        logger.debug("댓글 자동 추가: author=%s lines=%d", author, len(lines))
+
+    if existing_count == 0 and target > 0:
+        logger.warning(
+            "LLM이 댓글을 전혀 생성하지 않음 — %d개 자동 주입",
+            target - needed,
+        )
+
+    return script
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -345,6 +430,7 @@ def generate_script(
     logger.info("Ollama 응답 수신: %d자 (%dms)", len(raw), timer.elapsed_ms)
 
     script = _parse_script_json(raw)
+    script = _ensure_comments(script, comments)
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])
     return script
 
