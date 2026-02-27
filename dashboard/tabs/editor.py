@@ -197,7 +197,7 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
                         )
                     with _bc:
                         if st.button(
-                            "+ 줄", key=f"aln_{prefix}_{pid}_{_si}",
+                            "＋", key=f"aln_{prefix}_{pid}_{_si}",
                             help="줄 추가",
                         ):
                             _add_line_idx = _si
@@ -396,7 +396,14 @@ def render() -> None:
     _pid = selected_post_id
 
     post_labels = [f"[{p.id}] {p.title[:45]}" for p in approved_posts]
-    col_del, col_sel = st.columns([2, 8])
+    col_sel, col_del = st.columns([8, 2])
+    with col_sel:
+        new_idx = st.selectbox(
+            "게시글 선택", range(n_posts), index=idx,
+            format_func=lambda i: post_labels[i],
+            placeholder="편집할 게시글 선택",
+            label_visibility="collapsed",
+        )
     with col_del:
         if st.button(
             "🗑️ 삭제", width="stretch",
@@ -413,53 +420,9 @@ def render() -> None:
             st.session_state["hidden_editor_ids"].add(selected_post_id)
             st.session_state["editor_idx"] = max(0, idx - 1)
             _safe_rerun_fragment()
-    with col_sel:
-        new_idx = st.selectbox(
-            "게시글 선택", range(n_posts), index=idx,
-            format_func=lambda i: post_labels[i],
-            placeholder="편집할 게시글 선택",
-        )
-        if new_idx != idx:
-            st.session_state["editor_idx"] = new_idx
-            _safe_rerun_fragment()
-
-    nav_prev, nav_info, nav_next = st.columns([1, 3, 1])
-    with nav_prev:
-        if st.button("◀ 이전", width="stretch", disabled=idx == 0):
-            st.session_state["editor_idx"] = idx - 1
-            _safe_rerun_fragment()
-    with nav_info:
-        st.markdown(
-            f"<div style='text-align:center;padding-top:6px'>{idx + 1} / {n_posts}</div>",
-            unsafe_allow_html=True,
-        )
-    with nav_next:
-        if st.button("다음 ▶", width="stretch", disabled=idx >= n_posts - 1):
-            st.session_state["editor_idx"] = idx + 1
-            _safe_rerun_fragment()
-
-    # ── 페이지네이션 버튼 (30건 초과 시) ──────────────────────────────────────
-    if _total_editing > _EDITOR_PAGE_SIZE:
-        _pg_prev, _pg_info, _pg_next = st.columns([1, 3, 1])
-        with _pg_prev:
-            if st.button("◀ 이전 페이지", disabled=st.session_state["editor_page_offset"] == 0):
-                st.session_state["editor_page_offset"] = max(
-                    0, st.session_state["editor_page_offset"] - _EDITOR_PAGE_SIZE
-                )
-                st.session_state["editor_idx"] = 0
-                _safe_rerun_fragment()
-        with _pg_info:
-            _cur_offset = st.session_state["editor_page_offset"]
-            st.caption(
-                f"전체 {_total_editing}건 중 "
-                f"{_cur_offset + 1}~{min(_cur_offset + _EDITOR_PAGE_SIZE, _total_editing)}건 표시"
-            )
-        with _pg_next:
-            _has_next = st.session_state["editor_page_offset"] + _EDITOR_PAGE_SIZE < _total_editing
-            if st.button("다음 페이지 ▶", disabled=not _has_next):
-                st.session_state["editor_page_offset"] += _EDITOR_PAGE_SIZE
-                st.session_state["editor_idx"] = 0
-                _safe_rerun_fragment()
+    if new_idx != idx:
+        st.session_state["editor_idx"] = new_idx
+        _safe_rerun_fragment()
 
     # ── 3. Content / ScriptData + 선택 게시글 댓글 로드 (단일 세션) ──────────────
     from db.models import Comment
