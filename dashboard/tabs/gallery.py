@@ -312,16 +312,14 @@ def render() -> None:
                                 _gallery_action_btn(post.id, content.id)
 
                         with btn_col2:
-                            with st.popover("🗑️ 삭제", use_container_width=True):
-                                st.warning(f"**{post.title[:30]}** 게시글과 영상이 영구 삭제됩니다.")
-                                if st.button(
-                                    "⚠️ 삭제 확인",
-                                    key=f"confirm_del_{content.id}",
-                                    type="primary",
-                                ):
-                                    delete_post(post.id)
-                                    st.success("삭제됨")
-                                    st.rerun()
+                            if st.button(
+                                "🗑️ 삭제",
+                                key=f"confirm_del_{content.id}",
+                                use_container_width=True,
+                            ):
+                                delete_post(post.id)
+                                st.toast("🗑️ 삭제됨")
+                                st.rerun()
 
     # 페이지네이션 버튼 (12건 초과 시)
     if _total_gal > _GAL_PAGE_SIZE:

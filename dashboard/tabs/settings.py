@@ -375,26 +375,10 @@ def render() -> None:
             save_pipeline_config(_new_cfg)
             st.success("✅ 설정이 저장되었습니다.")
     with _reset_col:
-        _reset_confirm_key = "_reset_defaults_confirm"
-        if _reset_confirm_key not in st.session_state:
-            st.session_state[_reset_confirm_key] = False
-        if st.session_state[_reset_confirm_key]:
-            st.caption("⚠️ 모든 설정을 초기화합니다")
-            _ry, _rn = st.columns(2)
-            with _ry:
-                if st.button("초기화", key="reset_yes", type="primary", width="stretch"):
-                    save_pipeline_config(get_pipeline_defaults())
-                    st.session_state[_reset_confirm_key] = False
-                    st.session_state["_settings_reset_pending"] = True
-                    st.rerun()
-            with _rn:
-                if st.button("취소", key="reset_no", width="stretch"):
-                    st.session_state[_reset_confirm_key] = False
-                    st.rerun()
-        else:
-            if st.button("↩️ 기본값 복원", key="restore_defaults_btn", width="stretch"):
-                st.session_state[_reset_confirm_key] = True
-                st.rerun()
+        if st.button("↩️ 기본값 복원", key="restore_defaults_btn", width="stretch"):
+            save_pipeline_config(get_pipeline_defaults())
+            st.session_state["_settings_reset_pending"] = True
+            st.rerun()
 
     st.divider()
 

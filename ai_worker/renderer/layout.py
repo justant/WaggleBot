@@ -246,34 +246,57 @@ def _get_dc_session() -> requests.Session:
     return _dc_session
 
 
-def _load_image(src: str, cache_dir: Path) -> Optional[Image.Image]:
-    """URL 또는 로컬 경로에서 이미지 로드. 실패 시 None."""
+def _load_image(
+    src: str, cache_dir: Path, max_retries: int = 2,
+) -> Optional[Image.Image]:
+    """URL 또는 로컬 경로에서 이미지 로드. 실패 시 재시도 후 None."""
     if src.startswith("http://") or src.startswith("https://"):
         url_hash = hashlib.md5(src.encode()).hexdigest()[:16]
         cache_path = cache_dir / f"img_{url_hash}.jpg"
         if not cache_path.exists():
-            try:
-                if "dcinside.com" in src:
-                    sess = _get_dc_session()
-                    resp = sess.get(src, timeout=10, headers={
-                        "Referer": "https://gall.dcinside.com/",
-                        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                        "Sec-Fetch-Dest": "image",
-                        "Sec-Fetch-Mode": "no-cors",
-                        "Sec-Fetch-Site": "cross-site",
-                    })
-                else:
-                    _hdrs = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                      "Chrome/131.0.0.0 Safari/537.36",
-                    }
-                    resp = requests.get(src, timeout=10, headers=_hdrs)
-                resp.raise_for_status()
-                cache_path.write_bytes(resp.content)
-            except Exception as e:
-                logger.warning("이미지 다운로드 실패: %s — %s", src, e)
-                return None
+            for attempt in range(max_retries + 1):
+                try:
+                    if "dcinside.com" in src:
+                        sess = _get_dc_session()
+                        resp = sess.get(src, timeout=15, headers={
+                            "Referer": "https://gall.dcinside.com/",
+                            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                            "Sec-Fetch-Dest": "image",
+                            "Sec-Fetch-Mode": "no-cors",
+                            "Sec-Fetch-Site": "cross-site",
+                        })
+                    else:
+                        _hdrs = {
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                          "Chrome/131.0.0.0 Safari/537.36",
+                            "Referer": f"{src.split('/')[0]}//{src.split('/')[2]}/",
+                            "Accept": "image/*,*/*;q=0.8",
+                        }
+                        resp = requests.get(src, timeout=15, headers=_hdrs)
+                    resp.raise_for_status()
+                    if len(resp.content) < 200:
+                        logger.warning(
+                            "이미지 크기 의심 (%d bytes, 플레이스홀더?): %s",
+                            len(resp.content), src,
+                        )
+                        return None
+                    cache_path.write_bytes(resp.content)
+                    break
+                except Exception as e:
+                    if attempt < max_retries:
+                        import time
+                        time.sleep(1 * (attempt + 1))
+                        logger.debug(
+                            "이미지 다운로드 재시도 (%d/%d): %s",
+                            attempt + 1, max_retries, src,
+                        )
+                    else:
+                        logger.warning(
+                            "이미지 다운로드 실패 (재시도 %d회 후): %s — %s",
+                            max_retries, src, e,
+                        )
+                        return None
         try:
             return Image.open(cache_path).convert("RGB")
         except Exception as e:

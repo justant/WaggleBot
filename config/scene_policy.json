@@ -104,7 +104,7 @@
 
   "defaults": {
     "fallback_mood": "daily",
-    "max_body_images": 8,
+    "max_body_images": 20,
     "min_body_lines_per_image": 2,
     "supported_image_ext": [".png", ".jpg", ".jpeg", ".webp"],
     "supported_bgm_ext": [".mp3", ".wav", ".ogg"]

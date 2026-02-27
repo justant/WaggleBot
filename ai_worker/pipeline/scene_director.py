@@ -203,7 +203,7 @@ class SceneDirector:
         else:
             # policy 없을 때 fallback (기존 동작 유지)
             tts_emotion = ""
-            max_body_images = 8
+            max_body_images = 20
             fixed_texts = ["여러분들의 생각은 어떤가요?"]
 
             def _pick_asset(_: str) -> None:

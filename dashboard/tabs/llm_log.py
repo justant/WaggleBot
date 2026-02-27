@@ -1,12 +1,94 @@
 """LLM 호출 이력 (LLM Log) 탭."""
 
+import json
 from datetime import datetime, timezone, timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components
 from sqlalchemy import func
 
 from db.models import Post, LLMLog
 from db.session import SessionLocal
+
+
+def _copyable_code(text: str, key: str) -> None:
+    """HTTP 환경에서도 동작하는 복사 버튼 포함 코드 블록."""
+    escaped = json.dumps(text)
+    lines = text.count("\n") + 1
+    height = min(lines * 20 + 70, 500)
+    uid = key.replace("-", "_")
+
+    components.html(
+        f"""
+    <style>
+    .cc-wrap {{
+        position: relative;
+        background: #0e1117;
+        border-radius: 0.5rem;
+    }}
+    .cc-pre {{
+        margin: 0;
+        padding: 1rem;
+        padding-top: 2.2rem;
+        color: #fafafa;
+        font-family: 'Source Code Pro', 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow: auto;
+    }}
+    .cc-btn {{
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        background: #262730;
+        color: #aaa;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 3px 10px;
+        cursor: pointer;
+        font-size: 12px;
+        z-index: 2;
+    }}
+    .cc-btn:hover {{ background: #3a3a4a; color: #fff; }}
+    </style>
+    <div class="cc-wrap">
+        <button class="cc-btn" id="btn_{uid}" onclick="doCopy_{uid}()">
+            📋 복사
+        </button>
+        <pre class="cc-pre" id="pre_{uid}"></pre>
+    </div>
+    <script>
+    (function() {{
+        var text = {escaped};
+        document.getElementById('pre_{uid}').textContent = text;
+        window.doCopy_{uid} = function() {{
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            var ok = false;
+            try {{ ok = document.execCommand('copy'); }} catch(e) {{}}
+            document.body.removeChild(ta);
+            if (!ok) {{
+                try {{
+                    navigator.clipboard.writeText(text);
+                    ok = true;
+                }} catch(e) {{}}
+            }}
+            var btn = document.getElementById('btn_{uid}');
+            btn.textContent = ok ? '✅ 복사됨' : '❌ 실패';
+            setTimeout(function() {{ btn.textContent = '📋 복사'; }}, 2000);
+        }};
+    }})();
+    </script>
+    """,
+        height=height,
+        scrolling=True,
+    )
 
 
 def render() -> None:
@@ -128,6 +210,12 @@ def render() -> None:
                         st.json(_log.parsed_result)
 
                 st.markdown("**프롬프트**")
-                st.code(_log.prompt_text or "(없음)", language="text")
+                _copyable_code(
+                    _log.prompt_text or "(없음)",
+                    key=f"prompt_{_log.id}",
+                )
                 st.markdown("**LLM 응답**")
-                st.code(_log.raw_response or "(없음)", language="text")
+                _copyable_code(
+                    _log.raw_response or "(없음)",
+                    key=f"response_{_log.id}",
+                )

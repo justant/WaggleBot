@@ -9,7 +9,9 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
@@ -170,7 +172,8 @@ def _build_slideshow(
 
     _IMG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     local_imgs: list[Path] = []
-    for idx, url in enumerate(image_urls[:10]):  # 최대 10장
+    _skipped = 0
+    for idx, url in enumerate(image_urls):
         url_hash = hashlib.md5(url.encode()).hexdigest()
         cache_key = f"{url_hash}_{width}x{height}.jpg"
         cached_path = _IMG_CACHE_DIR / cache_key
@@ -182,25 +185,27 @@ def _build_slideshow(
             logger.debug("이미지 캐시 히트: %s…", url[:60])
             continue
 
-        try:
-            _hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-            if "dcinside.com" in url:
-                _hdrs["Referer"] = "https://gall.dcinside.com/"
-            resp = requests.get(url, timeout=15, headers=_hdrs)
-            resp.raise_for_status()
-        except requests.RequestException:
-            logger.warning("이미지 다운로드 실패: %s", url)
+        raw_data = _download_image_with_retry(url, max_retries=2)
+        if raw_data is None:
+            _skipped += 1
             continue
 
-        img_path.write_bytes(resp.content)
+        img_path.write_bytes(raw_data)
         try:
             _resize_cover(img_path, width, height)
             shutil.copy2(img_path, cached_path)  # 캐시 저장
         except Exception:
             logger.warning("이미지 처리 실패 (손상/비이미지 응답), 건너뜀: %s", url)
             img_path.unlink(missing_ok=True)
+            _skipped += 1
             continue
         local_imgs.append(img_path)
+
+    if _skipped:
+        logger.warning(
+            "이미지 %d/%d장 다운로드 실패 (post_id=%d)",
+            _skipped, len(image_urls), post_id,
+        )
 
     if not local_imgs:
         logger.warning("다운로드 성공 이미지 없음 → 배경영상 폴백")
@@ -307,6 +312,86 @@ def _assign_transitions(n: int, custom: list[str] | None) -> list[str]:
             result.append(_MID_CYCLE[mid_idx % len(_MID_CYCLE)])
             mid_idx += 1
     return result
+
+
+_video_dc_session: requests.Session | None = None
+
+
+def _get_dc_session() -> requests.Session:
+    """DCInside 이미지 다운로드용 세션 (쿠키 워밍업 포함)."""
+    global _video_dc_session
+    if _video_dc_session is not None:
+        return _video_dc_session
+    _video_dc_session = requests.Session()
+    _video_dc_session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    })
+    try:
+        _video_dc_session.get("https://www.dcinside.com/", timeout=10)
+        logger.debug("video DC 세션 워밍업 OK (cookies=%d)",
+                     len(_video_dc_session.cookies))
+    except Exception:
+        logger.debug("video DC 세션 워밍업 실패 — 쿠키 없이 시도")
+    return _video_dc_session
+
+
+def _is_dc_url(url: str) -> bool:
+    """DCInside CDN URL 여부 확인."""
+    hostname = urlparse(url).hostname or ""
+    return any(hostname.endswith(d) for d in ("dcinside.com", "dcinside.co.kr"))
+
+
+def _download_image_with_retry(
+    url: str, max_retries: int = 2, min_size: int = 200,
+) -> bytes | None:
+    """이미지를 다운로드하고 재시도 로직을 적용한다.
+
+    Args:
+        url: 이미지 URL
+        max_retries: 최대 재시도 횟수 (0이면 1회만 시도)
+        min_size: 플레이스홀더 판별 최소 바이트 수
+
+    Returns:
+        이미지 바이트 데이터. 실패 시 None.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            if _is_dc_url(url):
+                sess = _get_dc_session()
+                resp = sess.get(url, timeout=15, headers={
+                    "Referer": "https://gall.dcinside.com/",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "Sec-Fetch-Dest": "image",
+                    "Sec-Fetch-Mode": "no-cors",
+                    "Sec-Fetch-Site": "cross-site",
+                })
+            else:
+                _hdrs = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                  "Chrome/131.0.0.0 Safari/537.36",
+                    "Referer": f"{urlparse(url).scheme}://{urlparse(url).netloc}/",
+                    "Accept": "image/*,*/*;q=0.8",
+                }
+                resp = requests.get(url, timeout=15, headers=_hdrs)
+            resp.raise_for_status()
+            if len(resp.content) < min_size:
+                logger.warning(
+                    "이미지 크기 의심 (%d bytes, 플레이스홀더?): %s",
+                    len(resp.content), url,
+                )
+                return None
+            return resp.content
+        except requests.RequestException:
+            if attempt < max_retries:
+                time.sleep(1 * (attempt + 1))
+                logger.debug("이미지 다운로드 재시도 (%d/%d): %s", attempt + 1, max_retries, url)
+            else:
+                logger.warning("이미지 다운로드 실패 (재시도 %d회 후): %s", max_retries, url)
+    return None
 
 
 def _resize_cover(img_path: Path, target_w: int, target_h: int) -> None:
