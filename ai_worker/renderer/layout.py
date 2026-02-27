@@ -120,37 +120,37 @@ def _truncate(text: str, max_chars: int) -> str:
 
 
 def _wrap_korean(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
-    """한글 음절 단위 줄바꿈 (공백 우선, 초과 시 강제 분리)."""
+    """한글 텍스트 줄바꿈 — 단어(공백) 단위 우선, 긴 단어는 강제 분리."""
     def _w(t: str) -> float:
         try:
             return font.getlength(t)
         except AttributeError:
             return float(font.getbbox(t)[2])
 
+    if _w(text) <= max_width:
+        return [text]
+
+    words = text.split(" ")
     lines: list[str] = []
     current = ""
-    cur_w = 0.0
 
-    for ch in text:
-        ch_w = _w(ch)
-        if ch == " ":
-            if cur_w + ch_w <= max_width:
-                current += ch
-                cur_w += ch_w
-            else:
-                if current.strip():
-                    lines.append(current.rstrip())
-                current = ""
-                cur_w = 0.0
+    for word in words:
+        candidate = f"{current} {word}" if current else word
+        if _w(candidate) <= max_width:
+            current = candidate
         else:
-            if cur_w + ch_w > max_width:
-                if current:
-                    lines.append(current.rstrip())
-                current = ch
-                cur_w = ch_w
+            if current:
+                lines.append(current)
+            # 단어 자체가 max_width 초과 → 글자 단위 강제 분리
+            if _w(word) > max_width:
+                for ch in word:
+                    if current and _w(current + ch) > max_width:
+                        lines.append(current)
+                        current = ch
+                    else:
+                        current = (current or "") + ch
             else:
-                current += ch
-                cur_w += ch_w
+                current = word
 
     if current.strip():
         lines.append(current.rstrip())
@@ -906,25 +906,33 @@ def _scenes_to_plan_and_sentences(
         elif scene.type == "img_text":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({
+            sent_dict: dict = {
                 "text": text, "section": "body", "audio": audio,
                 "voice_override": scene.voice_override,
                 "block_type": getattr(scene, "block_type", "body"),
                 "author": getattr(scene, "author", None),
-            })
+            }
+            psl = getattr(scene, "pre_split_lines", None)
+            if psl:
+                sent_dict["lines"] = psl
+            sentences.append(sent_dict)
             plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
 
         elif scene.type == "text_only":
             # 여러 줄 → 각각 별도 plan 엔트리 → 렌더러가 누적 스태킹
+            psl = getattr(scene, "pre_split_lines", None)
             for line in scene.text_lines:
                 text, audio = _unpack_line(line)
                 sent_idx = len(sentences)
-                sentences.append({
+                sent_dict = {
                     "text": text, "section": "body", "audio": audio,
                     "voice_override": scene.voice_override,
                     "block_type": getattr(scene, "block_type", "body"),
                     "author": getattr(scene, "author", None),
-                })
+                }
+                if psl:
+                    sent_dict["lines"] = psl
+                sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
 
         elif scene.type == "img_only":
@@ -1032,7 +1040,12 @@ def _render_pipeline(
 
         for sent in sentences:
             if "lines" in sent:
-                continue  # LLM에서 미리 분리된 경우 재계산 스킵
+                # 편집실에서 나눈 원본 줄바꿈 — 각 줄 내에서만 추가 줄바꿈
+                expanded: list[str] = []
+                for line in sent["lines"]:
+                    expanded.extend(_wrap_korean(line, to_font, to_max_w))
+                sent["lines"] = expanded
+                continue
             sent["lines"] = _wrap_korean(sent["text"], to_font, to_max_w)
 
         # ── Step 8: PIL 프레임 생성 ────────────────────────────

@@ -184,11 +184,16 @@ def _is_comment_sentence(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _flatten_body(body: list) -> list[str]:
-    """v2 dict body ([{"lines": [...]}]) → list[str] 변환. str 요소는 그대로 유지."""
+    """v2 dict body ([{"lines": [...]}]) → list[str] 변환. str 요소는 그대로 유지.
+
+    편집실에서 나눈 줄바꿈은 \\n으로 연결하여 보존한다.
+    (_esc_ass가 \\n → \\\\N 변환하므로 ASS 자막에서 줄바꿈으로 표시됨)
+    """
     result: list[str] = []
     for item in body:
         if isinstance(item, dict):
-            result.append(" ".join(item.get("lines", [])))
+            lines = item.get("lines", [])
+            result.append("\n".join(lines) if lines else "")
         else:
             result.append(str(item))
     return result

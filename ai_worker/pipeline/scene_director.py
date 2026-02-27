@@ -48,6 +48,7 @@ class SceneDecision:
     bgm_path: str | None = None   # BGM 파일 경로 (intro 씬에만 설정)
     block_type: str = "body"      # "body" 또는 "comment" (렌더링 UI 분기)
     author: str | None = None     # comment 타입의 작성자 닉네임
+    pre_split_lines: list[str] | None = None  # 편집실에서 나눈 원본 줄바꿈 (렌더링용)
 
 
 def pick_random_file(dir_path: str, extensions: list[str]) -> Path | None:
@@ -60,7 +61,7 @@ def pick_random_file(dir_path: str, extensions: list[str]) -> Path | None:
 
 
 def distribute_images(
-    body_items: list[tuple[str, str | None, str, str | None]],
+    body_items: list[tuple[str, str | None, str, str | None, list[str] | None]],
     images: list[str],
     max_images: int,
     tts_emotion: str = "",
@@ -69,7 +70,7 @@ def distribute_images(
     """본문 아이템에 이미지를 균등 분배하여 SceneDecision 리스트 생성.
 
     Args:
-        body_items: (text, voice_override, block_type, author) 튜플 리스트
+        body_items: (text, voice_override, block_type, author, pre_split_lines) 튜플 리스트
         images: 사용 가능한 이미지 경로 리스트
         max_images: 최대 이미지 사용 수
         tts_emotion: TTS 감정 키
@@ -80,6 +81,7 @@ def distribute_images(
     def _make(
         type_: str, text: str, image: str | None = None,
         voice: str | None = None, block_type: str = "body", author: str | None = None,
+        pre_split_lines: list[str] | None = None,
     ) -> SceneDecision:
         return SceneDecision(
             type=type_,
@@ -90,6 +92,7 @@ def distribute_images(
             voice_override=voice,
             block_type=block_type,
             author=author,
+            pre_split_lines=pre_split_lines,
         )
 
     # Case 5: 텍스트 없이 이미지만
@@ -98,7 +101,7 @@ def distribute_images(
 
     # Case 4: 이미지 없음
     if not remaining_imgs:
-        return [_make("text_only", text, voice=voice, block_type=bt, author=au) for text, voice, bt, au in body_items]
+        return [_make("text_only", text, voice=voice, block_type=bt, author=au, pre_split_lines=psl) for text, voice, bt, au, psl in body_items]
 
     total = len(body_items)
     n_imgs = len(remaining_imgs)
@@ -106,8 +109,8 @@ def distribute_images(
     # Case 3: 이미지 ≥ 텍스트 — 매 줄 img_text
     if n_imgs >= total:
         return [
-            _make("img_text", text, remaining_imgs[i] if i < n_imgs else None, voice, bt, au)
-            for i, (text, voice, bt, au) in enumerate(body_items)
+            _make("img_text", text, remaining_imgs[i] if i < n_imgs else None, voice, bt, au, psl)
+            for i, (text, voice, bt, au, psl) in enumerate(body_items)
         ]
 
     # Case 1, 2: 균등 분배
@@ -116,12 +119,12 @@ def distribute_images(
     img_idx = 0
     scenes: list[SceneDecision] = []
 
-    for line_idx, (text, voice, bt, au) in enumerate(body_items):
+    for line_idx, (text, voice, bt, au, psl) in enumerate(body_items):
         if line_idx in img_positions and img_idx < n_imgs:
-            scenes.append(_make("img_text", text, remaining_imgs[img_idx], voice, bt, au))
+            scenes.append(_make("img_text", text, remaining_imgs[img_idx], voice, bt, au, psl))
             img_idx += 1
         else:
-            scenes.append(_make("text_only", text, voice=voice, block_type=bt, author=au))
+            scenes.append(_make("text_only", text, voice=voice, block_type=bt, author=au, pre_split_lines=psl))
     return scenes
 
 
@@ -241,17 +244,18 @@ class SceneDirector:
 
         # ── Body ───────────────────────────────────────────────────────
         body_raw = list(self.script.get("body", []))
-        body_items: list[tuple[str, str | None, str, str | None]] = []
+        body_items: list[tuple[str, str | None, str, str | None, list[str] | None]] = []
         for item in body_raw:
             if isinstance(item, dict):
-                text = " ".join(item.get("lines", []))
+                lines_raw = item.get("lines", [])
+                text = " ".join(lines_raw)
                 block_type = item.get("type", "body")
                 author = item.get("author")
                 is_comment = block_type == "comment"
                 voice = random.choice(self.comment_voices) if is_comment and self.comment_voices else None
-                body_items.append((text, voice, block_type, author))
+                body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
             else:
-                body_items.append((str(item), None, "body", None))
+                body_items.append((str(item), None, "body", None, None))
 
         body_scenes = distribute_images(
             body_items,

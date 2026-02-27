@@ -316,5 +316,172 @@ def main() -> None:
             print(f"    [{len(t)}자, {len(lines)}줄, {wrap_h}px] \"{t[:35]}{'...' if len(t) > 35 else ''}\"")
 
 
+def test_db_linebreak(post_ids: list[int] | None = None) -> None:
+    """DB에서 ScriptData를 가져와 줄바꿈이 올바르게 렌더링되는지 테스트.
+
+    편집실에서 나눈 줄바꿈(lines 배열)이 렌더링 시 보존되는지 확인한다.
+    각 post_id별로 text_only 프레임을 생성하여 비교.
+    """
+    import json
+    from db.session import SessionLocal
+    from db.models import Content, Post
+
+    if post_ids is None:
+        post_ids = [915, 952, 731]
+
+    layout = _load_layout()
+    font_dir = ASSETS_DIR / "fonts"
+    out_dir = _HERE / "test_layout_output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    sc_to = layout["scenes"]["text_only"]
+    ta = sc_to["elements"]["text_area"]
+    font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
+    to_max_w = ta["max_width"]
+
+    print(f"[test_linebreak] 출력 디렉터리: {out_dir}")
+    print(f"[test_linebreak] max_width={to_max_w}px")
+    print()
+
+    with SessionLocal() as db:
+        for pid in post_ids:
+            content = db.query(Content).filter(Content.post_id == pid).first()
+            post = db.query(Post).filter(Post.id == pid).first()
+            if not content or not content.summary_text:
+                print(f"[test_linebreak] post_id={pid}: 데이터 없음, 스킵")
+                continue
+
+            raw = content.summary_text
+            script = json.loads(raw) if isinstance(raw, str) else raw
+            title = post.title if post else script.get("title_suggestion", f"post_{pid}")
+
+            print(f"{'=' * 60}")
+            print(f"[post_id={pid}] {title}")
+            print(f"{'=' * 60}")
+
+            base_frame = _create_base_frame(layout, title, font_dir, ASSETS_DIR)
+            all_frames: list[Path] = []
+            slot_idx = 0
+
+            # ── hook ──────────────────────────────────────────────
+            hook = script.get("hook", "")
+            hook_lines = _wrap_korean(hook, font, to_max_w)
+            text_history: list[dict] = [{"lines": hook_lines, "is_new": True}]
+            fp = out_dir / f"{pid}_hook.png"
+            _render_text_only_frame(base_frame, text_history, layout, font_dir, fp)
+            img = Image.open(fp)
+            img = _draw_label(img, f"P{pid} hook", f"'{hook}' → {hook_lines}")
+            img.save(str(fp))
+            all_frames.append(fp)
+            print(f"  hook: '{hook}' → {hook_lines}")
+
+            # ── body ──────────────────────────────────────────────
+            text_history = []
+            for bi, body_item in enumerate(script.get("body", [])):
+                if isinstance(body_item, dict):
+                    lines_raw = body_item.get("lines", [])
+                    block_type = body_item.get("type", "body")
+                    author = body_item.get("author")
+                else:
+                    lines_raw = [str(body_item)]
+                    block_type = "body"
+                    author = None
+
+                # 각 줄을 개별적으로 wrap (수정된 로직 테스트)
+                display_lines: list[str] = []
+                for line in lines_raw:
+                    display_lines.extend(_wrap_korean(line, font, to_max_w))
+
+                for prev in text_history:
+                    prev["is_new"] = False
+
+                max_slots = ta.get("max_slots", 3)
+                if len(text_history) >= max_slots:
+                    text_history = []
+
+                text_history.append({
+                    "lines": display_lines,
+                    "is_new": True,
+                    "block_type": block_type,
+                    "author": author,
+                })
+
+                slot_idx += 1
+                label_prefix = "comment" if block_type == "comment" else "body"
+                fp = out_dir / f"{pid}_{label_prefix}_{slot_idx:02d}.png"
+                _render_text_only_frame(base_frame, text_history, layout, font_dir, fp)
+
+                img = Image.open(fp)
+                author_str = f" ({author})" if author else ""
+                img = _draw_label(
+                    img, f"P{pid} {label_prefix}{slot_idx:02d}{author_str}",
+                    f"원본: {lines_raw} → 표시: {display_lines}",
+                )
+                img.save(str(fp))
+                all_frames.append(fp)
+
+                status = "OK" if display_lines == lines_raw else "WRAPPED"
+                print(f"  [{label_prefix}{bi + 1:02d}] 원본: {lines_raw} → 표시: {display_lines}  [{status}]")
+
+            # ── closer ────────────────────────────────────────────
+            closer = script.get("closer", "")
+            closer_lines = _wrap_korean(closer, font, to_max_w)
+            text_history = [{"lines": closer_lines, "is_new": True}]
+            fp = out_dir / f"{pid}_closer.png"
+            _render_text_only_frame(base_frame, text_history, layout, font_dir, fp)
+            img = Image.open(fp)
+            img = _draw_label(img, f"P{pid} closer", f"'{closer}' → {closer_lines}")
+            img.save(str(fp))
+            all_frames.append(fp)
+            print(f"  closer: '{closer}' → {closer_lines}")
+
+            # ── MP4 생성 ──────────────────────────────────────────
+            concat_file = out_dir / f"{pid}_concat.txt"
+            lines_txt = []
+            for frame_path in all_frames:
+                lines_txt.append(f"file '{frame_path.resolve()}'\n")
+                lines_txt.append("duration 2.5\n")
+            if all_frames:
+                lines_txt.append(f"file '{all_frames[-1].resolve()}'\n")
+            concat_file.write_text("".join(lines_txt), encoding="utf-8")
+
+            output_mp4 = out_dir / f"{pid}_linebreak_test.mp4"
+            for codec in ["h264_nvenc", "libx264"]:
+                enc_args = (
+                    ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23"]
+                    if codec == "h264_nvenc"
+                    else ["-c:v", "libx264", "-preset", "fast", "-crf", "23"]
+                )
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                    *enc_args,
+                    "-pix_fmt", "yuv420p",
+                    "-r", "1", "-an",
+                    str(output_mp4),
+                ]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if r.returncode == 0:
+                    print(f"  → MP4 생성: {output_mp4}")
+                    break
+                if codec == "h264_nvenc":
+                    continue
+            else:
+                print(f"  → MP4 생성 실패")
+
+            print()
+
+    print("[test_linebreak] 완료")
+
+
 if __name__ == "__main__":
-    main()
+    import sys as _sys
+    if "--linebreak" in _sys.argv:
+        # 줄바꿈 테스트 모드
+        pids = []
+        for arg in _sys.argv[1:]:
+            if arg.isdigit():
+                pids.append(int(arg))
+        test_db_linebreak(pids or None)
+    else:
+        main()
