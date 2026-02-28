@@ -49,6 +49,102 @@ class SceneDecision:
     block_type: str = "body"      # "body" 또는 "comment" (렌더링 UI 분기)
     author: str | None = None     # comment 타입의 작성자 닉네임
     pre_split_lines: list[str] | None = None  # 편집실에서 나눈 원본 줄바꿈 (렌더링용)
+    # --- LTX-Video 관련 필드 ---
+    video_clip_path: str | None = None      # 생성된 비디오 클립 파일 경로
+    video_prompt: str | None = None         # LTX-Video용 영어 프롬프트
+    video_mode: str | None = None           # "t2v" | "i2v" | None
+    video_init_image: str | None = None     # I2V 모드 초기 프레임 이미지 경로
+    video_generation_failed: bool = False   # 비디오 생성 최종 실패 여부
+
+
+def _download_and_cache_image(url: str, cache_dir: Path) -> Path | None:
+    """URL에서 이미지를 다운로드하여 캐시 디렉터리에 저장. 실패 시 None."""
+    import hashlib
+    import requests
+
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:16]
+    cache_path = cache_dir / f"vid_img_{url_hash}.jpg"
+
+    if cache_path.exists() and cache_path.stat().st_size > 200:
+        return cache_path
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        if "dcinside.com" in url:
+            headers["Referer"] = "https://gall.dcinside.com/"
+
+        resp = requests.get(url, timeout=15, headers=headers)
+        resp.raise_for_status()
+
+        if len(resp.content) < 200:
+            logger.warning("[scene] 이미지 크기 의심 (%d bytes): %s", len(resp.content), url)
+            return None
+
+        cache_path.write_bytes(resp.content)
+        return cache_path
+
+    except Exception as e:
+        logger.warning("[scene] 이미지 다운로드 실패: %s — %s", url, e)
+        return None
+
+
+def assign_video_modes(
+    scenes: list,
+    image_cache_dir: Path,
+    i2v_threshold: float = 0.6,
+) -> list:
+    """각 씬에 video_mode ("t2v" | "i2v" | None)를 할당한다.
+
+    할당 규칙:
+    1. text_only → "t2v"
+    2. img_text / img_only → image_filter 평가, score >= threshold → "i2v", 아니면 "t2v"
+    3. intro / outro → "t2v"
+    """
+    from ai_worker.video.image_filter import evaluate_image
+
+    for i, scene in enumerate(scenes):
+        if scene.type == "text_only":
+            scene.video_mode = "t2v"
+
+        elif scene.type in ("img_text", "img_only"):
+            if scene.image_url:
+                local_path = _download_and_cache_image(scene.image_url, image_cache_dir)
+                if local_path and local_path.exists():
+                    suitability = evaluate_image(local_path)
+                    if suitability.score >= i2v_threshold:
+                        scene.video_mode = "i2v"
+                        scene.video_init_image = str(local_path)
+                        logger.info(
+                            "[scene] 씬 %d (%s): I2V 선정 (score=%.3f, category=%s)",
+                            i, scene.type, suitability.score, suitability.category,
+                        )
+                    else:
+                        scene.video_mode = "t2v"
+                        logger.info(
+                            "[scene] 씬 %d (%s): 이미지 부적합 → T2V 전환 (score=%.3f, reason=%s)",
+                            i, scene.type, suitability.score, suitability.reason,
+                        )
+                else:
+                    scene.video_mode = "t2v"
+                    logger.warning("[scene] 씬 %d: 이미지 다운로드 실패 → T2V 전환", i)
+            else:
+                scene.video_mode = "t2v"
+
+        elif scene.type in ("intro", "outro"):
+            scene.video_mode = "t2v"
+
+        else:
+            scene.video_mode = "t2v"
+
+    t2v_count = sum(1 for s in scenes if s.video_mode == "t2v")
+    i2v_count = sum(1 for s in scenes if s.video_mode == "i2v")
+    logger.info(
+        "[scene] video_mode 할당 완료: 총 %d씬 (T2V=%d, I2V=%d)",
+        len(scenes), t2v_count, i2v_count,
+    )
+    return scenes
 
 
 def pick_random_file(dir_path: str, extensions: list[str]) -> Path | None:

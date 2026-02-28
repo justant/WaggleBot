@@ -955,6 +955,145 @@ def _scenes_to_plan_and_sentences(
 
 
 # ---------------------------------------------------------------------------
+# 비디오 세그먼트 렌더링 (LTX-Video 확장)
+# ---------------------------------------------------------------------------
+
+def _escape_ffmpeg_text(text: str) -> str:
+    """FFmpeg drawtext용 텍스트 이스케이프."""
+    for ch in ("\\", "'", ":", ";", "%", "{", "}", '"'):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
+def _render_video_segment(
+    base_frame: Image.Image,
+    scene,
+    text: str,
+    duration: float,
+    layout: dict,
+    font_dir: Path,
+    output_path: Path,
+) -> Path:
+    """비디오 클립을 base_frame 위에 합성하여 세그먼트 mp4로 생성한다."""
+    from ai_worker.video.video_utils import resize_clip_to_layout, loop_or_trim_clip
+
+    va = layout["scenes"]["video_text"]["elements"]["video_area"]
+    ta = layout["scenes"]["video_text"]["elements"]["text_area"]
+
+    tmp_dir = output_path.parent
+    base_png = tmp_dir / f"base_{output_path.stem}.png"
+    base_frame.copy().save(str(base_png), "PNG")
+
+    clip_path = Path(scene.video_clip_path)
+
+    resized_clip = tmp_dir / f"resized_{output_path.stem}.mp4"
+    resize_clip_to_layout(
+        clip_path, resized_clip,
+        width=va["width"], height=va["height"],
+    )
+
+    fitted_clip = tmp_dir / f"fitted_{output_path.stem}.mp4"
+    loop_or_trim_clip(resized_clip, fitted_clip, target_duration=duration)
+
+    font_path = font_dir / "NotoSansKR-Medium.ttf"
+    stroke_color = ta.get("stroke_color", "#000000")
+    stroke_width = ta.get("stroke_width", 3)
+
+    filter_complex = (
+        f"[0:v]loop=loop={int(duration * 30)}:size=1:start=0,"
+        f"setpts=N/{30}/TB,fps={30}[base];"
+        f"[base][1:v]overlay={va['x']}:{va['y']}:shortest=1[vwith];"
+        f"[vwith]drawtext=text='{_escape_ffmpeg_text(text)}':"
+        f"fontfile='{font_path}':"
+        f"fontsize={ta['font_size']}:"
+        f"fontcolor={ta['color']}:"
+        f"borderw={stroke_width}:bordercolor={stroke_color}:"
+        f"x=(w-text_w)/2:y={ta['y']}[vout]"
+    )
+
+    codec = _resolve_codec()
+    enc_args = _get_encoder_args(codec)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(base_png),
+        "-i", str(fitted_clip),
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-t", f"{duration:.3f}",
+        *enc_args,
+        "-r", "30",
+        "-an",
+        str(output_path),
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        logger.error("[layout] video_segment 생성 실패:\n%s", result.stderr[-1000:])
+        raise subprocess.CalledProcessError(result.returncode, cmd)
+
+    base_png.unlink(missing_ok=True)
+    resized_clip.unlink(missing_ok=True)
+    fitted_clip.unlink(missing_ok=True)
+
+    logger.debug("[layout] video_segment 생성: %s (%.2fs)", output_path.name, duration)
+    return output_path
+
+
+def _render_static_segment(
+    frame_png: Path,
+    duration: float,
+    output_path: Path,
+) -> Path:
+    """정적 PNG 프레임을 duration 길이의 mp4 세그먼트로 변환."""
+    codec = _resolve_codec()
+    enc_args = _get_encoder_args(codec)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", str(frame_png),
+        "-t", f"{duration:.3f}",
+        *enc_args,
+        "-r", "30",
+        "-an",
+        str(output_path),
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, cmd)
+
+    return output_path
+
+
+def _get_scene_for_entry(
+    entry: dict,
+    sentences: list[dict],
+    scenes_list: list | None,
+) -> object | None:
+    """plan entry에 대응하는 SceneDecision을 찾는다."""
+    if scenes_list is None:
+        return None
+
+    sent_idx = entry.get("sent_idx")
+    if sent_idx is None:
+        return None
+
+    target_text = sentences[sent_idx].get("text", "")
+    if not target_text:
+        return None
+
+    for scene in scenes_list:
+        for line in scene.text_lines:
+            line_text = line.get("text", "") if isinstance(line, dict) else str(line)
+            if line_text and line_text in target_text:
+                return scene
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 공통 렌더링 파이프라인 (Steps 2 / 4 – 11)
 # ---------------------------------------------------------------------------
 
@@ -975,11 +1114,13 @@ def _render_pipeline(
     save_tts_cache: Path | None = None,
     tts_audio_cache: Path | None = None,
     bgm_path: Path | None = None,
+    scenes_list: list | None = None,
 ) -> Path:
     """sentences / plan / images 를 받아 mp4를 생성한다.
 
     Steps 2, 4–11 을 담당. _plan_sequence 단계는 호출자가 수행한다.
     bgm_path: 우선 사용할 BGM 파일 경로. 없거나 파일이 존재하지 않으면 무시.
+    scenes_list: SceneDecision 리스트 (비디오 씬 렌더링용, None이면 정적 전용).
     """
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -1104,113 +1245,218 @@ def _render_pipeline(
 
         logger.info("[layout] 프레임 %d장 완료 (%.2fs)", len(frame_paths), time.time() - t1)
 
-        # ── Step 9: concat_list.txt ────────────────────────────
-        concat_file = tmp_dir / "concat_list.txt"
-        concat_lines: list[str] = []
-        for fp, dur in zip(frame_paths, durations):
-            concat_lines.append(f"file '{fp.resolve()}'\n")
-            concat_lines.append(f"duration {dur:.4f}\n")
-        if frame_paths:
-            concat_lines.append(f"file '{frame_paths[-1].resolve()}'\n")
-        concat_file.write_text("".join(concat_lines), encoding="utf-8")
+        # 비디오 씬 존재 여부 확인
+        has_video_scenes = False
+        if scenes_list:
+            has_video_scenes = any(
+                getattr(s, "video_clip_path", None)
+                and not getattr(s, "video_generation_failed", False)
+                for s in scenes_list
+            )
 
-        # ── Step 10: 타임스탬프 + SFX ─────────────────────────
-        timings: list[float] = []
-        acc = 0.0
-        for dur in durations:
-            timings.append(acc)
-            acc += dur
+        if has_video_scenes:
+            # ── Step 8.5: 하이브리드 세그먼트 생성 ─────────────────
+            logger.info("[layout] 하이브리드 렌더링: 비디오 씬 포함")
+            segment_paths: list[Path] = []
+            for frame_idx, (entry, dur) in enumerate(zip(plan, durations)):
+                segment_path = tmp_dir / f"seg_{frame_idx:03d}.mp4"
+                scene = _get_scene_for_entry(entry, sentences, scenes_list)
 
-        extra_inputs, sfx_filter = _build_layout_sfx_filter(
-            plan, timings, audio_dir, layout,
-            tts_input_idx=1, sfx_offset=sfx_offset,
-        )
+                if (
+                    scene is not None
+                    and getattr(scene, "video_clip_path", None)
+                    and not getattr(scene, "video_generation_failed", False)
+                ):
+                    text = sentences[entry["sent_idx"]]["text"] if entry.get("sent_idx") is not None else ""
+                    try:
+                        _render_video_segment(
+                            base_frame=base_frame,
+                            scene=scene,
+                            text=text,
+                            duration=dur,
+                            layout=layout,
+                            font_dir=font_dir,
+                            output_path=segment_path,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "[layout] 비디오 세그먼트 %d 생성 실패, 정적 폴백: %s",
+                            frame_idx, e,
+                        )
+                        _render_static_segment(frame_paths[frame_idx], dur, segment_path)
+                else:
+                    _render_static_segment(frame_paths[frame_idx], dur, segment_path)
 
-        # ── Step 11: FFmpeg 인코딩 ─────────────────────────────
-        codec = _resolve_codec()
-        enc_args = _get_encoder_args(codec)
-        video_filter = (
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2[vout]"
-        )
+                segment_paths.append(segment_path)
 
-        # BGM 처리: bgm_path 우선, 없으면 BGM 없이 인코딩
-        effective_bgm: Path | None = None
-        if bgm_path is not None and Path(bgm_path).exists():
-            effective_bgm = Path(bgm_path)
-            logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
-        elif bgm_path is not None:
-            logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+            # ── Step 9: segment concat ─────────────────────────────
+            concat_file = tmp_dir / "concat_list.txt"
+            concat_lines_list: list[str] = []
+            for sp in segment_paths:
+                concat_lines_list.append(f"file '{sp.resolve()}'\n")
+            concat_file.write_text("".join(concat_lines_list), encoding="utf-8")
 
-        if effective_bgm is not None:
-            # SFX 필터는 tts_input_idx=1 기준으로 생성됐으므로 BGM 입력 추가 시 인덱스 재조정 필요
-            # BGM을 TTS 뒤(index=2)에 추가하고 SFX는 그 이후로 시프트
-            bgm_sfx_extra, bgm_sfx_filter = _build_layout_sfx_filter(
+            video_only = tmp_dir / "video_only.mp4"
+            concat_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0",
+                "-i", str(concat_file),
+                "-c", "copy",
+                str(video_only),
+            ]
+            concat_result = subprocess.run(concat_cmd, capture_output=True, text=True, timeout=300)
+            if concat_result.returncode != 0:
+                logger.error("[layout] concat 실패:\n%s", concat_result.stderr[-2000:])
+                raise subprocess.CalledProcessError(concat_result.returncode, concat_cmd)
+
+            # ── Step 10–11: 오디오 합성 ────────────────────────────
+            timings: list[float] = []
+            acc = 0.0
+            for dur in durations:
+                timings.append(acc)
+                acc += dur
+
+            extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
             )
-            # SFX 필터의 tts 참조를 premix_tts로 대체하여 BGM과 함께 믹싱
-            # BGM 볼륨: 0.15 (TTS 오디오에 ducking 없이 단순 볼륨 믹싱)
-            bgm_audio_filter = (
-                f"[1:a]apad[tts_pad];"
-                f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout_premix]"
-            )
-            # SFX가 있으면 aout_premix에 추가 믹싱, 없으면 그대로 aout으로 사용
-            if bgm_sfx_extra:
-                # SFX 입력 인덱스를 3부터 시작하도록 sfx_filter 재생성
-                bgm_extra_sfx, bgm_sfx_str = _build_layout_sfx_filter(
-                    plan, timings, audio_dir, layout,
-                    tts_input_idx=1, sfx_offset=sfx_offset,
+
+            effective_bgm: Path | None = None
+            if bgm_path is not None and Path(bgm_path).exists():
+                effective_bgm = Path(bgm_path)
+                logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
+            elif bgm_path is not None:
+                logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+
+            if effective_bgm is not None:
+                bgm_audio_filter = (
+                    f"[1:a]apad[tts_pad];"
+                    f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
+                    f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout]"
                 )
-                # sfx_filter의 [1:a] 참조를 [aout_premix]로 교체하여 BGM 포함 믹싱
-                bgm_sfx_str_patched = bgm_sfx_str.replace(
-                    f"[1:a]acopy[aout]", "[aout_premix]acopy[aout]"
-                ).replace(
-                    f"[1:a]", "[aout_premix]"
-                )
-                filter_complex = f"{video_filter};{bgm_audio_filter};{bgm_sfx_str_patched}"
                 cmd = [
                     "ffmpeg", "-y",
-                    "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                    "-i", str(video_only),
                     "-i", str(merged_tts),
                     "-stream_loop", "-1", "-i", str(effective_bgm),
-                    *bgm_extra_sfx,
-                    "-filter_complex", filter_complex,
-                    "-map", "[vout]", "-map", "[aout]",
-                    *enc_args,
-                    "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                    "-filter_complex", bgm_audio_filter,
+                    "-map", "0:v", "-map", "[aout]",
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "192k",
                     str(output_path),
                 ]
             else:
-                bgm_audio_filter_final = bgm_audio_filter.replace(
-                    "[aout_premix]", "[aout]"
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", str(video_only),
+                    "-i", str(merged_tts),
+                    *extra_inputs,
+                    "-filter_complex", sfx_filter,
+                    "-map", "0:v", "-map", "[aout]",
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "192k",
+                    str(output_path),
+                ]
+        else:
+            # ── Step 9 (기존): 정적 PNG concat ─────────────────────
+            concat_file = tmp_dir / "concat_list.txt"
+            concat_lines: list[str] = []
+            for fp, dur in zip(frame_paths, durations):
+                concat_lines.append(f"file '{fp.resolve()}'\n")
+                concat_lines.append(f"duration {dur:.4f}\n")
+            if frame_paths:
+                concat_lines.append(f"file '{frame_paths[-1].resolve()}'\n")
+            concat_file.write_text("".join(concat_lines), encoding="utf-8")
+
+            # ── Step 10: 타임스탬프 + SFX ──────────────────────────
+            timings = []
+            acc = 0.0
+            for dur in durations:
+                timings.append(acc)
+                acc += dur
+
+            extra_inputs, sfx_filter = _build_layout_sfx_filter(
+                plan, timings, audio_dir, layout,
+                tts_input_idx=1, sfx_offset=sfx_offset,
+            )
+
+            # ── Step 11: FFmpeg 인코딩 ─────────────────────────────
+            codec = _resolve_codec()
+            enc_args = _get_encoder_args(codec)
+            video_filter = (
+                "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2[vout]"
+            )
+
+            effective_bgm = None
+            if bgm_path is not None and Path(bgm_path).exists():
+                effective_bgm = Path(bgm_path)
+                logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
+            elif bgm_path is not None:
+                logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+
+            if effective_bgm is not None:
+                bgm_sfx_extra, bgm_sfx_filter = _build_layout_sfx_filter(
+                    plan, timings, audio_dir, layout,
+                    tts_input_idx=1, sfx_offset=sfx_offset,
                 )
-                filter_complex = f"{video_filter};{bgm_audio_filter_final}"
+                bgm_audio_filter = (
+                    f"[1:a]apad[tts_pad];"
+                    f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
+                    f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout_premix]"
+                )
+                if bgm_sfx_extra:
+                    bgm_extra_sfx, bgm_sfx_str = _build_layout_sfx_filter(
+                        plan, timings, audio_dir, layout,
+                        tts_input_idx=1, sfx_offset=sfx_offset,
+                    )
+                    bgm_sfx_str_patched = bgm_sfx_str.replace(
+                        f"[1:a]acopy[aout]", "[aout_premix]acopy[aout]"
+                    ).replace(
+                        f"[1:a]", "[aout_premix]"
+                    )
+                    filter_complex = f"{video_filter};{bgm_audio_filter};{bgm_sfx_str_patched}"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                        "-i", str(merged_tts),
+                        "-stream_loop", "-1", "-i", str(effective_bgm),
+                        *bgm_extra_sfx,
+                        "-filter_complex", filter_complex,
+                        "-map", "[vout]", "-map", "[aout]",
+                        *enc_args,
+                        "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                        str(output_path),
+                    ]
+                else:
+                    bgm_audio_filter_final = bgm_audio_filter.replace(
+                        "[aout_premix]", "[aout]"
+                    )
+                    filter_complex = f"{video_filter};{bgm_audio_filter_final}"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                        "-i", str(merged_tts),
+                        "-stream_loop", "-1", "-i", str(effective_bgm),
+                        "-filter_complex", filter_complex,
+                        "-map", "[vout]", "-map", "[aout]",
+                        *enc_args,
+                        "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                        str(output_path),
+                    ]
+            else:
+                filter_complex = f"{video_filter};{sfx_filter}"
                 cmd = [
                     "ffmpeg", "-y",
                     "-f", "concat", "-safe", "0", "-i", str(concat_file),
                     "-i", str(merged_tts),
-                    "-stream_loop", "-1", "-i", str(effective_bgm),
+                    *extra_inputs,
                     "-filter_complex", filter_complex,
                     "-map", "[vout]", "-map", "[aout]",
                     *enc_args,
                     "-c:a", "aac", "-b:a", "192k", "-r", "30",
                     str(output_path),
                 ]
-        else:
-            filter_complex = f"{video_filter};{sfx_filter}"
-            cmd = [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0", "-i", str(concat_file),
-                "-i", str(merged_tts),
-                *extra_inputs,
-                "-filter_complex", filter_complex,
-                "-map", "[vout]", "-map", "[aout]",
-                *enc_args,
-                "-c:a", "aac", "-b:a", "192k", "-r", "30",
-                str(output_path),
-            ]
 
         logger.info("[layout] FFmpeg 인코딩 시작: %s", output_path.name)
         ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -1362,4 +1608,5 @@ def render_layout_video_from_scenes(
         save_tts_cache=save_tts_cache,
         tts_audio_cache=tts_audio_cache,
         bgm_path=bgm_path,
+        scenes_list=scenes,
     )

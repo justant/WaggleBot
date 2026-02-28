@@ -69,6 +69,25 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         len(scenes), dict(counter),
     )
 
+    # ── Phase 4.5: video_mode 할당 ────────────────────────────────
+    from config.settings import VIDEO_GEN_ENABLED
+
+    if VIDEO_GEN_ENABLED:
+        from ai_worker.pipeline.scene_director import assign_video_modes
+        from config.settings import VIDEO_I2V_THRESHOLD, MEDIA_DIR
+
+        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_img_cache_{post.id}"
+        image_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        scenes = assign_video_modes(
+            scenes=scenes,
+            image_cache_dir=image_cache_dir,
+            i2v_threshold=VIDEO_I2V_THRESHOLD,
+        )
+        logger.info("[content_processor] Phase 4.5 완료: video_mode 할당")
+    else:
+        logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 4.5 스킵")
+
     # ── Phase 5: TTS 사전 생성 ────────────────────────────────────
     tts_ok = 0
     tts_fail = 0
@@ -94,5 +113,95 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         "[content_processor] Phase 5 완료: TTS 성공=%d 실패=%d",
         tts_ok, tts_fail,
     )
+
+    # ── Phase 6: Video Prompt 생성 (GPU 불필요, LLM CPU 호출) ─────
+    if VIDEO_GEN_ENABLED:
+        from ai_worker.video.prompt_engine import VideoPromptEngine
+
+        logger.info("[content_processor] Phase 6: video_prompt 생성 시작")
+        prompt_engine = VideoPromptEngine()
+
+        body_texts: list[str] = []
+        for block in list(script.get("body", [])):
+            if isinstance(block, dict):
+                body_texts.extend(block.get("lines", []))
+            else:
+                body_texts.append(str(block))
+        body_summary = " ".join(body_texts)[:500]
+
+        scenes = prompt_engine.generate_batch(
+            scenes=scenes,
+            mood=script.get("mood", "daily"),
+            title=post.title or "",
+            body_summary=body_summary,
+        )
+        logger.info(
+            "[content_processor] Phase 6 완료: %d개 프롬프트 생성",
+            sum(1 for s in scenes if s.video_prompt),
+        )
+    else:
+        logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 6 스킵")
+
+    # ── Phase 7: Video Clip 생성 (GPU 필요, ComfyUI 경유) ─────────
+    if VIDEO_GEN_ENABLED:
+        import gc
+
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+
+        from ai_worker.video.manager import VideoManager
+        from ai_worker.video.comfy_client import ComfyUIClient
+        from config.settings import (
+            get_comfyui_url, VIDEO_GEN_TIMEOUT, VIDEO_RESOLUTION,
+            VIDEO_RESOLUTION_FALLBACK, VIDEO_NUM_FRAMES, VIDEO_NUM_FRAMES_FALLBACK,
+            VIDEO_MAX_CLIPS_PER_POST, VIDEO_MAX_RETRY,
+        )
+
+        logger.info("[content_processor] Phase 7: 비디오 클립 생성 시작 (VRAM 해제 완료)")
+
+        comfy = ComfyUIClient(base_url=get_comfyui_url())
+        video_config = {
+            "VIDEO_RESOLUTION": VIDEO_RESOLUTION,
+            "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
+            "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
+            "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
+            "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
+            "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
+            "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
+        }
+
+        manager = VideoManager(
+            comfy_client=comfy,
+            prompt_engine=prompt_engine,
+            config=video_config,
+        )
+
+        scenes = await manager.generate_all_clips(
+            scenes=scenes,
+            mood=script.get("mood", "daily"),
+            post_id=post.id,
+            title=post.title or "",
+            body_summary=body_summary,
+        )
+
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+
+        video_ok = sum(1 for s in scenes if s.video_clip_path)
+        video_fail = sum(1 for r in manager.results if not r.success)
+        logger.info(
+            "[content_processor] Phase 7 완료: 성공=%d, 실패(삭제)=%d, 최종 씬 수=%d",
+            video_ok, video_fail, len(scenes),
+        )
+    else:
+        logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 7 스킵")
 
     return scenes

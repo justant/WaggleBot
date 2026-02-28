@@ -25,6 +25,7 @@ class ModelType(Enum):
     """모델 타입"""
     LLM = "llm"
     TTS = "tts"
+    VIDEO = "video"
     OTHER = "other"
 
 
@@ -59,6 +60,7 @@ class GPUMemoryManager:
     MODEL_VRAM_REQUIREMENTS = {
         ModelType.LLM: 4.5,   # LLM (4-bit 양자화)
         ModelType.TTS: 2.5,   # TTS
+        ModelType.VIDEO: 6.0,  # LTX-Video (ComfyUI)
         ModelType.OTHER: 2.0,
     }
 
