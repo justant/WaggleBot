@@ -1,0 +1,56 @@
+{
+  "humor": {
+    "style_hint": "bright saturated colors, comedic timing, slight fish-eye lens distortion, sitcom multi-camera lighting, whimsical set design with quirky props, exaggerated facial expressions visible, pop-art color grading, playful depth of field with bokeh highlights",
+    "camera_hints": ["whip pan", "snap zoom", "dutch angle for comedy", "tracking shot following action"],
+    "color_palette": ["vivid yellow", "bright orange", "candy pink", "electric blue"],
+    "atmosphere": "lighthearted and energetic, fast-paced visual rhythm"
+  },
+  "touching": {
+    "style_hint": "warm golden hour lighting with long shadows, soft focus lens with gentle bokeh, slow dolly movements, intimate close-ups capturing micro-expressions, amber and honey color grading, natural window light diffusion, nostalgic film grain texture, shallow depth of field isolating subjects",
+    "camera_hints": ["slow dolly in", "gentle tilt up", "rack focus", "steady close-up"],
+    "color_palette": ["warm amber", "soft gold", "muted rose", "cream white"],
+    "atmosphere": "intimate and tender, slow contemplative pacing"
+  },
+  "anger": {
+    "style_hint": "high contrast harsh lighting with deep shadows, red-orange tinting with desaturated backgrounds, aggressive dutch angles, handheld shaky camera suggesting tension, dramatic chiaroscuro, strobing light effects, gritty texture overlay, tight claustrophobic framing with subjects filling the frame",
+    "camera_hints": ["aggressive handheld", "snap zoom in", "dutch angle tilt", "rapid whip pan"],
+    "color_palette": ["deep crimson", "burnt orange", "dark charcoal", "steel grey"],
+    "atmosphere": "tense and volatile, rapid cutting rhythm"
+  },
+  "sadness": {
+    "style_hint": "desaturated cool blue tones, rain-streaked window reflections, slow motion at 0.5x speed, static wide shots emphasizing isolation, overcast flat lighting, fog or mist atmosphere, muted earth tones, shallow depth with blurred backgrounds suggesting emotional distance",
+    "camera_hints": ["static wide shot", "slow tilt down", "pull-back dolly", "lingering close-up"],
+    "color_palette": ["slate blue", "pale grey", "washed lavender", "cold white"],
+    "atmosphere": "melancholic and still, drawn-out visual rhythm with pauses"
+  },
+  "horror": {
+    "style_hint": "deep shadows with minimal key light, sickly green-tinted color grading, flickering practical light sources, tight claustrophobic framing, long dark corridors with vanishing points, subtle lens distortion at edges, underexposed scenes with barely visible details, unsettling symmetrical compositions",
+    "camera_hints": ["creeping dolly forward", "static locked-off shot", "slow zoom in", "POV handheld"],
+    "color_palette": ["sickly green", "deep black", "blood red accent", "pale moonlight"],
+    "atmosphere": "dread-filled and oppressive, slow deliberate pacing with sudden reveals"
+  },
+  "info": {
+    "style_hint": "clean white studio environment, flat even three-point lighting, corporate b-roll aesthetic, smooth mechanical pan movements, minimalist background with subtle gradients, sharp focus throughout, neutral color grading with slight cool bias, infographic-friendly negative space",
+    "camera_hints": ["smooth horizontal pan", "gentle dolly out", "static centered shot", "slow orbital movement"],
+    "color_palette": ["clean white", "professional blue", "light grey", "accent teal"],
+    "atmosphere": "professional and clear, measured steady pacing"
+  },
+  "controversy": {
+    "style_hint": "split-lighting dramatic portrait style, courtroom-drama inspired compositions, sharp zoom transitions suggesting revelation, high contrast noir-influenced grading, documents and evidence scattered in frame, dramatic rim lighting on subjects, news broadcast aesthetic with ticker-tape feel, tension-building rack focus between foreground and background",
+    "camera_hints": ["dramatic zoom in", "split-screen composition", "rack focus reveal", "slow push-in"],
+    "color_palette": ["stark black and white", "judicial dark wood", "spotlight gold", "newspaper grey"],
+    "atmosphere": "confrontational and investigative, building tension rhythm"
+  },
+  "daily": {
+    "style_hint": "natural daylight through windows, casual handheld vlog-style camera, slice-of-life aesthetic with lived-in environments, warm neutral color grading, comfortable depth of field, everyday objects in frame adding authenticity, soft natural shadows, slightly overexposed highlights suggesting warmth",
+    "camera_hints": ["casual handheld", "follow-along tracking", "natural pan", "eye-level static"],
+    "color_palette": ["warm beige", "soft green", "natural wood", "sky blue"],
+    "atmosphere": "relaxed and authentic, natural conversational pacing"
+  },
+  "shock": {
+    "style_hint": "flash-of-light overexposure transitioning to normal, freeze-frame effect at peak moment, extreme close-ups capturing instant reactions, dutch angle tilts suggesting disorientation, speed ramp from slow to sudden fast motion, high-key lighting blown-out highlights, glitch or static overlay for digital shock feel, wide-angle lens distortion emphasizing surprise",
+    "camera_hints": ["extreme close-up snap", "whip pan to reveal", "crash zoom", "freeze frame hold"],
+    "color_palette": ["flash white", "electric yellow", "stark black", "warning red"],
+    "atmosphere": "electrifying and jarring, sudden burst pacing with held moments"
+  }
+}
