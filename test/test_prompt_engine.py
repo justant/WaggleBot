@@ -4,6 +4,9 @@
   # Ollama가 실행 중인 상태에서:
   docker compose exec ai_worker python -m pytest test/test_prompt_engine.py -v
 
+  # video_styles.json 로드 테스트만 (Ollama 불필요):
+  python -m pytest test/test_prompt_engine.py -v -k "test_video_styles_json_loaded"
+
 테스트 결과물 위치:
   test/test_prompt_engine_output/
   test/test_prompt_engine_output/test_result.md
@@ -12,14 +15,37 @@
 import logging
 from pathlib import Path
 
+import pytest
+
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path("test/test_prompt_engine_output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _ollama_available() -> bool:
+    """Ollama 서버 접속 가능 여부를 call_ollama_raw 실제 경로로 확인한다."""
+    try:
+        from ai_worker.video.prompt_engine import VideoPromptEngine
+        engine = VideoPromptEngine()
+        prompt = engine.generate_prompt(
+            text_lines=["연결 테스트"], mood="daily", title="test",
+        )
+        return len(prompt) > 0
+    except Exception:
+        return False
+
+
+_OLLAMA_OK = _ollama_available()
+
+requires_ollama = pytest.mark.skipif(
+    not _OLLAMA_OK, reason="Ollama not available (Docker 환경에서 실행하세요)"
+)
+
+
 class TestVideoPromptEngine:
 
+    @requires_ollama
     def test_generate_prompt_humor(self):
         """humor 무드로 프롬프트를 생성하면 영어 문단이 반환된다."""
         from ai_worker.video.prompt_engine import VideoPromptEngine
@@ -35,6 +61,7 @@ class TestVideoPromptEngine:
         with open(OUTPUT_DIR / "generated_prompts.txt", "a", encoding="utf-8") as f:
             f.write(f"=== humor ===\n{prompt}\n\n")
 
+    @requires_ollama
     def test_generate_prompt_horror(self):
         """horror 무드로 프롬프트를 생성한다."""
         from ai_worker.video.prompt_engine import VideoPromptEngine
@@ -49,6 +76,7 @@ class TestVideoPromptEngine:
         with open(OUTPUT_DIR / "generated_prompts.txt", "a", encoding="utf-8") as f:
             f.write(f"=== horror ===\n{prompt}\n\n")
 
+    @requires_ollama
     def test_simplify_prompt(self):
         """simplify_prompt가 원본보다 짧은 프롬프트를 반환한다."""
         from ai_worker.video.prompt_engine import VideoPromptEngine
@@ -73,6 +101,7 @@ class TestVideoPromptEngine:
         for mood, data in styles.items():
             assert "style_hint" in data, f"{mood}에 style_hint 없음"
 
+    @requires_ollama
     def test_all_9_moods(self):
         """9가지 mood 전체에 대해 프롬프트를 성공적으로 생성한다."""
         from ai_worker.video.prompt_engine import VideoPromptEngine

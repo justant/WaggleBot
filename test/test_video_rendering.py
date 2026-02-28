@@ -1,17 +1,16 @@
 """비디오 씬 포함 최종 렌더링 통합 테스트.
 
-실행 방법 (Mock 모드, 서버 불필요):
-  python -m pytest test/test_video_rendering.py -v -k "mock"
+실행 방법 (Docker 환경, FFmpeg 필요):
+  docker compose exec ai_worker python -m pytest test/test_video_rendering.py -v
 
-실행 방법 (ComfyUI + Fish Speech 모두 필요):
-  docker compose exec ai_worker python test/test_video_rendering.py
+로컬 환경에서 FFmpeg가 없으면 테스트가 자동 skip됩니다.
 
 테스트 결과물 위치:
   test/test_video_rendering_output/
   test/test_video_rendering_output/test_result.md
-  test/test_video_rendering_output/sample_output.mp4
 """
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -21,6 +20,13 @@ logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path("test/test_video_rendering_output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+_FFMPEG = shutil.which("ffmpeg")
+_FFPROBE = shutil.which("ffprobe")
+
+requires_ffmpeg = pytest.mark.skipif(
+    _FFMPEG is None, reason="FFmpeg not installed (Docker 환경에서 실행하세요)"
+)
 
 
 def _create_test_video(output_path: Path, duration: float = 3.0) -> Path:
@@ -35,7 +41,7 @@ def _create_test_video(output_path: Path, duration: float = 3.0) -> Path:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
-        pytest.skip(f"FFmpeg not available: {result.stderr[:200]}")
+        pytest.skip(f"FFmpeg test video 생성 실패: {result.stderr[:200]}")
     return output_path
 
 
@@ -47,9 +53,62 @@ def _create_test_png(output_path: Path, width: int = 1080, height: int = 1920) -
     return output_path
 
 
-class TestVideoRendering:
+class TestVideoRenderingUnit:
+    """FFmpeg 불필요 — 순수 Python 단위 테스트."""
 
-    def test_static_segment_generation_mock(self):
+    def test_escape_ffmpeg_text(self):
+        """_escape_ffmpeg_text가 특수문자를 올바르게 이스케이프한다."""
+        from ai_worker.renderer.layout import _escape_ffmpeg_text
+        assert "\\\\" in _escape_ffmpeg_text("back\\slash")
+        assert "\\'" in _escape_ffmpeg_text("it's")
+        assert "\\:" in _escape_ffmpeg_text("key:value")
+
+    def test_get_scene_for_entry_none(self):
+        """scenes_list가 None이면 None을 반환한다."""
+        from ai_worker.renderer.layout import _get_scene_for_entry
+        result = _get_scene_for_entry(
+            {"type": "text_only", "sent_idx": 0},
+            [{"text": "hello"}],
+            None,
+        )
+        assert result is None
+
+    def test_get_scene_for_entry_match(self):
+        """텍스트가 일치하는 scene을 찾는다."""
+        from unittest.mock import MagicMock
+        from ai_worker.renderer.layout import _get_scene_for_entry
+
+        scene = MagicMock()
+        scene.text_lines = [{"text": "테스트 문장입니다"}]
+
+        result = _get_scene_for_entry(
+            {"type": "text_only", "sent_idx": 0},
+            [{"text": "테스트 문장입니다"}],
+            [scene],
+        )
+        assert result is scene
+
+    def test_get_scene_for_entry_no_match(self):
+        """텍스트가 일치하지 않으면 None을 반환한다."""
+        from unittest.mock import MagicMock
+        from ai_worker.renderer.layout import _get_scene_for_entry
+
+        scene = MagicMock()
+        scene.text_lines = [{"text": "다른 문장"}]
+
+        result = _get_scene_for_entry(
+            {"type": "text_only", "sent_idx": 0},
+            [{"text": "전혀 다른 내용"}],
+            [scene],
+        )
+        assert result is None
+
+
+@requires_ffmpeg
+class TestVideoRenderingFFmpeg:
+    """FFmpeg 필요 — Docker 환경에서 실행."""
+
+    def test_static_segment_generation(self):
         """정적 PNG를 mp4 세그먼트로 변환할 수 있다."""
         from ai_worker.renderer.layout import _render_static_segment
 
@@ -62,34 +121,20 @@ class TestVideoRendering:
         assert result.exists(), "세그먼트 파일이 생성되지 않음"
         assert result.stat().st_size > 0
 
-        # ffprobe로 확인
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries",
-             "stream=width,height,codec_name,r_frame_rate",
-             "-of", "csv=p=0", str(result)],
-            capture_output=True, text=True, timeout=10,
-        )
-        if probe.returncode == 0:
-            logger.info("Static segment probe: %s", probe.stdout.strip())
-
-    def test_video_segment_generation_mock(self):
+    def test_video_segment_generation(self):
         """Mock 비디오 클립으로 video_segment를 생성할 수 있다."""
         from unittest.mock import MagicMock
         from PIL import Image
         from ai_worker.renderer.layout import _render_video_segment
 
-        # 테스트용 비디오 클립 생성
         clip_path = OUTPUT_DIR / "test_clip.mp4"
         _create_test_video(clip_path, duration=3.0)
 
-        # 베이스 프레임 생성
         base_frame = Image.new("RGB", (1080, 1920), color=(40, 40, 60))
 
-        # Mock scene
         scene = MagicMock()
         scene.video_clip_path = str(clip_path)
 
-        # layout 설정 (video_text 씬 구조)
         layout = {
             "canvas": {"width": 1080, "height": 1920},
             "scenes": {
@@ -111,24 +156,19 @@ class TestVideoRendering:
             pytest.skip("assets/fonts 디렉터리 없음")
 
         segment_path = OUTPUT_DIR / "test_video_segment.mp4"
-        try:
-            result = _render_video_segment(
-                base_frame=base_frame,
-                scene=scene,
-                text="테스트 자막",
-                duration=2.0,
-                layout=layout,
-                font_dir=font_dir,
-                output_path=segment_path,
-            )
-            assert result.exists()
-        except subprocess.CalledProcessError as e:
-            logger.warning("video_segment 생성 실패 (FFmpeg): %s", e)
-            pytest.skip("FFmpeg video segment 생성 실패")
+        result = _render_video_segment(
+            base_frame=base_frame,
+            scene=scene,
+            text="테스트 자막",
+            duration=2.0,
+            layout=layout,
+            font_dir=font_dir,
+            output_path=segment_path,
+        )
+        assert result.exists()
 
-    def test_hybrid_concat_mock(self):
-        """정적 + 비디오 세그먼트를 concat하면 하나의 mp4가 된다."""
-        # 2개의 정적 세그먼트 생성
+    def test_hybrid_concat(self):
+        """정적 세그먼트를 concat하면 하나의 mp4가 된다."""
         frame1 = OUTPUT_DIR / "concat_frame1.png"
         frame2 = OUTPUT_DIR / "concat_frame2.png"
         _create_test_png(frame1)
@@ -141,7 +181,6 @@ class TestVideoRendering:
         _render_static_segment(frame1, 1.5, seg1)
         _render_static_segment(frame2, 1.5, seg2)
 
-        # concat
         concat_file = OUTPUT_DIR / "concat_test.txt"
         concat_file.write_text(
             f"file '{seg1.resolve()}'\nfile '{seg2.resolve()}'\n",
@@ -161,8 +200,11 @@ class TestVideoRendering:
         assert merged.exists()
         assert merged.stat().st_size > 0
 
-    def test_segment_format_consistency_mock(self):
-        """모든 세그먼트가 동일 해상도/FPS/코덱인지 ffprobe로 확인한다."""
+    def test_segment_format_consistency(self):
+        """세그먼트가 올바른 해상도/코덱을 갖는지 ffprobe로 확인한다."""
+        if _FFPROBE is None:
+            pytest.skip("ffprobe not available")
+
         frame = OUTPUT_DIR / "fmt_frame.png"
         _create_test_png(frame)
 
@@ -177,8 +219,7 @@ class TestVideoRendering:
              "-of", "json", str(seg)],
             capture_output=True, text=True, timeout=10,
         )
-        if probe.returncode != 0:
-            pytest.skip("ffprobe not available")
+        assert probe.returncode == 0, "ffprobe 실행 실패"
 
         import json
         info = json.loads(probe.stdout)
@@ -195,35 +236,34 @@ def generate_test_result():
 
 ## 실행 환경
 - Python: 3.12
-- FFmpeg 필요
+- FFmpeg 필요 (FFmpeg 테스트), 불필요 (Unit 테스트)
 
 ## 실행 방법
 ```bash
-# Mock 테스트 (서버 불필요)
-python -m pytest test/test_video_rendering.py -v -k "mock" --tb=short
+# Unit 테스트 (FFmpeg 불필요)
+python -m pytest test/test_video_rendering.py -v -k "Unit" --tb=short
 
-# 통합 테스트 (Docker 필요)
-docker compose exec ai_worker python -m pytest test/test_video_rendering.py -v
+# FFmpeg 테스트 (Docker 환경)
+docker compose exec ai_worker python -m pytest test/test_video_rendering.py -v --tb=short
 ```
 
 ## 테스트 항목
-| # | 테스트 함수 | 설명 | 결과 |
-|---|------------|------|------|
-| 1 | test_static_segment_generation_mock | 정적 PNG → mp4 세그먼트 | ⬜ |
-| 2 | test_video_segment_generation_mock | 비디오 클립 + 베이스 합성 | ⬜ |
-| 3 | test_hybrid_concat_mock | 정적 + 비디오 concat | ⬜ |
-| 4 | test_segment_format_consistency_mock | 해상도/FPS/코덱 일관성 | ⬜ |
+| # | 테스트 함수 | FFmpeg 필요 | 설명 | 결과 |
+|---|------------|:-----------:|------|------|
+| 1 | test_escape_ffmpeg_text | N | 텍스트 이스케이프 | ⬜ |
+| 2 | test_get_scene_for_entry_none | N | scenes_list=None 처리 | ⬜ |
+| 3 | test_get_scene_for_entry_match | N | 씬 매칭 성공 | ⬜ |
+| 4 | test_get_scene_for_entry_no_match | N | 씬 매칭 실패 | ⬜ |
+| 5 | test_static_segment_generation | Y | 정적 PNG → mp4 | ⬜ |
+| 6 | test_video_segment_generation | Y | 비디오 + 베이스 합성 | ⬜ |
+| 7 | test_hybrid_concat | Y | 세그먼트 concat | ⬜ |
+| 8 | test_segment_format_consistency | Y | 해상도/코덱 검증 | ⬜ |
 
 ## 수동 검증 체크리스트
 - [ ] 영상 재생 확인
 - [ ] 비디오 씬 배경 움직임 확인
 - [ ] 오디오 동기화 확인
 - [ ] 에러 로그 없음 확인
-
-## 출력 파일
-- `test_static_segment.mp4`: 정적 세그먼트
-- `test_video_segment.mp4`: 비디오 세그먼트
-- `concat_merged.mp4`: concat 결과
 """, encoding="utf-8")
 
 

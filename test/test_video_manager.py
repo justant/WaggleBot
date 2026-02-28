@@ -89,7 +89,12 @@ class TestVideoManager:
         async def side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count in (2, 5, 8):  # 씬 1의 3회 시도 모두 실패
+            # Scene 0: call 1 → success
+            # Scene 1: calls 2,3,4 → all fail (3 retries)
+            # Scene 2: call 5 → success
+            # Scene 3: call 6 → success
+            # Scene 4: call 7 → success
+            if call_count in (2, 3, 4):
                 raise RuntimeError("Generation failed")
             return Path("/tmp/clip.mp4")
 
@@ -103,10 +108,10 @@ class TestVideoManager:
         assert len(result) == 4
 
     def test_comfyui_down_skips_all(self):
-        """ComfyUI 서버 다운 시 빈 리스트를 반환한다 (전체 스킵)."""
+        """ComfyUI 서버 다운 시 씬은 유지되되 비디오 클립 없음."""
         scenes = [_make_mock_scene() for _ in range(3)]
         manager = _make_manager()
-        manager._comfy.health_check.return_value = False
+        manager.comfy.health_check.return_value = False
 
         result = asyncio.run(
             manager.generate_all_clips(
@@ -143,7 +148,10 @@ class TestVideoManager:
         async def side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count in (2, 5, 8):  # 씬 1의 3회 시도 모두 실패
+            # Scene 0: call 1 → success
+            # Scene 1: calls 2,3,4 → all fail (3 retries)
+            # Scene 2: call 5 → success
+            if call_count in (2, 3, 4):
                 raise RuntimeError("Failed")
             return Path("/tmp/clip.mp4")
 
@@ -154,7 +162,7 @@ class TestVideoManager:
                 title="테스트", body_summary="테스트 요약",
             )
         )
-        # 씬 1 실패 → 씬 0에 병합
+        # 씬 1 실패 → 씬 0에 병합, 최종 2개
         assert len(result) == 2
 
 

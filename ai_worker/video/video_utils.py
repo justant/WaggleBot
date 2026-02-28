@@ -19,13 +19,15 @@ def _resolve_intermediate_codec() -> tuple[str, list[str]]:
 
     GPU 환경이면 h264_nvenc, 아니면 libx264.
     중간 파일이므로 빠른 프리셋 사용.
+    실제 인코딩을 시도하여 h264_nvenc 동작 여부를 확인한다.
     """
     try:
         result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
             capture_output=True, text=True, timeout=10,
         )
-        if "h264_nvenc" in result.stdout:
+        if result.returncode == 0:
             return "h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p1", "-pix_fmt", "yuv420p"]
     except Exception:
         pass

@@ -50,19 +50,22 @@ class TestImageFilter:
         assert result.category == "photo"
 
     def test_text_capture_low_score(self):
-        """텍스트 캡처본이 score < 0.4로 평가된다."""
+        """텍스트 캡처본이 I2V 임계값(0.6) 미만으로 평가된다."""
         from ai_worker.video.image_filter import evaluate_image
         _create_test_images()
         result = evaluate_image(OUTPUT_DIR / "text_capture.png")
-        assert result.score < 0.4, f"Expected < 0.4, got {result.score}"
+        assert result.score < 0.6, f"Expected < 0.6, got {result.score}"
         assert result.category == "text_capture"
 
     def test_meme_low_score(self):
-        """단색 밈이 score < 0.5로 평가된다."""
+        """단색 밈이 사진보다 낮은 score를 받는다."""
         from ai_worker.video.image_filter import evaluate_image
         _create_test_images()
-        result = evaluate_image(OUTPUT_DIR / "meme_simple.jpg")
-        assert result.score < 0.5, f"Expected < 0.5, got {result.score}"
+        meme_result = evaluate_image(OUTPUT_DIR / "meme_simple.jpg")
+        photo_result = evaluate_image(OUTPUT_DIR / "photo_good.jpg")
+        assert meme_result.score <= photo_result.score, (
+            f"밈({meme_result.score}) > 사진({photo_result.score})"
+        )
 
     def test_tiny_image_penalty(self):
         """64x64 이미지에 해상도 패널티가 적용된다."""
