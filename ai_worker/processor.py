@@ -134,6 +134,11 @@ class RobustProcessor:
                     _scenes = _director.direct()
                     logger.info("[Step 3/3] 씬=%d개", len(_scenes))
 
+                    # Phase 4.5-7: LTX-Video 클립 생성
+                    _scenes = await self._generate_video_clips(
+                        _scenes, script, post.title or "", post.id
+                    )
+
                     # Phase 5: 렌더링
                     video_path = render_layout_video_from_scenes(post, _scenes)
                 else:
@@ -511,6 +516,150 @@ class RobustProcessor:
         )
 
     # ===========================================================================
+    # LTX-Video 클립 생성 (Phases 4.5-7)
+    # ===========================================================================
+
+    async def _generate_video_clips(
+        self,
+        scenes: list,
+        script: ScriptData,
+        post_title: str,
+        post_id: int,
+    ) -> list:
+        """Phases 4.5-7: 비디오 모드 할당 → 프롬프트 생성 → 클립 생성.
+
+        VIDEO_GEN_ENABLED=false이면 scenes를 그대로 반환한다.
+        """
+        from config.settings import VIDEO_GEN_ENABLED
+
+        if not VIDEO_GEN_ENABLED:
+            logger.info("[video] VIDEO_GEN_ENABLED=false — 비디오 생성 스킵")
+            return scenes
+
+        import gc
+
+        from ai_worker.pipeline.scene_director import assign_video_modes
+        from config.settings import VIDEO_I2V_THRESHOLD
+
+        # Phase 4.5: video_mode 할당
+        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_img_cache_{post_id}"
+        image_cache_dir.mkdir(parents=True, exist_ok=True)
+        scenes = assign_video_modes(scenes, image_cache_dir, VIDEO_I2V_THRESHOLD)
+        logger.info(
+            "[video] Phase 4.5 완료: video_mode 할당 (%d씬)",
+            sum(1 for s in scenes if getattr(s, "video_mode", None)),
+        )
+
+        # Phase 6: video prompt 생성 (Ollama HTTP 호출)
+        from ai_worker.video.prompt_engine import VideoPromptEngine
+
+        prompt_engine = VideoPromptEngine()
+
+        body_texts: list[str] = []
+        for block in list(script.body):
+            if isinstance(block, dict):
+                body_texts.extend(block.get("lines", []))
+            else:
+                body_texts.append(str(block))
+        body_summary = " ".join(body_texts)[:500]
+
+        scenes = prompt_engine.generate_batch(
+            scenes=scenes,
+            mood=script.mood,
+            title=post_title,
+            body_summary=body_summary,
+        )
+        logger.info(
+            "[video] Phase 6 완료: %d개 프롬프트 생성",
+            sum(1 for s in scenes if getattr(s, "video_prompt", None)),
+        )
+
+        # VRAM 정리 (LLM 해제 후 LTX 로드 준비)
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+
+        # VRAM 잔여량 확인
+        _gm = self.gpu_manager
+        _video_vram = _gm.MODEL_VRAM_REQUIREMENTS.get(ModelType.VIDEO, 12.0)
+        _available = _gm.get_available_vram()
+        if _available < _video_vram * 0.5:
+            logger.warning(
+                "[video] Phase 7: VRAM 부족 (available=%.1fGB < %.1fGB) — 긴급 정리",
+                _available, _video_vram * 0.5,
+            )
+            _gm.emergency_cleanup()
+
+        # Phase 7: video clip 생성 (ComfyUI 경유)
+        from ai_worker.video.comfy_client import ComfyUIClient
+        from ai_worker.video.manager import VideoManager
+        from config.settings import (
+            VIDEO_GEN_TIMEOUT,
+            VIDEO_MAX_CLIPS_PER_POST,
+            VIDEO_MAX_RETRY,
+            VIDEO_NUM_FRAMES,
+            VIDEO_NUM_FRAMES_FALLBACK,
+            VIDEO_RESOLUTION,
+            VIDEO_RESOLUTION_FALLBACK,
+            get_comfyui_url,
+        )
+
+        logger.info("[video] Phase 7: 비디오 클립 생성 시작")
+
+        comfy = ComfyUIClient(base_url=get_comfyui_url())
+        video_config = {
+            "VIDEO_RESOLUTION": VIDEO_RESOLUTION,
+            "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
+            "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
+            "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
+            "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
+            "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
+            "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
+        }
+
+        manager = VideoManager(
+            comfy_client=comfy,
+            prompt_engine=prompt_engine,
+            config=video_config,
+        )
+
+        scenes = await manager.generate_all_clips(
+            scenes=scenes,
+            mood=script.mood,
+            post_id=post_id,
+            title=post_title,
+            body_summary=body_summary,
+        )
+
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+
+        video_ok = sum(1 for s in scenes if getattr(s, "video_clip_path", None))
+        logger.info("[video] Phase 7 완료: 성공=%d, 최종 씬=%d", video_ok, len(scenes))
+
+        return scenes
+
+    def _generate_video_clips_sync(
+        self,
+        scenes: list,
+        script: ScriptData,
+        post_title: str,
+        post_id: int,
+    ) -> list:
+        """_generate_video_clips의 동기 래퍼 (render_stage 스레드 전용)."""
+        import asyncio
+        return asyncio.run(
+            self._generate_video_clips(scenes, script, post_title, post_id)
+        )
+
+    # ===========================================================================
     # 파이프라인 분리 스테이지 (병렬 처리용)
     # ===========================================================================
 
@@ -648,6 +797,11 @@ class RobustProcessor:
                 director = SceneDirector(profile, images, script_dict)
                 scenes = director.direct()
                 logger.info("[Pipeline Render] 씬=%d개", len(scenes))
+
+                # Phase 4.5-7: LTX-Video 클립 생성
+                scenes = self._generate_video_clips_sync(
+                    scenes, script, post.title or "", post_id
+                )
 
                 _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
                 video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)

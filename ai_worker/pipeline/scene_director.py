@@ -57,10 +57,45 @@ class SceneDecision:
     video_generation_failed: bool = False   # 비디오 생성 최종 실패 여부
 
 
+_dc_session: "requests.Session | None" = None
+
+
+def _get_dc_session() -> "requests.Session":
+    """DCInside 이미지 다운로드용 세션 (쿠키 워밍업 포함)."""
+    import requests as _req
+
+    global _dc_session
+    if _dc_session is not None:
+        return _dc_session
+    _dc_session = _req.Session()
+    _dc_session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    })
+    try:
+        _dc_session.get("https://www.dcinside.com/", timeout=10)
+        logger.debug("scene DC 세션 워밍업 OK (cookies=%d)",
+                     len(_dc_session.cookies))
+    except Exception:
+        logger.debug("scene DC 세션 워밍업 실패 — 쿠키 없이 시도")
+    return _dc_session
+
+
+def _is_dc_url(url: str) -> bool:
+    """DCInside CDN URL 여부 확인."""
+    from urllib.parse import urlparse
+    hostname = urlparse(url).hostname or ""
+    return any(hostname.endswith(d) for d in ("dcinside.com", "dcinside.co.kr"))
+
+
 def _download_and_cache_image(url: str, cache_dir: Path) -> Path | None:
     """URL에서 이미지를 다운로드하여 캐시 디렉터리에 저장. 실패 시 None."""
     import hashlib
+    import time
     import requests
+    from urllib.parse import urlparse
 
     url_hash = hashlib.md5(url.encode()).hexdigest()[:16]
     cache_path = cache_dir / f"vid_img_{url_hash}.jpg"
@@ -68,26 +103,43 @@ def _download_and_cache_image(url: str, cache_dir: Path) -> Path | None:
     if cache_path.exists() and cache_path.stat().st_size > 200:
         return cache_path
 
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
-        if "dcinside.com" in url:
-            headers["Referer"] = "https://gall.dcinside.com/"
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            if _is_dc_url(url):
+                sess = _get_dc_session()
+                resp = sess.get(url, timeout=15, headers={
+                    "Referer": "https://gall.dcinside.com/",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                    "Sec-Fetch-Dest": "image",
+                    "Sec-Fetch-Mode": "no-cors",
+                    "Sec-Fetch-Site": "cross-site",
+                })
+            else:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                  "Chrome/131.0.0.0 Safari/537.36",
+                    "Referer": f"{urlparse(url).scheme}://{urlparse(url).netloc}/",
+                    "Accept": "image/*,*/*;q=0.8",
+                }
+                resp = requests.get(url, timeout=15, headers=headers)
+            resp.raise_for_status()
 
-        resp = requests.get(url, timeout=15, headers=headers)
-        resp.raise_for_status()
+            if len(resp.content) < 200:
+                logger.warning("[scene] 이미지 크기 의심 (%d bytes): %s", len(resp.content), url)
+                return None
 
-        if len(resp.content) < 200:
-            logger.warning("[scene] 이미지 크기 의심 (%d bytes): %s", len(resp.content), url)
-            return None
+            cache_path.write_bytes(resp.content)
+            return cache_path
 
-        cache_path.write_bytes(resp.content)
-        return cache_path
-
-    except Exception as e:
-        logger.warning("[scene] 이미지 다운로드 실패: %s — %s", url, e)
-        return None
+        except requests.RequestException as e:
+            if attempt < max_retries:
+                time.sleep(1 * (attempt + 1))
+                logger.debug("[scene] 이미지 다운로드 재시도 (%d/%d): %s", attempt + 1, max_retries, url)
+            else:
+                logger.warning("[scene] 이미지 다운로드 실패 (재시도 %d회 후): %s — %s", max_retries, url, e)
+    return None
 
 
 def assign_video_modes(
