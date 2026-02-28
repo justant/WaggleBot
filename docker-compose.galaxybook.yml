@@ -62,6 +62,9 @@ services:
       - "host.docker.internal:host-gateway"
     command: streamlit run dashboard/app.py --server.port 8501 --server.headless true --server.address 0.0.0.0
 
+  # comfyui: NVIDIA GPU 필수이므로 galaxybook에서 제외.
+  # VIDEO_GEN_ENABLED=false → ai_worker가 비디오 생성을 스킵.
+
   ai_worker:
     build:
       context: .
@@ -80,6 +83,7 @@ services:
       OLLAMA_HOST: "http://host.docker.internal:11434"
       OLLAMA_BASE_URL: "http://host.docker.internal:11434"
       MEDIA_DIR: /app/media
+      VIDEO_GEN_ENABLED: "false"
     # deploy.resources 없음 → NVIDIA 드라이버 요건 없음
     depends_on:
       db:

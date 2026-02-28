@@ -424,6 +424,21 @@ def render() -> None:
         st.session_state["editor_idx"] = new_idx
         _safe_rerun_fragment()
 
+    nav_prev, nav_info, nav_next = st.columns([1, 3, 1])
+    with nav_prev:
+        if st.button("◀ 이전", width="stretch", disabled=idx == 0):
+            st.session_state["editor_idx"] = idx - 1
+            _safe_rerun_fragment()
+    with nav_info:
+        st.markdown(
+            f"<div style='text-align:center;padding-top:6px'>{idx + 1} / {n_posts}</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_next:
+        if st.button("다음 ▶", width="stretch", disabled=idx >= n_posts - 1):
+            st.session_state["editor_idx"] = idx + 1
+            _safe_rerun_fragment()
+
     # ── 3. Content / ScriptData + 선택 게시글 댓글 로드 (단일 세션) ──────────────
     from db.models import Comment
     with SessionLocal() as _cs:

@@ -305,3 +305,33 @@ EMOTION_TAGS: dict[str, str] = {
 # 오디오 출력 설정
 TTS_OUTPUT_FORMAT = "wav"
 TTS_SAMPLE_RATE   = 44100
+
+# ---------------------------------------------------------------------------
+# LTX-Video 설정
+# ---------------------------------------------------------------------------
+COMFYUI_URL: str = os.getenv("COMFYUI_URL", "http://comfyui:8188")
+VIDEO_GEN_ENABLED: bool = os.getenv("VIDEO_GEN_ENABLED", "false").lower() == "true"
+VIDEO_GEN_TIMEOUT: int = int(os.getenv("VIDEO_GEN_TIMEOUT", "300"))
+VIDEO_RESOLUTION: tuple[int, int] = (512, 512)
+VIDEO_RESOLUTION_FALLBACK: tuple[int, int] = (384, 384)
+VIDEO_NUM_FRAMES: int = 81           # ~3.2초 @25fps
+VIDEO_NUM_FRAMES_FALLBACK: int = 61  # 다운그레이드용
+VIDEO_STEPS: int = 20
+VIDEO_CFG_SCALE: float = 3.5
+VIDEO_I2V_THRESHOLD: float = 0.6     # image_filter 적합성 임계값
+VIDEO_I2V_DENOISE: float = 0.75
+VIDEO_MAX_CLIPS_PER_POST: int = 8    # 글당 최대 생성 클립 수
+VIDEO_MAX_RETRY: int = 3             # 씬당 최대 재시도 횟수
+VIDEO_OUTPUT_DIR: str = os.getenv("VIDEO_OUTPUT_DIR", str(MEDIA_DIR / "tmp" / "videos"))
+
+
+def get_comfyui_url() -> str:
+    """ComfyUI 서버 URL을 반환한다."""
+    return COMFYUI_URL
+
+
+def load_video_styles() -> dict:
+    """config/video_styles.json을 로드한다."""
+    _path = Path(__file__).parent / "video_styles.json"
+    with open(_path, encoding="utf-8") as _vf:
+        return json.load(_vf)

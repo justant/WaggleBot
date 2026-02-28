@@ -130,6 +130,33 @@
           "border_radius": 20
         }
       }
+    },
+    "video_text": {
+      "description": "비디오 배경 + 하단 텍스트 — LTX-Video 클립 위에 자막 렌더링",
+      "text_max_chars": 20,
+      "elements": {
+        "video_area": {
+          "x": 90,
+          "y": 550,
+          "width": 900,
+          "height": 900,
+          "fit_mode": "cover",
+          "border_radius": 20
+        },
+        "text_area": {
+          "x": 540,
+          "y": 1570,
+          "max_width": 900,
+          "font_size": 60,
+          "font_weight": "medium",
+          "align": "center",
+          "color": "#FFFFFF",
+          "line_height": 90,
+          "max_lines": 2,
+          "stroke_color": "#000000",
+          "stroke_width": 3
+        }
+      }
     }
   },
   "layout_algorithm": {

@@ -93,6 +93,35 @@ services:
       retries: 5
       start_period: 90s
 
+  comfyui:
+    image: comfyanonymous/comfyui:latest
+    container_name: comfyui
+    restart: unless-stopped
+    runtime: nvidia
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./checkpoints/ltx-video:/comfyui/models/checkpoints
+      - ./comfyui_workflows:/comfyui/custom_workflows
+      - ./media/tmp/videos:/comfyui/output
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CLI_ARGS=--listen 0.0.0.0 --lowvram
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
   ai_worker:
     build:
       context: .
@@ -114,6 +143,9 @@ services:
       OLLAMA_BASE_URL: "http://host.docker.internal:11434"
       MEDIA_DIR: /app/media
       FISH_SPEECH_URL: "http://fish-speech:8080"
+      COMFYUI_URL: "http://comfyui:8188"
+      VIDEO_GEN_ENABLED: "${VIDEO_GEN_ENABLED:-false}"
+      VIDEO_OUTPUT_DIR: "/app/media/tmp/videos"
     deploy:
       resources:
         reservations:
