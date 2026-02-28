@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
-[![GPU](https://img.shields.io/badge/GPU-NVIDIA%20RTX%203080%20Ti-76B900.svg)](https://www.nvidia.com/)
+[![GPU](https://img.shields.io/badge/GPU-NVIDIA%20RTX%203090-76B900.svg)](https://www.nvidia.com/)
 
 ---
 
@@ -34,7 +34,7 @@
 | 분류 | 기술 |
 |------|------|
 | 언어 | Python 3.12 |
-| LLM | Ollama (`qwen2.5:7b` / `qwen2.5:1.5b`) |
+| LLM | Ollama (`qwen2.5:14b` 8-bit / `qwen2.5:7b` 폴백) |
 | TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
 | DB | MariaDB 11.x + SQLAlchemy ORM |
 | 영상 | FFmpeg (h264_nvenc / libx264 폴백) |
@@ -49,7 +49,7 @@
 
 | 환경 | 가이드 |
 |------|--------|
-| **RTX 3080 Ti (NVIDIA GPU)** | [arch/env/ENV_GPU.md](arch/env/ENV_GPU.md) |
+| **RTX 3090 (NVIDIA GPU)** | [arch/env/ENV_GPU.md](arch/env/ENV_GPU.md) |
 | **갤럭시북5 프로 (CPU 추론)** | [arch/env/ENV_NOGPU.md](arch/env/ENV_NOGPU.md) |
 
 아래는 **NVIDIA GPU 환경** 기준 빠른 설치입니다.
@@ -88,7 +88,7 @@ sudo systemctl edit ollama.service
 # Environment="OLLAMA_HOST=0.0.0.0"
 
 sudo systemctl daemon-reload && sudo systemctl restart ollama
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:14b
 ```
 
 ### 4. Fish Speech 모델 다운로드
@@ -137,7 +137,7 @@ nano .env
 # DB_ROOT_PASSWORD=...
 # DB_PASSWORD=...
 # HF_TOKEN=hf_...
-# OLLAMA_MODEL=qwen2.5:7b
+# OLLAMA_MODEL=qwen2.5:14b
 
 # 실행
 docker compose up -d

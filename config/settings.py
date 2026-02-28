@@ -57,9 +57,19 @@ STREAMLIT_PORT = int(os.getenv("STREAMLIT_PORT", "8501"))
 # AI Worker
 # ---------------------------------------------------------------------------
 AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
+# CUDA 세마포어 동시성 제한 (2막 TTS+VIDEO 병렬 실행 시 2로 전환 가능, 기본 1 = 순차)
+CUDA_CONCURRENCY = int(os.getenv("CUDA_CONCURRENCY", "1"))
 MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+# OLLAMA_MODEL 기본값: "qwen2.5:14b"
+#
+# 사용 가능한 모델 옵션 (RTX 3090 24GB 기준):
+# - qwen2.5:7b  (4-bit, ~4.5GB)  — 경량, 빠른 처리
+# - qwen2.5:7b  (8-bit, ~7.0GB)  — 균형잡힌 품질
+# - qwen2.5:14b (4-bit, ~9.0GB)  — 고품질, 경량 양자화
+# - qwen2.5:14b (8-bit, ~14.0GB) — ★ 최고 품질 (Quality-First 권장)
+# 주의: 14b 8-bit 사용 시 TTS/VIDEO와 동시 로드 불가 → 2막 구조 필수
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 
 def get_ollama_host() -> str:

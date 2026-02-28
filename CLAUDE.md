@@ -28,7 +28,11 @@ COLLECTED → EDITING → APPROVED → PROCESSING → PREVIEW_RENDERED → RENDE
 
 ## 하드 제약 (절대 위반 금지)
 
-**VRAM (RTX 3080 Ti 12GB):** 순차 처리 필수 LLM→TTS→렌더링. 각 단계 후 `torch.cuda.empty_cache()` + `gc.collect()`. 동시 모델 로드 금지. 4-bit 양자화 필수. GPU 컨텍스트 매니저 필수:
+**VRAM (RTX 3090 24GB):** 2막 구조로 운영.
+1막(LLM): qwen2.5:14b 8-bit 단독 실행(~14GB). 대본/자막/프롬프트 생성.
+2막(미디어): LLM 완전 해제 후 Fish Speech 고사양(~5GB) + LTX v2(~12GB) 실행.
+각 단계 후 `torch.cuda.empty_cache()` + `gc.collect()` 유지. GPU 컨텍스트 매니저 필수.
+동시 모델 로드는 총 VRAM 합계 18GB 이하일 때만 허용 (6GB 안전마진).
 ```python
 with gpu_manager.managed_inference(ModelType.LLM, "name"):
     result = model.generate(text)
@@ -75,25 +79,42 @@ with SessionLocal() as db:  # DB 항상 with 블록
 
 ## Agent Team
 
-5-Agent 체계 (Team Lead 1 + Teammate 4). 상세: `arch/env/AGENT_TEAM.md`
-프롬프트: `.claude/prompts/` · 계약: `.claude/contracts/`
+[//]: # (5-Agent 체계 &#40;Team Lead 1 + Teammate 4&#41;. 상세: `arch/env/AGENT_TEAM.md`)
 
-### 공통 규칙
-- **도메인 소유권**: 디렉토리 단위. 새 파일은 해당 디렉토리 소유자에게 귀속. 상세 맵은 AGENT_TEAM.md Section 2.
-- **타 도메인 수정 금지** → Team Lead에게 크로스 도메인 요청 (Section 4-3)
-- **공유 파일(db/, config/settings.py 등)** → Write-Proposal 패턴 (Section 5)
-- **새 최상위 디렉토리** → 즉시 중단 + CEO에게 Proposal (Section 6)
-- **ai_worker/ 레거시 플랫 파일 수정 금지** → 패키지 경로(llm/, tts/, renderer/, pipeline/)만 수정
+[//]: # (프롬프트: `.claude/prompts/` · 계약: `.claude/contracts/`)
 
-### 필수 프로세스 (절대 누락 금지)
-1. 공유 파일 수정 시: 반드시 `/proposal` 스킬을 사용하여 승인을 요청할 것. 직접 수정 절대 금지.
-2. 작업 완료 시: 작업을 종료하기 전에 반드시 `_result/{작업명}.md` 형식의 결과 보고서를 작성할 것.
+[//]: # ()
+[//]: # (### 공통 규칙)
 
-### ⚠️ CTO 지시 대응 프로세스 (Absolute Rule)
-사용자(CTO)가 새로운 요구사항(보통 `.md` 파일 참조 지시)을 전달했을 때, **절대 코드를 즉시 수정하거나 개발을 시작하지 마십시오.**
-반드시 가장 먼저 `.claude/prompts/team_lead.md`를 읽고 **[Step 1] 요구사항 분석 및 검증**과 **[Step 2] 작업 실행 제안서 작성** 단계로 돌입해야 합니다.
-`_proposals/`에 계획을 문서화하고 승인을 받기 전까지는 코딩 도구를 사용해서는 안 됩니다.
+[//]: # (- **도메인 소유권**: 디렉토리 단위. 새 파일은 해당 디렉토리 소유자에게 귀속. 상세 맵은 AGENT_TEAM.md Section 2.)
 
-### 에이전트 도구 및 스킬
-- 스킬 정의: .claude/skills/
-- 사용법: 에이전트는 특정 작업(제안서 작성 등) 수행 시 해당 디렉토리의 스킬 가이드를 읽고 `/명령어` 형태로 실행한다.
+[//]: # (- **타 도메인 수정 금지** → Team Lead에게 크로스 도메인 요청 &#40;Section 4-3&#41;)
+
+[//]: # (- **공유 파일&#40;db/, config/settings.py 등&#41;** → Write-Proposal 패턴 &#40;Section 5&#41;)
+
+[//]: # (- **새 최상위 디렉토리** → 즉시 중단 + CEO에게 Proposal &#40;Section 6&#41;)
+
+[//]: # (- **ai_worker/ 레거시 플랫 파일 수정 금지** → 패키지 경로&#40;llm/, tts/, renderer/, pipeline/&#41;만 수정)
+
+[//]: # ()
+[//]: # (### 필수 프로세스 &#40;절대 누락 금지&#41;)
+
+[//]: # (1. 공유 파일 수정 시: 반드시 `/proposal` 스킬을 사용하여 승인을 요청할 것. 직접 수정 절대 금지.)
+
+[//]: # (2. 작업 완료 시: 작업을 종료하기 전에 반드시 `_result/{작업명}.md` 형식의 결과 보고서를 작성할 것.)
+
+[//]: # ()
+[//]: # (### ⚠️ CTO 지시 대응 프로세스 &#40;Absolute Rule&#41;)
+
+[//]: # (사용자&#40;CTO&#41;가 새로운 요구사항&#40;보통 `.md` 파일 참조 지시&#41;을 전달했을 때, **절대 코드를 즉시 수정하거나 개발을 시작하지 마십시오.**)
+
+[//]: # (반드시 가장 먼저 `.claude/prompts/team_lead.md`를 읽고 **[Step 1] 요구사항 분석 및 검증**과 **[Step 2] 작업 실행 제안서 작성** 단계로 돌입해야 합니다.)
+
+[//]: # (`_proposals/`에 계획을 문서화하고 승인을 받기 전까지는 코딩 도구를 사용해서는 안 됩니다.)
+
+[//]: # ()
+[//]: # (### 에이전트 도구 및 스킬)
+
+[//]: # (- 스킬 정의: .claude/skills/)
+
+[//]: # (- 사용법: 에이전트는 특정 작업&#40;제안서 작성 등&#41; 수행 시 해당 디렉토리의 스킬 가이드를 읽고 `/명령어` 형태로 실행한다.)

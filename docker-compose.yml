@@ -1,3 +1,4 @@
+# GPU 환경: RTX 3090 24GB (Quality-First 2막 구조)
 services:
   db:
     image: mariadb:11

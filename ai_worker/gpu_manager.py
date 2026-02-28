@@ -56,13 +56,16 @@ class GPUMemoryManager:
     모델 로딩/언로딩 및 메모리 모니터링
     """
 
-    # 모델별 예상 VRAM 사용량 (GB)
+    # 모델별 예상 VRAM 사용량 (GB) — RTX 3090 24GB Quality-First 기준
     MODEL_VRAM_REQUIREMENTS = {
-        ModelType.LLM: 4.5,   # LLM (4-bit 양자화)
-        ModelType.TTS: 2.5,   # TTS
-        ModelType.VIDEO: 6.0,  # LTX-Video (ComfyUI)
+        ModelType.LLM: 14.0,   # qwen2.5:14b 8-bit 기준
+        ModelType.TTS: 5.0,    # Fish Speech 고사양 버전 기준
+        ModelType.VIDEO: 12.0,  # LTX v2 고품질/고해상도 기준
         ModelType.OTHER: 2.0,
     }
+
+    # 동시 상주 허용 최대 VRAM (24GB 중 20GB, 4GB 안전마진)
+    MAX_COEXIST_VRAM_GB: float = 20.0
 
     def __init__(self):
         """초기화"""
@@ -213,7 +216,7 @@ class GPUMemoryManager:
             log.exception("Failed to get available VRAM")
             return 0.0
 
-    def can_load_model(self, required_vram_gb: float, safety_margin_gb: float = 1.0) -> bool:
+    def can_load_model(self, required_vram_gb: float, safety_margin_gb: float = 2.0) -> bool:
         """
         모델 로드 가능 여부 확인
 
@@ -286,9 +289,37 @@ class GPUMemoryManager:
         except Exception:
             log.exception("Emergency cleanup failed")
 
+    def can_coexist(self, new_model_type: ModelType) -> bool:
+        """현재 로드된 모델들과 새 모델이 동시 상주 가능한지 판단.
+
+        Args:
+            new_model_type: 새로 로드할 모델 타입
+
+        Returns:
+            동시 상주 가능 여부
+        """
+        current_total = sum(
+            info.estimated_vram_gb for info in self.loaded_models.values() if info.loaded
+        )
+        new_requirement = self.MODEL_VRAM_REQUIREMENTS.get(new_model_type, 2.0)
+
+        can_fit = (current_total + new_requirement) <= self.MAX_COEXIST_VRAM_GB
+        log.debug(
+            "[GPU] Coexist check: current=%.1f GB + new(%s)=%.1f GB = %.1f GB (limit=%.1f GB) → %s",
+            current_total,
+            new_model_type.value,
+            new_requirement,
+            current_total + new_requirement,
+            self.MAX_COEXIST_VRAM_GB,
+            "OK" if can_fit else "OVER",
+        )
+        return can_fit
+
     def _free_memory_for_model(self, target_model_type: ModelType, required_vram_gb: float):
         """
         다른 모델을 언로드하여 메모리 확보
+
+        동시 상주 가능(can_coexist)하면 기존 모델을 유지한다 (2막 TTS+VIDEO 동시 실행 지원).
 
         Args:
             target_model_type: 로드할 모델 타입
@@ -299,6 +330,14 @@ class GPUMemoryManager:
             target_model_type.value,
             required_vram_gb
         )
+
+        # 동시 상주 가능하면 언로드 스킵
+        if self.can_coexist(target_model_type):
+            log.info(
+                "[GPU] Coexistence allowed for %s — skipping unload",
+                target_model_type.value,
+            )
+            return
 
         # 다른 타입의 로드된 모델 찾기
         unload_candidates = [

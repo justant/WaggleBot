@@ -153,6 +153,19 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             pass
         gc.collect()
 
+        # 24GB 환경: 1막 종료 후 VRAM 완전 반환되므로 OOM 위험 낮음
+        # available < required * 0.5 일 때만 긴급 정리 트리거
+        from ai_worker.gpu_manager import get_gpu_manager, ModelType
+        _gm = get_gpu_manager()
+        _video_vram = _gm.MODEL_VRAM_REQUIREMENTS.get(ModelType.VIDEO, 12.0)
+        _available = _gm.get_available_vram()
+        if _available < _video_vram * 0.5:
+            logger.warning(
+                "[content_processor] Phase 7: VRAM 부족 (available=%.1f GB < %.1f GB) — 긴급 정리",
+                _available, _video_vram * 0.5,
+            )
+            _gm.emergency_cleanup()
+
         from ai_worker.video.manager import VideoManager
         from ai_worker.video.comfy_client import ComfyUIClient
         from config.settings import (

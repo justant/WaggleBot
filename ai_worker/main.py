@@ -10,7 +10,7 @@ Post A가 CPU로 렌더링되는 동안 Post B는 GPU로 LLM+TTS를 처리할 �
 import asyncio
 import logging
 
-from config.settings import AI_POLL_INTERVAL
+from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
 
@@ -38,7 +38,7 @@ _cuda_sem: asyncio.Semaphore | None = None
 def _get_cuda_sem() -> asyncio.Semaphore:
     global _cuda_sem
     if _cuda_sem is None:
-        _cuda_sem = asyncio.Semaphore(1)
+        _cuda_sem = asyncio.Semaphore(CUDA_CONCURRENCY)
     return _cuda_sem
 
 

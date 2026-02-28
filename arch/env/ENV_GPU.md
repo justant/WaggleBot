@@ -1,14 +1,14 @@
-# WaggleBot — RTX 3080 Ti (NVIDIA GPU) 환경
+# WaggleBot — RTX 3090 (NVIDIA GPU) 환경
 
 ## 환경 개요
 
 | 항목 | 사양 |
 |------|------|
 | 노드 | Windows PC (WSL2 Ubuntu 24.04) |
-| GPU | NVIDIA RTX 3080 Ti (12GB VRAM) |
+| GPU | NVIDIA RTX 3090 (24GB VRAM) |
 | Compose 파일 | `docker-compose.yml` |
 | Dockerfile | `Dockerfile.gpu` |
-| LLM 모델 | `.env`의 `OLLAMA_MODEL` (기본값: `qwen2.5:7b`) |
+| LLM 모델 | `.env`의 `OLLAMA_MODEL` (기본값: `qwen2.5:14b`) |
 | 영상 인코딩 | `h264_nvenc` (GPU 가속) |
 
 ---
@@ -183,7 +183,7 @@ Environment="OLLAMA_HOST=0.0.0.0"
 
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart ollama
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:14b
 ```
 
 ---
