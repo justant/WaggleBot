@@ -36,6 +36,7 @@
 | 언어 | Python 3.12 |
 | LLM | Ollama (`qwen2.5:14b` 8-bit / `qwen2.5:7b` 폴백) |
 | TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
+| 비디오 | LTX-Video 2B v0.9.8-distilled (ComfyUI, T2V/I2V) |
 | DB | MariaDB 11.x + SQLAlchemy ORM |
 | 영상 | FFmpeg (h264_nvenc / libx264 폴백) |
 | 웹 | Streamlit Dashboard |
@@ -97,7 +98,7 @@ ollama pull qwen2.5:14b
 # HuggingFace CLI 설치 (없는 경우)
 pip install huggingface_hub
 
-# 모델 다운로드 (~4GB)
+# 모델 다운로드 (~1.4GB)
 bash scripts/download_fish_speech.sh
 ```
 
@@ -107,6 +108,22 @@ checkpoints/fish-speech-1.5/
 ├── model.pth
 ├── firefly-gan-vq-fsq-8x1024-21hz-generator.pth
 └── (기타 config 파일)
+```
+
+### 4-1. LTX-Video 모델 다운로드
+
+```bash
+# LTX-Video 2B v0.9.8-distilled (~6.3GB)
+bash scripts/download_ltx_video.sh
+```
+
+다운로드 후 구조 확인:
+```
+checkpoints/ltx-video/
+└── ltxv-2b-0.9.8-distilled.safetensors
+
+checkpoints/clip/
+└── t5xxl_fp8_e4m3fn.safetensors    ← T5 XXL 텍스트 인코더
 ```
 
 ### 참조 오디오 준비
@@ -266,7 +283,9 @@ WaggleBot/
 │   ├── bgm/                           # Mood별 BGM (9개 카테고리)
 │   └── voices/                        # Fish Speech 참조 오디오 (WAV)
 ├── checkpoints/
-│   └── fish-speech-1.5/               # Fish Speech 모델 파일
+│   ├── fish-speech-1.5/               # Fish Speech 1.5 모델 파일
+│   ├── ltx-video/                     # LTX-Video 2B v0.9.8-distilled 체크포인트
+│   └── clip/                          # T5 XXL FP8 텍스트 인코더
 ├── config/
 │   ├── settings.py                    # 전역 설정 허브 (도메인별 모듈 re-export)
 │   ├── crawler.py                     # 크롤러 설정 (USER_AGENTS, REQUEST_HEADERS 등)
@@ -275,7 +294,8 @@ WaggleBot/
 │   └── scene_policy.json              # Mood별 씬 정책 (9개 프리셋, 에셋·BGM·레이아웃 매핑)
 ├── scripts/
 │   ├── setup_docker_gpu.sh
-│   └── download_fish_speech.sh        # 모델 다운로드
+│   ├── download_fish_speech.sh        # Fish Speech 모델 다운로드
+│   └── download_ltx_video.sh          # LTX-Video 모델 다운로드
 ├── test/
 │   ├── test_tts.py                    # Fish Speech 단독 테스트
 │   ├── test_scene_policy.py           # Mood 씬 정책 단위 테스트

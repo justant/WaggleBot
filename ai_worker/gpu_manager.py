@@ -59,8 +59,8 @@ class GPUMemoryManager:
     # 모델별 예상 VRAM 사용량 (GB) — RTX 3090 24GB Quality-First 기준
     MODEL_VRAM_REQUIREMENTS = {
         ModelType.LLM: 14.0,   # qwen2.5:14b 8-bit 기준
-        ModelType.TTS: 5.0,    # Fish Speech 고사양 버전 기준
-        ModelType.VIDEO: 12.0,  # LTX v2 고품질/고해상도 기준
+        ModelType.TTS: 5.0,    # Fish Speech 1.5 고사양 버전 기준
+        ModelType.VIDEO: 12.0,  # LTX-Video 2B v0.9.8-distilled 기준
         ModelType.OTHER: 2.0,
     }
 

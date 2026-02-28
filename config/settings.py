@@ -317,7 +317,9 @@ TTS_OUTPUT_FORMAT = "wav"
 TTS_SAMPLE_RATE   = 44100
 
 # ---------------------------------------------------------------------------
-# LTX-Video 설정
+# LTX-Video 설정 (v0.9.8-distilled 2B, ComfyUI)
+# 체크포인트: checkpoints/ltx-video/ltxv-2b-0.9.8-distilled.safetensors
+# 텍스트 인코더: checkpoints/clip/t5xxl_fp8_e4m3fn.safetensors
 # ---------------------------------------------------------------------------
 COMFYUI_URL: str = os.getenv("COMFYUI_URL", "http://comfyui:8188")
 VIDEO_GEN_ENABLED: bool = os.getenv("VIDEO_GEN_ENABLED", "false").lower() == "true"
