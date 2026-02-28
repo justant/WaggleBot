@@ -94,7 +94,9 @@ services:
       start_period: 90s
 
   comfyui:
-    image: comfyanonymous/comfyui:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.comfyui
     container_name: comfyui
     restart: unless-stopped
     runtime: nvidia
@@ -102,6 +104,7 @@ services:
       - "8188:8188"
     volumes:
       - ./checkpoints/ltx-video:/comfyui/models/checkpoints
+      - ./checkpoints/clip:/comfyui/models/clip
       - ./comfyui_workflows:/comfyui/custom_workflows
       - ./media/tmp/videos:/comfyui/output
     environment:

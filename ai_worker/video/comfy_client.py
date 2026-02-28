@@ -118,16 +118,21 @@ class ComfyUIClient:
     ) -> Path:
         """Image-to-Video 생성.
 
+        LTXVImgToVideo 노드를 사용하여 초기 이미지를 기반으로 비디오를 생성한다.
+        입력 이미지는 OOM 방지를 위해 target 해상도로 리사이즈된다.
+
         Args:
             prompt: 영어 비디오 프롬프트
             init_image_path: 초기 프레임 이미지 파일 경로
-            denoise_strength: 원본 이미지 유지 강도 (0.0~1.0, 낮을수록 원본에 충실)
+            denoise_strength: LTXVImgToVideo strength (0.0~1.0, 높을수록 원본에 충실)
             (나머지 파라미터는 generate_t2v와 동일)
 
         Returns:
             생성된 mp4 파일의 절대 경로
         """
-        image_name = await self._upload_image(init_image_path)
+        # 이미지 리사이즈 (OOM 방지 + 해상도 통일)
+        resized_path = self._resize_image(init_image_path, width, height)
+        image_name = await self._upload_image(resized_path)
 
         import random
         workflow = self._load_workflow("i2v_ltx.json")
@@ -138,12 +143,33 @@ class ComfyUIClient:
             "width": width,
             "height": height,
             "length": num_frames,
-            "denoise": denoise_strength,
+            "strength": denoise_strength,
             "steps": steps,
             "cfg": cfg_scale,
             "seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
         })
         return await self._queue_and_wait(workflow, timeout=timeout)
+
+    def _resize_image(self, image_path: Path, width: int, height: int) -> Path:
+        """이미지를 target 해상도로 리사이즈한다.
+
+        원본 이미지가 target보다 큰 경우에만 리사이즈하며,
+        비율을 유지하면서 target 크기에 맞춘다.
+        """
+        from PIL import Image
+
+        img = Image.open(image_path).convert("RGB")
+        if img.width <= width and img.height <= height:
+            return image_path
+
+        img.thumbnail((width, height), Image.LANCZOS)
+        resized_path = image_path.parent / f"resized_{image_path.name}"
+        img.save(resized_path, quality=95)
+        logger.info(
+            "[comfy] 이미지 리사이즈: %dx%d → %dx%d (%s)",
+            img.width, img.height, width, height, resized_path.name,
+        )
+        return resized_path
 
     # -- 내부 메서드 --
 
@@ -196,6 +222,46 @@ class ComfyUIClient:
             data = resp.json()
             return data["name"]
 
+    async def _poll_until_done(self, prompt_id: str, interval: float = 3.0) -> None:
+        """GET /history/{prompt_id}를 폴링하여 완료를 대기한다.
+
+        WebSocket 연결이 끊어진 경우의 폴백 메커니즘.
+        history에 prompt_id가 나타나고 completed=True이면 완료로 판단한다.
+        ComfyUI가 재시작되면 history가 유실되므로 queue 상태도 확인한다.
+        """
+        import asyncio
+
+        logger.info("[comfy] polling 시작: prompt_id=%s", prompt_id)
+        consecutive_errors = 0
+        while True:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        f"{self.base_url}/history/{prompt_id}",
+                        timeout=10.0,
+                    )
+                    consecutive_errors = 0
+                    if resp.status_code == 200:
+                        history = resp.json()
+                        if prompt_id in history:
+                            status = history[prompt_id].get("status", {})
+                            if status.get("completed", False):
+                                logger.info("[comfy] polling 완료 확인")
+                                return
+                            if status.get("status_str") == "error":
+                                msgs = status.get("messages", [])
+                                raise RuntimeError(
+                                    f"ComfyUI 실행 에러 (poll): {msgs}"
+                                )
+            except (httpx.HTTPError, httpx.ConnectError, OSError):
+                consecutive_errors += 1
+                if consecutive_errors >= 10:
+                    raise RuntimeError(
+                        "ComfyUI 서버 응답 없음 — 크래시 가능성 (polling 중단)"
+                    )
+                logger.debug("[comfy] polling 연결 실패 (%d회)", consecutive_errors)
+            await asyncio.sleep(interval)
+
     async def _queue_and_wait(self, workflow: dict, timeout: int = 300) -> Path:
         """워크플로우를 큐에 제출하고 완료까지 WebSocket으로 대기.
 
@@ -222,36 +288,45 @@ class ComfyUIClient:
             prompt_id = resp.json()["prompt_id"]
             logger.info("[comfy] 워크플로우 제출: prompt_id=%s", prompt_id)
 
-        # 2. WebSocket 대기
+        # 2. WebSocket 대기 (연결 끊김 시 polling 폴백)
         import websockets
+
         ws_host = self.base_url.replace("http://", "").replace("https://", "")
         ws_url = f"ws://{ws_host}/ws?clientId={self.client_id}"
 
         try:
             async with asyncio.timeout(timeout):
-                async with websockets.connect(ws_url) as ws:
-                    while True:
-                        msg = json.loads(await ws.recv())
-                        msg_type = msg.get("type")
+                try:
+                    async with websockets.connect(
+                        ws_url, ping_interval=20, ping_timeout=60,
+                    ) as ws:
+                        while True:
+                            msg = json.loads(await ws.recv())
+                            msg_type = msg.get("type")
 
-                        if msg_type == "executing":
-                            node = msg.get("data", {}).get("node")
-                            if node is None:
-                                break
-                            logger.debug("[comfy] 실행 중: node=%s", node)
+                            if msg_type == "executing":
+                                node = msg.get("data", {}).get("node")
+                                if node is None:
+                                    break
+                                logger.debug("[comfy] 실행 중: node=%s", node)
 
-                        elif msg_type == "execution_error":
-                            error_data = msg.get("data", {})
-                            raise RuntimeError(
-                                f"ComfyUI 실행 에러: {error_data.get('exception_message', 'unknown')}"
-                            )
+                            elif msg_type == "execution_error":
+                                error_data = msg.get("data", {})
+                                raise RuntimeError(
+                                    f"ComfyUI 실행 에러: {error_data.get('exception_message', 'unknown')}"
+                                )
 
-                        elif msg_type == "progress":
-                            data = msg.get("data", {})
-                            logger.debug(
-                                "[comfy] 진행률: %d/%d",
-                                data.get("value", 0), data.get("max", 1),
-                            )
+                            elif msg_type == "progress":
+                                data = msg.get("data", {})
+                                logger.debug(
+                                    "[comfy] 진행률: %d/%d",
+                                    data.get("value", 0), data.get("max", 1),
+                                )
+                except (websockets.exceptions.ConnectionClosed, OSError) as ws_err:
+                    logger.warning(
+                        "[comfy] WebSocket 끊김 — polling 폴백: %s", ws_err,
+                    )
+                    await self._poll_until_done(prompt_id)
         except asyncio.TimeoutError:
             raise RuntimeError(f"ComfyUI generation timeout ({timeout}초)")
 

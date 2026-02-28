@@ -29,25 +29,32 @@ def _load_video_styles() -> dict:
     return _VIDEO_STYLES
 
 
-_VIDEO_PROMPT_SYSTEM = """You are a cinematic video prompt engineer specializing in short-form content.
-Given a Korean text snippet, its surrounding story context, and a mood, write an English paragraph (4-8 sentences) that describes a 3-5 second video clip.
+_T2V_PROMPT_SYSTEM = """You are a video prompt writer for AI-generated 3-second clips.
+Write 2-3 English sentences describing an abstract symbolic video clip.
 
-Follow this 5-step formula strictly:
-1. SHOT: Shot size and lighting (e.g., "Extreme close-up, dramatic chiaroscuro lighting")
-2. SCENE: Location and atmosphere (e.g., "A cramped studio apartment at 3 AM, clothes scattered on the floor")
-3. ACTION: Subject's specific motion (e.g., "A young woman slowly types on a keyboard, then slams the laptop shut")
-4. CAMERA: Lens movement (e.g., "Slow dolly out with slight handheld shake, transitioning to a static wide shot")
-5. AUDIO-VISUAL: Synesthetic mood cue (e.g., "Visuals evoke the heavy sound of silence broken only by distant traffic")
+RULES:
+- NO people, faces, or human bodies. AI video cannot generate realistic humans.
+- Use abstract or symbolic visuals: close-up of objects, nature, textures, light, patterns, typography.
+- Match the EMOTION and MOOD of the Korean text, not its literal meaning.
+- One continuous moment. No scene changes. No camera movement.
+- Be specific about colors, lighting, and motion direction.
 
-CRITICAL RULES:
-- Output ONLY the English paragraph. No numbering, no step labels, no markdown.
-- The paragraph must flow naturally as one cohesive description.
-- Be SPECIFIC: avoid generic descriptions. Reference concrete objects, colors, textures.
-- Match the visual style hint provided.
-- The video is only 3-5 seconds, so describe a single continuous moment, not a sequence of events.
+Visual style: {style_hint}
 
-Style hint: {style_hint}
-Story context: {story_context}"""
+Korean text: {korean_text}
+Mood: {mood}"""
+
+_I2V_PROMPT_SYSTEM = """You are a subtle motion descriptor for image-to-video AI.
+The input image already exists. Write 1-2 English sentences describing ONLY the small natural motions to add.
+
+RULES:
+- Do NOT describe a new scene or change the composition.
+- Describe ONLY micro-motions: gentle swaying, light flicker, subtle parallax, soft focus shift, particle drift.
+- Keep camera STATIC. No zoom, no pan, no dolly.
+- Keep it very short and simple.
+
+Korean text context: {korean_text}
+Mood: {mood}"""
 
 
 NEGATIVE_PROMPT = (
@@ -72,6 +79,9 @@ class VideoPromptEngine:
     ) -> str:
         """단일 씬의 비디오 프롬프트를 생성한다.
 
+        T2V: 추상적/상징적 비주얼 (사람 없음)
+        I2V: 기존 이미지에 미세한 자연스러운 동작 추가
+
         Args:
             text_lines: 해당 씬의 텍스트 라인 목록
             mood: 감정 분류 (9종 중 하나)
@@ -82,28 +92,35 @@ class VideoPromptEngine:
         Returns:
             영어 비디오 프롬프트 문자열
         """
-        styles = _load_video_styles()
-        style_data = styles.get(mood, styles.get("daily", {}))
-        style_hint = style_data.get("style_hint", "natural daylight, casual aesthetic")
-
-        context = " ".join(text_lines)
-        story_context = f"Title: {title}. Scene text: {context}"
-        if body_summary:
-            story_context += f". Overall story: {body_summary[:300]}"
-
-        system_prompt = _VIDEO_PROMPT_SYSTEM.format(
-            style_hint=style_hint,
-            story_context=story_context,
-        )
-
-        prompt = call_ollama_raw(
-            prompt=system_prompt + f"\n\nKorean text for this scene: {context}",
-            max_tokens=256,
-            temperature=0.7,
-        )
+        korean_text = " ".join(text_lines)
+        if title:
+            korean_text = f"[{title}] {korean_text}"
 
         if has_init_image:
-            prompt += " Maintain the original image composition and add subtle natural motion."
+            system_prompt = _I2V_PROMPT_SYSTEM.format(
+                korean_text=korean_text,
+                mood=mood,
+            )
+            prompt = call_ollama_raw(
+                prompt=system_prompt,
+                max_tokens=80,
+                temperature=0.3,
+            )
+        else:
+            styles = _load_video_styles()
+            style_data = styles.get(mood, styles.get("daily", {}))
+            style_hint = style_data.get("style_hint", "natural daylight, casual aesthetic")
+
+            system_prompt = _T2V_PROMPT_SYSTEM.format(
+                style_hint=style_hint,
+                korean_text=korean_text,
+                mood=mood,
+            )
+            prompt = call_ollama_raw(
+                prompt=system_prompt,
+                max_tokens=120,
+                temperature=0.5,
+            )
 
         return prompt.strip()
 

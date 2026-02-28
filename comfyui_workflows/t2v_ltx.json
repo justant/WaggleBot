@@ -5,18 +5,25 @@
       "ckpt_name": "ltx-video-2b-v0.9.1.safetensors"
     }
   },
+  "10": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp8_e4m3fn.safetensors",
+      "type": "ltxv"
+    }
+  },
   "2": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "positive_prompt",
-      "clip": ["1", 1]
+      "clip": ["10", 0]
     }
   },
   "3": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "negative_prompt",
-      "clip": ["1", 1]
+      "clip": ["10", 0]
     }
   },
   "4": {
@@ -58,6 +65,7 @@
       "loop_count": 0,
       "filename_prefix": "ltx_t2v",
       "format": "video/h264-mp4",
+      "pingpong": false,
       "save_output": true
     }
   }
