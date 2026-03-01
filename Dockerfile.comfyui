@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -14,13 +14,17 @@ WORKDIR /comfyui
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && pip install --no-cache-dir -r requirements.txt
 
+# Flash Attention: pre-built wheel (소스 컴파일 불필요, 10초 설치)
+# PyTorch 2.10 + CUDA 12.8 + Python 3.11 용
+RUN pip install --no-cache-dir https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.7.4+cu128torch2.10-cp311-cp311-linux_x86_64.whl
+
 # VHS (Video Helper Suite) 커스텀 노드 — VHS_VideoCombine 노드 제공
 RUN cd custom_nodes && \
     git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \
     cd ComfyUI-VideoHelperSuite && \
     pip install --no-cache-dir -r requirements.txt
 
-# LTX-Video 커스텀 노드 (EmptyLTXVLatentVideo 노드 제공)
+# LTX-Video 커스텀 노드 (LTX-2 비디오 노드 제공)
 RUN cd custom_nodes && \
     git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git && \
     cd ComfyUI-LTXVideo && \
@@ -28,4 +32,4 @@ RUN cd custom_nodes && \
 
 EXPOSE 8188
 
-CMD ["python3", "main.py", "--listen", "0.0.0.0", "--lowvram"]
+CMD ["python3", "main.py", "--listen", "0.0.0.0", "--lowvram", "--reserve-vram", "2"]

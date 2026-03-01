@@ -104,8 +104,10 @@ services:
     ports:
       - "8188:8188"
     volumes:
-      - ./checkpoints/ltx-video:/comfyui/models/checkpoints
-      - ./checkpoints/clip:/comfyui/models/clip
+      - ./checkpoints/ltx-2:/comfyui/models/checkpoints
+      - ./checkpoints/text_encoders:/comfyui/models/text_encoders
+      - ./checkpoints/latent_upscale_models:/comfyui/models/latent_upscale_models
+      - ./checkpoints/loras:/comfyui/models/loras
       - ./comfyui_workflows:/comfyui/custom_workflows
       - ./media/tmp/videos:/comfyui/output
     environment:

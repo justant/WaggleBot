@@ -1,0 +1,144 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltx-2-19b-distilled-fp8.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LTXVGemmaCLIPModelLoader",
+    "inputs": {
+      "ltxv_path": "ltx-2-19b-distilled-fp8.safetensors",
+      "gemma_path": "gemma-3-12b-it-qat-q4_0-unquantized/model-00001-of-00005.safetensors",
+      "max_length": 1024
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "positive_prompt",
+      "clip": ["2", 0]
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "negative_prompt",
+      "clip": ["2", 0]
+    }
+  },
+  "6": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "frame_rate": 24
+    }
+  },
+  "30": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 640,
+      "height": 360,
+      "length": 97,
+      "batch_size": 1
+    }
+  },
+  "10": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    }
+  },
+  "11": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["6", 0],
+      "negative": ["6", 1],
+      "cfg": 1.0
+    }
+  },
+  "12": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "33": {
+    "class_type": "ManualSigmas",
+    "_meta": "Stage 1: 8-step Distilled generation at 640x360",
+    "inputs": {
+      "sigmas": "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    }
+  },
+  "34": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["10", 0],
+      "guider": ["11", 0],
+      "sampler": ["12", 0],
+      "sigmas": ["33", 0],
+      "latent_image": ["30", 0]
+    }
+  },
+  "40": {
+    "class_type": "LTXVLatentUpscale",
+    "_meta": "Stage 2: Spatial upscale 640x360 → 1280x720",
+    "inputs": {
+      "latent": ["34", 0],
+      "upscale_model_name": "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+    }
+  },
+  "42": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    }
+  },
+  "43": {
+    "class_type": "ManualSigmas",
+    "_meta": "Stage 2: 4-step refinement after upscale",
+    "inputs": {
+      "sigmas": "0.909375, 0.725, 0.421875, 0.0"
+    }
+  },
+  "44": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["6", 0],
+      "negative": ["6", 1],
+      "cfg": 1.0
+    }
+  },
+  "45": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["42", 0],
+      "guider": ["44", 0],
+      "sampler": ["12", 0],
+      "sigmas": ["43", 0],
+      "latent_image": ["40", 0]
+    }
+  },
+  "16": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["45", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "18": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["16", 0],
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "ltx2_t2v_upscale",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true
+    }
+  }
+}

@@ -1,16 +1,11 @@
-"""Video Prompt Engine 테스트.
+"""Video Prompt Engine 테스트 (LTX-2 V2).
 
 실행 방법:
   # Ollama가 실행 중인 상태에서:
   docker compose exec ai_worker python -m pytest test/test_prompt_engine.py -v
 
   # video_styles.json 로드 테스트만 (Ollama 불필요):
-  python -m pytest test/test_prompt_engine.py -v -k "test_video_styles_json_loaded"
-
-테스트 결과물 위치:
-  test/test_prompt_engine_output/
-  test/test_prompt_engine_output/test_result.md
-  test/test_prompt_engine_output/generated_prompts.txt
+  python -m pytest test/test_prompt_engine.py -v -k "test_video_styles"
 """
 import logging
 from pathlib import Path
@@ -82,11 +77,11 @@ class TestVideoPromptEngine:
         from ai_worker.video.prompt_engine import VideoPromptEngine
         engine = VideoPromptEngine()
         original = (
-            "Wide shot with dramatic chiaroscuro lighting. "
-            "A dark empty office at midnight with flickering fluorescent tubes. "
-            "A lone worker hunched over a glowing monitor, fingers trembling on the keyboard. "
-            "Slow dolly forward through the cubicle maze, handheld shake intensifying. "
-            "Visuals matching the oppressive hum of air conditioning and distant elevator chimes."
+            "A handsome Korean man in his early thirties stands in a modern Seoul office, "
+            "looking at documents on his desk with a focused expression. He wears a navy blue suit "
+            "with a loosened tie. Fluorescent office lighting mixed with natural light from floor-to-ceiling "
+            "windows showing the Gangnam skyline. He picks up his phone and checks it briefly. "
+            "Camera at eye level, medium shot from waist up. Sound of keyboard typing and distant phone ringing."
         )
         simplified = engine.simplify_prompt(original)
         assert len(simplified) < len(original), "단순화 프롬프트가 원본보다 길면 안 됨"
@@ -100,6 +95,13 @@ class TestVideoPromptEngine:
         assert expected_moods.issubset(set(styles.keys())), f"누락된 mood: {expected_moods - set(styles.keys())}"
         for mood, data in styles.items():
             assert "style_hint" in data, f"{mood}에 style_hint 없음"
+
+    def test_negative_prompt_v2_content(self):
+        """네거티브 프롬프트 V2가 한국 중심 필터링을 포함한다."""
+        from ai_worker.video.prompt_engine import NEGATIVE_PROMPT
+        assert "western faces" in NEGATIVE_PROMPT
+        assert "cyberpunk" in NEGATIVE_PROMPT
+        assert "anime" in NEGATIVE_PROMPT
 
     @requires_ollama
     def test_all_9_moods(self):
@@ -124,40 +126,5 @@ class TestVideoPromptEngine:
                 f.write(f"=== {mood} ===\n{prompt}\n\n")
 
 
-def generate_test_result():
-    """테스트 결과 MD 파일 생성."""
-    result_md = OUTPUT_DIR / "test_result.md"
-    result_md.write_text("""# Video Prompt Engine 테스트 결과
-
-## 실행 환경
-- Python: 3.12
-- Ollama 필요 (LLM 호출 테스트)
-
-## 실행 방법
-```bash
-# Ollama가 실행 중인 상태에서:
-docker compose exec ai_worker python -m pytest test/test_prompt_engine.py -v
-
-# video_styles.json 로드 테스트만 (Ollama 불필요):
-python -m pytest test/test_prompt_engine.py -v -k "test_video_styles_json_loaded"
-```
-
-## 테스트 항목
-| # | 테스트 함수 | 설명 | 결과 |
-|---|------------|------|------|
-| 1 | test_generate_prompt_humor | humor 프롬프트 생성 | ⬜ |
-| 2 | test_generate_prompt_horror | horror 프롬프트 생성 | ⬜ |
-| 3 | test_simplify_prompt | 프롬프트 단순화 | ⬜ |
-| 4 | test_video_styles_json_loaded | 9개 mood JSON 로드 | ⬜ |
-| 5 | test_all_9_moods | 전체 mood 프롬프트 생성 | ⬜ |
-
-## 출력 파일
-- `generated_prompts.txt`: 생성된 프롬프트 모음
-- `all_moods_prompts.txt`: 9개 mood별 프롬프트
-""", encoding="utf-8")
-
-
 if __name__ == "__main__":
-    generate_test_result()
-    import pytest
     pytest.main([__file__, "-v"])

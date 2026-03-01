@@ -36,7 +36,7 @@
 | 언어 | Python 3.12 |
 | LLM | Ollama (`qwen2.5:14b` 8-bit / `qwen2.5:7b` 폴백) |
 | TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
-| 비디오 | LTX-Video 2B v0.9.8-distilled (ComfyUI, T2V/I2V) |
+| 비디오 | LTX-2 19B (ComfyUI, T2V/I2V, 720p 오디오 동시 생성) |
 | DB | MariaDB 11.x + SQLAlchemy ORM |
 | 영상 | FFmpeg (h264_nvenc / libx264 폴백) |
 | 웹 | Streamlit Dashboard |
@@ -110,20 +110,26 @@ checkpoints/fish-speech-1.5/
 └── (기타 config 파일)
 ```
 
-### 4-1. LTX-Video 모델 다운로드
+### 4-1. LTX-2 모델 다운로드
 
 ```bash
-# LTX-Video 2B v0.9.8-distilled (~6.3GB)
-bash scripts/download_ltx_video.sh
+# LTX-2 19B 모델 + Gemma 3 텍스트 인코더 + 업스케일러 (~20GB+)
+bash scripts/download_ltx2.sh
 ```
 
 다운로드 후 구조 확인:
 ```
-checkpoints/ltx-video/
-└── ltxv-2b-0.9.8-distilled.safetensors
-
-checkpoints/clip/
-└── t5xxl_fp8_e4m3fn.safetensors    ← T5 XXL 텍스트 인코더
+checkpoints/
+├── ltx-2/
+│   ├── ltx-2-19b-dev-fp8.safetensors        ← 메인 체크포인트 (FP8)
+│   └── ltx-2-19b-distilled.safetensors      ← Distilled (8스텝 고속)
+├── text_encoders/
+│   └── gemma-3-12b-it-qat-q4_0-unquantized/ ← Gemma 3 텍스트 인코더
+├── latent_upscale_models/
+│   ├── ltx-2-spatial-upscaler-x2-1.0.safetensors
+│   └── ltx-2-temporal-upscaler-x2-1.0.safetensors
+└── loras/
+    └── ltx-2-19b-distilled-lora-384.safetensors
 ```
 
 ### 참조 오디오 준비
@@ -284,8 +290,10 @@ WaggleBot/
 │   └── voices/                        # Fish Speech 참조 오디오 (WAV)
 ├── checkpoints/
 │   ├── fish-speech-1.5/               # Fish Speech 1.5 모델 파일
-│   ├── ltx-video/                     # LTX-Video 2B v0.9.8-distilled 체크포인트
-│   └── clip/                          # T5 XXL FP8 텍스트 인코더
+│   ├── ltx-2/                         # LTX-2 19B 체크포인트 (FP8 + Distilled)
+│   ├── text_encoders/                 # Gemma 3 12B 텍스트 인코더
+│   ├── latent_upscale_models/         # LTX-2 Spatial/Temporal 업스케일러
+│   └── loras/                         # LTX-2 Distilled LoRA
 ├── config/
 │   ├── settings.py                    # 전역 설정 허브 (도메인별 모듈 re-export)
 │   ├── crawler.py                     # 크롤러 설정 (USER_AGENTS, REQUEST_HEADERS 등)
@@ -295,7 +303,7 @@ WaggleBot/
 ├── scripts/
 │   ├── setup_docker_gpu.sh
 │   ├── download_fish_speech.sh        # Fish Speech 모델 다운로드
-│   └── download_ltx_video.sh          # LTX-Video 모델 다운로드
+│   └── download_ltx2.sh              # LTX-2 모델 다운로드
 ├── test/
 │   ├── test_tts.py                    # Fish Speech 단독 테스트
 │   ├── test_scene_policy.py           # Mood 씬 정책 단위 테스트

@@ -14,7 +14,7 @@ SceneDirector로부터 씬 리스트를 받아:
 
 import gc
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -102,13 +102,14 @@ class VideoManager:
     ) -> VideoGenerationResult:
         """단일 씬의 비디오 클립을 생성한다.
 
-        재시도 전략:
-        1차 시도: 원본 프롬프트 + 풀 해상도
-        2차 시도 (프롬프트 실패): 프롬프트를 단순화하여 재시도
-        3차 시도 (OOM): 384×384 + 61프레임으로 다운그레이드
+        4단계 재시도 전략:
+        1차: 1280×720, 97프레임, 20스텝, 풀 모델
+        2차: 프롬프트 단순화, 동일 설정
+        3차: 768×512, 65프레임, 15스텝, 풀 모델
+        4차: 768×512, 65프레임, 8스텝, Distilled 폴백 (CFG=1.0)
         모두 실패: VideoGenerationResult(success=False) 반환
         """
-        max_attempts = self.config.get("VIDEO_MAX_RETRY", 3)
+        max_attempts = self.config.get("VIDEO_MAX_RETRY", 4)
         result = VideoGenerationResult(scene_index=scene_index, success=False)
 
         for attempt in range(1, max_attempts + 1):
@@ -117,34 +118,66 @@ class VideoManager:
                 if attempt == 1:
                     width, height = self.config["VIDEO_RESOLUTION"]
                     num_frames = self.config["VIDEO_NUM_FRAMES"]
+                    steps = self.config.get("VIDEO_STEPS", 20)
+                    cfg = self.config.get("VIDEO_CFG", 3.5)
                     prompt = scene.video_prompt
+                    use_distilled = False
                 elif attempt == 2:
                     prompt = self.prompt_engine.simplify_prompt(scene.video_prompt)
                     width, height = self.config["VIDEO_RESOLUTION"]
                     num_frames = self.config["VIDEO_NUM_FRAMES"]
+                    steps = self.config.get("VIDEO_STEPS", 20)
+                    cfg = self.config.get("VIDEO_CFG", 3.5)
+                    use_distilled = False
                     logger.warning(
                         "[video] post=%d 씬=%d 프롬프트 단순화 재시도 (attempt=%d)",
                         post_id, scene_index, attempt,
                     )
-                else:
+                elif attempt == 3:
                     prompt = self.prompt_engine.simplify_prompt(scene.video_prompt)
-                    width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (384, 384))
-                    num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 61)
+                    width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
+                    num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+                    steps = 15
+                    cfg = self.config.get("VIDEO_CFG", 3.5)
+                    use_distilled = False
                     logger.warning(
                         "[video] post=%d 씬=%d 해상도 다운그레이드 재시도 %dx%d (attempt=%d)",
                         post_id, scene_index, width, height, attempt,
                     )
+                else:
+                    # 4차: Distilled 폴백
+                    prompt = self.prompt_engine.simplify_prompt(scene.video_prompt)
+                    width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
+                    num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+                    steps = self.config.get("VIDEO_STEPS_DISTILLED", 8)
+                    cfg = self.config.get("VIDEO_CFG_DISTILLED", 1.0)
+                    use_distilled = True
+                    logger.warning(
+                        "[video] post=%d 씬=%d Distilled 폴백 재시도 %dx%d (attempt=%d)",
+                        post_id, scene_index, width, height, attempt,
+                    )
+
+                fps = self.config.get("VIDEO_FPS", 24)
 
                 if scene.video_mode == "t2v":
                     clip_path = await self.comfy.generate_t2v(
                         prompt=prompt,
-                        width=width, height=height, num_frames=num_frames,
+                        width=width, height=height,
+                        num_frames=num_frames,
+                        fps=fps,
+                        steps=steps,
+                        cfg=cfg,
+                        use_distilled=use_distilled,
                     )
                 elif scene.video_mode == "i2v":
                     clip_path = await self.comfy.generate_i2v(
                         prompt=prompt,
                         init_image_path=Path(scene.video_init_image),
-                        width=width, height=height, num_frames=num_frames,
+                        width=width, height=height,
+                        num_frames=num_frames,
+                        fps=fps,
+                        steps=steps,
+                        cfg=cfg,
                     )
                 else:
                     result.failure_reason = f"unknown video_mode: {scene.video_mode}"

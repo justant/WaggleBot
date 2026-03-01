@@ -317,23 +317,40 @@ TTS_OUTPUT_FORMAT = "wav"
 TTS_SAMPLE_RATE   = 44100
 
 # ---------------------------------------------------------------------------
-# LTX-Video 설정 (v0.9.8-distilled 2B, ComfyUI)
-# 체크포인트: checkpoints/ltx-video/ltxv-2b-0.9.8-distilled.safetensors
-# 텍스트 인코더: checkpoints/clip/t5xxl_fp8_e4m3fn.safetensors
+# 하드웨어 설정 (RTX 3090 24GB)
+# ---------------------------------------------------------------------------
+GPU_VRAM_GB: int = 24                          # RTX 3090
+GPU_ARCHITECTURE: str = "ampere"               # RTX 30시리즈 = Ampere (FP4 미지원)
+SYSTEM_RAM_MIN_GB: int = 32                    # weight streaming 최소 요구
+
+# ---------------------------------------------------------------------------
+# LTX-2 비디오 설정 (19B, ComfyUI)
+# 체크포인트: checkpoints/ltx-2/ltx-2-19b-dev-fp8.safetensors (풀)
+#            checkpoints/ltx-2/ltx-2-19b-distilled-fp8.safetensors (Distilled)
+# 텍스트 인코더: checkpoints/text_encoders/gemma-3-12b-it-qat-q4_0-unquantized/
 # ---------------------------------------------------------------------------
 COMFYUI_URL: str = os.getenv("COMFYUI_URL", "http://comfyui:8188")
+COMFYUI_VRAM_MODE: str = "lowvram"             # weight streaming 모드
+COMFYUI_RESERVE_VRAM: int = 2                  # GB 단위
 VIDEO_GEN_ENABLED: bool = os.getenv("VIDEO_GEN_ENABLED", "false").lower() == "true"
 VIDEO_GEN_TIMEOUT: int = int(os.getenv("VIDEO_GEN_TIMEOUT", "300"))
-VIDEO_RESOLUTION: tuple[int, int] = (512, 512)
-VIDEO_RESOLUTION_FALLBACK: tuple[int, int] = (384, 384)
-VIDEO_NUM_FRAMES: int = 81           # ~3.2초 @25fps
-VIDEO_NUM_FRAMES_FALLBACK: int = 61  # 다운그레이드용
+VIDEO_MODEL_FULL: str = "ltx-2-19b-dev-fp8.safetensors"              # 풀 모델 (FP8)
+VIDEO_MODEL_DISTILLED: str = "ltx-2-19b-distilled-fp8.safetensors"   # Distilled (FP8)
+VIDEO_MODEL: str = "ltx2_distilled"  # "ltx2" | "ltx2_distilled"
+VIDEO_RESOLUTION: tuple[int, int] = (1280, 720)
+VIDEO_RESOLUTION_FALLBACK: tuple[int, int] = (768, 512)
+VIDEO_NUM_FRAMES: int = 97           # 1+8*12 (~4초 @24fps)
+VIDEO_NUM_FRAMES_FALLBACK: int = 65  # 1+8*8 다운그레이드용
+VIDEO_FPS: int = 24
 VIDEO_STEPS: int = 20
-VIDEO_CFG_SCALE: float = 3.5
+VIDEO_STEPS_DISTILLED: int = 8
+VIDEO_CFG: float = 3.5
+VIDEO_CFG_DISTILLED: float = 1.0
+VIDEO_INCLUDE_AUDIO: bool = True     # LTX-2 오디오 동시 생성
 VIDEO_I2V_THRESHOLD: float = 0.6     # image_filter 적합성 임계값
 VIDEO_I2V_DENOISE: float = 0.75
 VIDEO_MAX_CLIPS_PER_POST: int = 8    # 글당 최대 생성 클립 수
-VIDEO_MAX_RETRY: int = 3             # 씬당 최대 재시도 횟수
+VIDEO_MAX_RETRY: int = 4             # 씬당 최대 재시도 횟수 (4단계 폴백)
 VIDEO_OUTPUT_DIR: str = os.getenv("VIDEO_OUTPUT_DIR", str(MEDIA_DIR / "tmp" / "videos"))
 
 

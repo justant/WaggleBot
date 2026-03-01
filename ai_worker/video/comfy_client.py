@@ -1,6 +1,6 @@
 """ComfyUI REST API + WebSocket 통신 클라이언트.
 
-LTX-Video 워크플로우를 ComfyUI 서버에 제출하고 결과를 수신한다.
+LTX-2 워크플로우를 ComfyUI 서버에 제출하고 결과를 수신한다.
 
 의존성:
 - httpx (비동기 HTTP, 이미 requirements.txt에 있음)
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class ComfyUIClient:
-    """ComfyUI API 클라이언트."""
+    """ComfyUI API 클라이언트 (LTX-2)."""
 
     def __init__(self, base_url: str, output_dir: Path | None = None):
         """
@@ -61,12 +61,15 @@ class ComfyUIClient:
         self,
         prompt: str,
         negative_prompt: str = "",
-        width: int = 512,
-        height: int = 512,
-        num_frames: int = 81,
+        width: int = 1280,
+        height: int = 720,
+        num_frames: int = 97,
+        fps: int = 24,
         steps: int = 20,
-        cfg_scale: float = 3.5,
+        cfg: float = 3.5,
         seed: int = -1,
+        use_distilled: bool = False,
+        include_audio: bool = True,
         timeout: int = 300,
     ) -> Path:
         """Text-to-Video 생성.
@@ -74,11 +77,14 @@ class ComfyUIClient:
         Args:
             prompt: 영어 비디오 프롬프트
             negative_prompt: 네거티브 프롬프트
-            width, height: 출력 해상도 (512 권장, 384 폴백)
-            num_frames: 프레임 수 (81 = ~3.2초@25fps)
-            steps: 샘플링 스텝 수
-            cfg_scale: CFG 스케일 (3.0~4.0 권장)
+            width, height: 출력 해상도 (1280×720 권장)
+            num_frames: 프레임 수 (97 = 1+8*12 ~4초@24fps)
+            fps: 프레임 레이트 (24 권장)
+            steps: 샘플링 스텝 수 (풀 20, Distilled 8)
+            cfg: CFG 스케일 (풀 3.5, Distilled 1.0)
             seed: 랜덤 시드 (-1이면 자동)
+            use_distilled: True면 Distilled 워크플로우 사용
+            include_audio: LTX-2 오디오 동시 생성 여부
             timeout: 최대 대기 시간 (초)
 
         Returns:
@@ -89,16 +95,61 @@ class ComfyUIClient:
             ConnectionError: ComfyUI 서버 연결 불가
         """
         import random
-        workflow = self._load_workflow("t2v_ltx.json")
+
+        if use_distilled:
+            workflow = self._load_workflow("t2v_ltx2_distilled.json")
+        else:
+            workflow = self._load_workflow("t2v_ltx2.json")
+
         workflow = self._patch_workflow(workflow, {
             "positive_prompt": prompt,
             "negative_prompt": negative_prompt,
             "width": width,
             "height": height,
             "length": num_frames,
+            "frames_number": num_frames,
+            "frame_rate": fps,
             "steps": steps,
-            "cfg": cfg_scale,
-            "seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
+            "cfg": cfg,
+            "noise_seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
+        })
+        return await self._queue_and_wait(workflow, timeout=timeout)
+
+    async def generate_t2v_with_upscale(
+        self,
+        prompt: str,
+        negative_prompt: str = "",
+        num_frames: int = 97,
+        fps: int = 24,
+        seed: int = -1,
+        timeout: int = 600,
+    ) -> Path:
+        """2-Stage 업스케일 T2V 생성 (640×360 → 1280×720).
+
+        테스트 비교용. 운영 기본값 아님.
+
+        Args:
+            prompt: 영어 비디오 프롬프트
+            negative_prompt: 네거티브 프롬프트
+            num_frames: 프레임 수
+            fps: 프레임 레이트
+            seed: 랜덤 시드 (-1이면 자동)
+            timeout: 최대 대기 시간 (초, 2-Stage이므로 더 길게)
+
+        Returns:
+            생성된 mp4 파일의 절대 경로
+        """
+        import random
+
+        workflow = self._load_workflow("t2v_ltx2_upscale.json")
+        actual_seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
+        workflow = self._patch_workflow(workflow, {
+            "positive_prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "length": num_frames,
+            "frames_number": num_frames,
+            "frame_rate": fps,
+            "noise_seed": actual_seed,
         })
         return await self._queue_and_wait(workflow, timeout=timeout)
 
@@ -107,24 +158,25 @@ class ComfyUIClient:
         prompt: str,
         init_image_path: Path,
         negative_prompt: str = "",
-        width: int = 512,
-        height: int = 512,
-        num_frames: int = 81,
-        denoise_strength: float = 0.75,
+        width: int = 1280,
+        height: int = 720,
+        num_frames: int = 97,
+        fps: int = 24,
+        strength: float = 0.75,
         steps: int = 20,
-        cfg_scale: float = 3.5,
+        cfg: float = 3.5,
         seed: int = -1,
         timeout: int = 300,
     ) -> Path:
         """Image-to-Video 생성.
 
-        LTXVImgToVideo 노드를 사용하여 초기 이미지를 기반으로 비디오를 생성한다.
+        LTXVImgToVideoInplace 노드를 사용하여 초기 이미지를 기반으로 비디오를 생성한다.
         입력 이미지는 OOM 방지를 위해 target 해상도로 리사이즈된다.
 
         Args:
             prompt: 영어 비디오 프롬프트
             init_image_path: 초기 프레임 이미지 파일 경로
-            denoise_strength: LTXVImgToVideo strength (0.0~1.0, 높을수록 원본에 충실)
+            strength: LTXVImgToVideoInplace strength (0.0~1.0)
             (나머지 파라미터는 generate_t2v와 동일)
 
         Returns:
@@ -135,7 +187,7 @@ class ComfyUIClient:
         image_name = await self._upload_image(resized_path)
 
         import random
-        workflow = self._load_workflow("i2v_ltx.json")
+        workflow = self._load_workflow("i2v_ltx2.json")
         workflow = self._patch_workflow(workflow, {
             "positive_prompt": prompt,
             "negative_prompt": negative_prompt,
@@ -143,10 +195,12 @@ class ComfyUIClient:
             "width": width,
             "height": height,
             "length": num_frames,
-            "strength": denoise_strength,
+            "frames_number": num_frames,
+            "frame_rate": fps,
+            "strength": strength,
             "steps": steps,
-            "cfg": cfg_scale,
-            "seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
+            "cfg": cfg,
+            "noise_seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
         })
         return await self._queue_and_wait(workflow, timeout=timeout)
 
@@ -284,6 +338,8 @@ class ComfyUIClient:
                 json={"prompt": workflow, "client_id": self.client_id},
                 timeout=30.0,
             )
+            if resp.status_code != 200:
+                logger.error("[comfy] 워크플로우 제출 실패 (%d): %s", resp.status_code, resp.text[:2000])
             resp.raise_for_status()
             prompt_id = resp.json()["prompt_id"]
             logger.info("[comfy] 워크플로우 제출: prompt_id=%s", prompt_id)

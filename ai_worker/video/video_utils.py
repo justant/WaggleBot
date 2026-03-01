@@ -14,6 +14,28 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def validate_frame_count(n: int) -> int:
+    """프레임 수를 LTX-2의 1+8k 규칙에 맞는 가장 가까운 유효값으로 보정.
+
+    LTX-2 프레임 규칙: 1 + 8k (9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, ...)
+    """
+    if n < 9:
+        return 9
+    k = round((n - 1) / 8)
+    return 1 + 8 * k
+
+
+def validate_resolution(width: int, height: int) -> tuple[int, int]:
+    """해상도를 LTX-2가 요구하는 8의 배수 규칙에 맞게 보정.
+
+    LTX-2 VAE는 내부적으로 32배수 latent를 사용하지만,
+    입력 해상도는 8의 배수면 충분하다 (공식 권장: 1280×720, 1920×1080).
+    """
+    w = round(width / 8) * 8
+    h = round(height / 8) * 8
+    return max(w, 64), max(h, 64)
+
+
 def _resolve_intermediate_codec() -> tuple[str, list[str]]:
     """중간 처리용 코덱을 결정한다.
 
@@ -49,7 +71,7 @@ def resize_clip_to_layout(
     output_path: Path,
     width: int = 900,
     height: int = 900,
-    fps: int = 30,
+    fps: int = 24,
 ) -> Path:
     """비디오를 지정 크기로 center-crop + resize + FPS 정규화.
 
@@ -130,14 +152,14 @@ def normalize_clip_format(
     output_path: Path,
     width: int = 1080,
     height: int = 1920,
-    fps: int = 30,
+    fps: int = 24,
 ) -> Path:
     """클립을 최종 출력 포맷으로 정규화.
 
     모든 세그먼트가 동일 포맷이어야 concat이 가능하다.
     - 코덱: h264 (yuv420p)
     - 해상도: 1080x1920 (9:16)
-    - FPS: 30
+    - FPS: 24
     - 오디오: 없음 (별도 합성)
     """
     _, enc_args = _resolve_intermediate_codec()
