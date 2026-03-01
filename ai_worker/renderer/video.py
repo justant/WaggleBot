@@ -45,7 +45,7 @@ def _check_nvenc() -> bool:
     if _nvenc_available:
         logger.info("NVENC 사용 가능 — h264_nvenc 인코딩 활성화")
     else:
-        logger.info("NVENC 사용 불가 — libx264 로 폴백 (이후 경고 없음)")
+        logger.error("NVENC 사용 불가 — RTX 3090 GPU 환경 필수 (NVIDIA 드라이버 확인 필요)")
     return _nvenc_available
 
 

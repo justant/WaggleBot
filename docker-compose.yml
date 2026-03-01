@@ -108,7 +108,7 @@ services:
       - ./checkpoints/text_encoders:/comfyui/models/text_encoders
       - ./checkpoints/latent_upscale_models:/comfyui/models/latent_upscale_models
       - ./checkpoints/loras:/comfyui/models/loras
-      - ./comfyui_workflows:/comfyui/custom_workflows
+      - ./ai_worker/video/workflows:/comfyui/custom_workflows
       - ./media/tmp/videos:/comfyui/output
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -129,9 +129,7 @@ services:
       start_period: 120s
 
   ai_worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.gpu
+    build: .
     restart: unless-stopped
     volumes:
       - ./:/app

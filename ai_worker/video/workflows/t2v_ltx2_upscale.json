@@ -67,7 +67,7 @@
   },
   "33": {
     "class_type": "ManualSigmas",
-    "_meta": "Stage 1: 8-step Distilled generation at 640x360",
+    "_meta": {"title": "Stage 1: 8-step Distilled generation at 640x360"},
     "inputs": {
       "sigmas": "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
     }
@@ -82,12 +82,20 @@
       "latent_image": ["30", 0]
     }
   },
-  "40": {
-    "class_type": "LTXVLatentUpscale",
-    "_meta": "Stage 2: Spatial upscale 640x360 → 1280x720",
+  "39": {
+    "class_type": "LatentUpscaleModelLoader",
+    "_meta": {"title": "Load Spatial Upscaler"},
     "inputs": {
-      "latent": ["34", 0],
-      "upscale_model_name": "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+      "model_name": "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+    }
+  },
+  "40": {
+    "class_type": "LTXVLatentUpsampler",
+    "_meta": {"title": "Stage 2: Spatial upscale 640x360 to 1280x720"},
+    "inputs": {
+      "samples": ["34", 0],
+      "upscale_model": ["39", 0],
+      "vae": ["1", 2]
     }
   },
   "42": {
@@ -98,7 +106,7 @@
   },
   "43": {
     "class_type": "ManualSigmas",
-    "_meta": "Stage 2: 4-step refinement after upscale",
+    "_meta": {"title": "Stage 2: 4-step refinement after upscale"},
     "inputs": {
       "sigmas": "0.909375, 0.725, 0.421875, 0.0"
     }

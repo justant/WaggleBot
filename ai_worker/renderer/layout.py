@@ -208,8 +208,8 @@ def _run_async(coro) -> object:
 
 
 def _resolve_codec() -> str:
-    from ai_worker.renderer.video import _check_nvenc
-    return "h264_nvenc" if _check_nvenc() else "libx264"
+    """RTX 3090 전용 — 항상 h264_nvenc 반환."""
+    return "h264_nvenc"
 
 
 def _get_encoder_args(codec: str) -> list[str]:

@@ -35,7 +35,7 @@ class ComfyUIClient:
         """
         self.base_url = base_url.rstrip("/")
         self.client_id = str(uuid.uuid4())
-        self._workflow_dir = Path(__file__).resolve().parent.parent.parent / "comfyui_workflows"
+        self._workflow_dir = Path(__file__).resolve().parent / "workflows"
         self._output_dir = output_dir or Path("media/tmp/videos")
 
     # -- 공개 API --
@@ -228,7 +228,7 @@ class ComfyUIClient:
     # -- 내부 메서드 --
 
     def _load_workflow(self, filename: str) -> dict:
-        """comfyui_workflows/ 디렉터리에서 워크플로우 JSON 로드."""
+        """workflows/ 디렉터리에서 워크플로우 JSON 로드."""
         path = self._workflow_dir / filename
         if not path.exists():
             raise FileNotFoundError(f"워크플로우 파일 없음: {path}")

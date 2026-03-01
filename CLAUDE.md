@@ -38,9 +38,7 @@ with gpu_manager.managed_inference(ModelType.LLM, "name"):
     result = model.generate(text)
 ```
 
-**FFmpeg:** GPU 환경 `h264_nvenc` 필수. `libx264` 수동 지정 금지. No-GPU(galaxybook)는 `libx264` 자동 폴백 허용. 프리뷰(480x854)는 CPU 허용.
-
-**Docker:** `docker-compose.yml` 수정 시 `docker-compose.galaxybook.yml` 반드시 동기화.
+**FFmpeg:** `h264_nvenc` 필수. `libx264` 수동 지정 금지. 프리뷰(480x854)는 CPU 허용.
 
 ## 코딩 규칙
 

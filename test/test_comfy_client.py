@@ -61,7 +61,7 @@ class TestComfyUIClient:
 
     def test_load_workflow_t2v(self):
         """t2v_ltx2.json 워크플로우를 정상 로드한다."""
-        workflow_path = Path("comfyui_workflows/t2v_ltx2.json")
+        workflow_path = Path("ai_worker/video/workflows/t2v_ltx2.json")
         assert workflow_path.exists(), f"워크플로우 파일 없음: {workflow_path}"
 
         data = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -70,7 +70,7 @@ class TestComfyUIClient:
 
     def test_load_workflow_distilled(self):
         """t2v_ltx2_distilled.json 워크플로우를 정상 로드한다."""
-        workflow_path = Path("comfyui_workflows/t2v_ltx2_distilled.json")
+        workflow_path = Path("ai_worker/video/workflows/t2v_ltx2_distilled.json")
         assert workflow_path.exists()
 
         data = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -83,7 +83,7 @@ class TestComfyUIClient:
 
     def test_load_workflow_i2v(self):
         """i2v_ltx2.json 워크플로우를 정상 로드한다."""
-        workflow_path = Path("comfyui_workflows/i2v_ltx2.json")
+        workflow_path = Path("ai_worker/video/workflows/i2v_ltx2.json")
         assert workflow_path.exists()
 
         data = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -94,7 +94,7 @@ class TestComfyUIClient:
 
     def test_load_workflow_upscale(self):
         """t2v_ltx2_upscale.json 워크플로우를 정상 로드한다."""
-        workflow_path = Path("comfyui_workflows/t2v_ltx2_upscale.json")
+        workflow_path = Path("ai_worker/video/workflows/t2v_ltx2_upscale.json")
         assert workflow_path.exists()
 
         data = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -248,7 +248,7 @@ class TestComfyUIClient:
                        "LTXVSeparateAVLatent"}
         for wf_name in ["t2v_ltx2.json", "i2v_ltx2.json",
                         "t2v_ltx2_distilled.json", "t2v_ltx2_upscale.json"]:
-            path = Path("comfyui_workflows") / wf_name
+            path = Path("ai_worker/video/workflows") / wf_name
             data = json.loads(path.read_text(encoding="utf-8"))
             class_types = {node.get("class_type") for node in data.values()
                           if isinstance(node, dict)}
@@ -257,7 +257,7 @@ class TestComfyUIClient:
 
     def test_t2v_workflow_uses_gemma_encoder(self):
         """T2V 워크플로우가 Gemma 3 텍스트 인코더를 사용한다."""
-        path = Path("comfyui_workflows/t2v_ltx2.json")
+        path = Path("ai_worker/video/workflows/t2v_ltx2.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         gemma_nodes = [
             node for node in data.values()
@@ -276,7 +276,7 @@ class TestComfyUIClient:
         ckpt_keys = {"ckpt_name", "ltxv_path"}
         for wf_name in ["t2v_ltx2.json", "i2v_ltx2.json",
                         "t2v_ltx2_distilled.json", "t2v_ltx2_upscale.json"]:
-            path = Path("comfyui_workflows") / wf_name
+            path = Path("ai_worker/video/workflows") / wf_name
             data = json.loads(path.read_text(encoding="utf-8"))
             for node_id, node_data in data.items():
                 if not isinstance(node_data, dict) or "inputs" not in node_data:

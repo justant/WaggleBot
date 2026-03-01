@@ -1,3 +1,11 @@
+# WaggleBot ComfyUI — LTX-2 19B FP8 비디오 생성 서버
+# GPU: RTX 3090 24GB (Ampere), VRAM 모드: --lowvram (weight streaming)
+#
+# 알려진 성능 제한 (향후 최적화 대상):
+#   - comfy_kitchen 백엔드: cu130+ PyTorch 필요 → 현재 비활성 (30~50% 성능 손실)
+#   - Flash Attention: CUDA 12.6 ↔ cu128 wheel 버전 불일치 → SDPA 폴백 (20~40% 손실)
+#   - 해결 방법: CUDA 베이스 이미지 + PyTorch 업그레이드 (cu130+ 안정화 후)
+
 FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -14,9 +22,9 @@ WORKDIR /comfyui
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && pip install --no-cache-dir -r requirements.txt
 
-# Flash Attention: pre-built wheel (소스 컴파일 불필요, 10초 설치)
-# PyTorch 2.10 + CUDA 12.8 + Python 3.11 용
-RUN pip install --no-cache-dir https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.7.4+cu128torch2.10-cp311-cp311-linux_x86_64.whl
+# Flash Attention: cu128 wheel ↔ cuda:12.6.3 런타임 버전 불일치로 미설치.
+# ComfyUI는 PyTorch 내장 SDPA(Scaled Dot Product Attention)로 대체 동작함.
+# cu130+ PyTorch 안정화 후 Flash Attention + comfy_kitchen 동시 활성화 예정.
 
 # VHS (Video Helper Suite) 커스텀 노드 — VHS_VideoCombine 노드 제공
 RUN cd custom_nodes && \
@@ -24,7 +32,8 @@ RUN cd custom_nodes && \
     cd ComfyUI-VideoHelperSuite && \
     pip install --no-cache-dir -r requirements.txt
 
-# LTX-Video 커스텀 노드 (LTX-2 비디오 노드 제공)
+# LTX-Video 커스텀 노드 (LTX-2 전용 노드: LTXVConditioning, LTXVScheduler,
+# EmptyLTXVLatentVideo, LTXVImgToVideoInplace, SamplerCustomAdvanced 등)
 RUN cd custom_nodes && \
     git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git && \
     cd ComfyUI-LTXVideo && \
@@ -32,4 +41,9 @@ RUN cd custom_nodes && \
 
 EXPOSE 8188
 
+# --lowvram: 19B FP8 모델을 시스템 RAM으로 오프로드 (weight streaming)
+#   → VRAM에는 ~450MB 버퍼만 상주, 나머지는 RAM에서 PCIe 스트리밍
+#   → 시스템 RAM 최소 32GB 권장 (64GB 이상 시 Swap 방지)
+# --reserve-vram 2: ComfyUI 자체용 2GB VRAM 예약 (OOM 방지)
+# 주의: --normalvram 사용 시 텍스트 인코딩 단계 OOM 발생 (GitHub Issue #12047)
 CMD ["python3", "main.py", "--listen", "0.0.0.0", "--lowvram", "--reserve-vram", "2"]

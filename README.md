@@ -38,22 +38,15 @@
 | TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
 | 비디오 | LTX-2 19B (ComfyUI, T2V/I2V, 720p 오디오 동시 생성) |
 | DB | MariaDB 11.x + SQLAlchemy ORM |
-| 영상 | FFmpeg (h264_nvenc / libx264 폴백) |
+| 영상 | FFmpeg (h264_nvenc GPU 가속) |
 | 웹 | Streamlit Dashboard |
-| 인프라 | Docker Compose (GPU / No-GPU 분리) |
+| 인프라 | Docker Compose (RTX 3090 GPU) |
 
 ---
 
 ## 설치 가이드
 
-두 가지 환경을 지원합니다:
-
-| 환경 | 가이드 |
-|------|--------|
-| **RTX 3090 (NVIDIA GPU)** | [arch/env/ENV_GPU.md](arch/env/ENV_GPU.md) |
-| **갤럭시북5 프로 (CPU 추론)** | [arch/env/ENV_NOGPU.md](arch/env/ENV_NOGPU.md) |
-
-아래는 **NVIDIA GPU 환경** 기준 빠른 설치입니다.
+**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다. 설치 가이드: [arch/env/ENV_GPU.md](arch/env/ENV_GPU.md)
 
 ### 1. WSL2 + Ubuntu 설치
 
@@ -203,8 +196,12 @@ docker compose exec dashboard python -m db.migrations.runner
 ### 영상 생성 흐름
 
 ```
-수신함 승인 → 편집실(대본 수정) → LLM 요약(~30초) → Fish Speech TTS(~10초)
-→ 영상 렌더링(~1-2분) → 썸네일 생성 → 갤러리 확인 → 업로드
+수신함 승인 → 편집실(대본 수정)
+→ 1막: LLM 대본/프롬프트 생성(qwen2.5:14b, ~30초) → VRAM 해제
+→ 2막: Fish Speech TTS(~10초) → VRAM 해제
+     → LTX-2 비디오 클립 생성(ComfyUI, 씬당 1~3분) → VRAM 해제
+→ FFmpeg 하이브리드 렌더링(정적+비디오 합성, ~1-2분) → 썸네일 생성
+→ 갤러리 확인 → 업로드
 ```
 
 ### TTS 음성 변경
@@ -228,14 +225,11 @@ VOICE_REFERENCE_TEXTS = {
 ```
 WaggleBot/
 ├── CLAUDE.md                          # AI 개발 규칙 (코딩 컨벤션, 제약사항)
-├── docker-compose.yml                 # GPU 환경 (fish-speech 포함)
-├── docker-compose.galaxybook.yml      # No-GPU 환경 (fish-speech 제외, TTS 무음)
+├── docker-compose.yml                 # RTX 3090 GPU 환경 (fish-speech + ComfyUI 포함)
 ├── arch/
-│   ├── 4. llm_optimization.md         # LLM 최적화 5-Phase 파이프라인 (미실행)
-│   ├── done/                          # 완료된 명세 (1~3, 5번)
+│   ├── done/                          # 완료된 명세 (1~11번)
 │   └── env/
-│       ├── ENV_GPU.md
-│       └── ENV_NOGPU.md
+│       └── ENV_GPU.md
 ├── crawlers/
 │   ├── __init__.py                    # 크롤러 자동 등록 (explicit imports)
 │   ├── base.py                        # BaseCrawler (공통 헬퍼 + retry + 스코어링)
@@ -256,13 +250,24 @@ WaggleBot/
 ├── ai_worker/
 │   ├── main.py                        # 폴링 메인 루프 + Fish Speech 헬스체크
 │   ├── processor.py                   # asyncio 파이프라인 오케스트레이터
-│   ├── gpu_manager.py
-│   ├── pipeline/                      # 5-Phase 콘텐츠 파이프라인
-│   │   ├── content_processor.py       # Phase 1~5 통합 진입점
+│   ├── gpu_manager.py                 # 2막 VRAM 관리 (LLM/TTS/VIDEO)
+│   ├── pipeline/                      # 8-Phase 콘텐츠 파이프라인
+│   │   ├── content_processor.py       # Phase 1~8 통합 진입점
 │   │   ├── resource_analyzer.py       # Phase 1: 이미지:텍스트 비율 분석
 │   │   ├── llm_chunker.py             # Phase 2: LLM 의미 단위 청킹
 │   │   ├── text_validator.py          # Phase 3: max_chars 검증 + 한국어 분할
-│   │   └── scene_director.py          # Phase 4: 씬 배분 + 감정 태그 자동 할당
+│   │   └── scene_director.py          # Phase 4: 씬 배분 + 감정 태그 + video_mode 할당
+│   ├── video/                         # LTX-2 비디오 생성
+│   │   ├── comfy_client.py            # ComfyUI HTTP/WebSocket 클라이언트
+│   │   ├── prompt_engine.py           # 한국어 → 영어 비디오 프롬프트 (9개 mood)
+│   │   ├── manager.py                 # 씬별 비디오 생성 + 4단계 폴백 재시도
+│   │   ├── image_filter.py            # 이미지 I2V 적합성 판별
+│   │   ├── video_utils.py             # 클립 리사이즈/루프/트림, 프레임 규칙 검증
+│   │   └── workflows/                 # ComfyUI LTX-2 워크플로우 JSON
+│   │       ├── t2v_ltx2.json          # T2V 풀 모델 (20스텝, 1280x720)
+│   │       ├── t2v_ltx2_distilled.json # Distilled (8스텝, CFG=1)
+│   │       ├── i2v_ltx2.json          # I2V (첫 프레임 주입)
+│   │       └── t2v_ltx2_upscale.json  # 2-Stage 업스케일
 │   ├── llm/                           # LLM 호출 / 로깅
 │   │   ├── client.py                  # 쇼츠 대본 생성 + call_ollama_raw()
 │   │   └── logger.py                  # LLM 호출 이력 DB 저장
@@ -270,7 +275,7 @@ WaggleBot/
 │   │   ├── fish_client.py             # Fish Speech 1.5 HTTP 클라이언트
 │   │   └── base.py / edge_tts.py / kokoro.py / gptsovits.py  # 레거시 엔진
 │   └── renderer/                      # 영상 / 이미지 렌더링
-│       ├── layout.py                  # FFmpeg 렌더러 (Figma 기반)
+│       ├── layout.py                  # FFmpeg 렌더러 (하이브리드 합성: 정적+비디오)
 │       ├── video.py                   # 레거시 렌더러 (프리뷰용)
 │       ├── subtitle.py                # ASS 동적 자막
 │       └── thumbnail.py               # 썸네일 자동 생성
@@ -290,8 +295,8 @@ WaggleBot/
 │   └── voices/                        # Fish Speech 참조 오디오 (WAV)
 ├── checkpoints/
 │   ├── fish-speech-1.5/               # Fish Speech 1.5 모델 파일
-│   ├── ltx-2/                         # LTX-2 19B 체크포인트 (FP8 + Distilled)
-│   ├── text_encoders/                 # Gemma 3 12B 텍스트 인코더
+│   ├── ltx-2/                         # LTX-2 19B FP8 체크포인트 (Full + Distilled)
+│   ├── text_encoders/                 # Gemma 3 12B 텍스트 인코더 (Q4)
 │   ├── latent_upscale_models/         # LTX-2 Spatial/Temporal 업스케일러
 │   └── loras/                         # LTX-2 Distilled LoRA
 ├── config/
@@ -300,10 +305,12 @@ WaggleBot/
 │   ├── monitoring.py                  # 모니터링/알림 임계값
 │   ├── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
 │   └── scene_policy.json              # Mood별 씬 정책 (9개 프리셋, 에셋·BGM·레이아웃 매핑)
+├── Dockerfile                         # 통합 GPU Dockerfile (CUDA 12.1, Python 3.12)
+├── Dockerfile.comfyui                 # ComfyUI Docker 이미지 (CUDA 12.6, LTX-2 노드)
 ├── scripts/
 │   ├── setup_docker_gpu.sh
 │   ├── download_fish_speech.sh        # Fish Speech 모델 다운로드
-│   └── download_ltx2.sh              # LTX-2 모델 다운로드
+│   └── download_ltx2.sh              # LTX-2 19B + Gemma 3 + 업스케일러 다운로드
 ├── test/
 │   ├── test_tts.py                    # Fish Speech 단독 테스트
 │   ├── test_scene_policy.py           # Mood 씬 정책 단위 테스트
@@ -333,11 +340,6 @@ nvidia-smi
 
 ---
 
-## 환경별 TTS 동작
+## TTS
 
-| 환경 | Fish Speech | TTS 동작 |
-|------|-------------|---------|
-| GPU PC (`docker-compose.yml`) | 컨테이너 포함 | 정상 클로닝 생성 |
-| 갤럭시북 (`docker-compose.galaxybook.yml`) | 제외 | 연결 실패 → 씬별 무음 처리 |
-
-갤럭시북 환경에서 TTS 없이도 영상 렌더링은 정상 완료됩니다 (해당 씬 audio=None → 무음).
+Fish Speech 1.5 컨테이너가 `docker-compose.yml`에 포함되어 있으며, zero-shot 음성 클로닝을 통해 TTS 오디오를 생성합니다.
