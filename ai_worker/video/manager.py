@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from ai_worker.video.prompt_engine import NEGATIVE_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,9 @@ class VideoManager:
         for attempt in range(1, max_attempts + 1):
             result.attempts = attempt
             try:
+                # Phase 6에서 미리 생성된 simplified 프롬프트 사용 (Phase 7에서 LLM 호출 제로)
+                simplified = getattr(scene, "video_prompt_simplified", None) or scene.video_prompt
+
                 if attempt == 1:
                     width, height = self.config["VIDEO_RESOLUTION"]
                     num_frames = self.config["VIDEO_NUM_FRAMES"]
@@ -123,7 +128,7 @@ class VideoManager:
                     prompt = scene.video_prompt
                     use_distilled = False
                 elif attempt == 2:
-                    prompt = self.prompt_engine.simplify_prompt(scene.video_prompt)
+                    prompt = simplified
                     width, height = self.config["VIDEO_RESOLUTION"]
                     num_frames = self.config["VIDEO_NUM_FRAMES"]
                     steps = self.config.get("VIDEO_STEPS", 20)
@@ -134,7 +139,7 @@ class VideoManager:
                         post_id, scene_index, attempt,
                     )
                 elif attempt == 3:
-                    prompt = self.prompt_engine.simplify_prompt(scene.video_prompt)
+                    prompt = simplified
                     width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
                     num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
                     steps = 15
@@ -146,7 +151,7 @@ class VideoManager:
                     )
                 else:
                     # 4차: Distilled 폴백
-                    prompt = self.prompt_engine.simplify_prompt(scene.video_prompt)
+                    prompt = simplified
                     width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
                     num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
                     steps = self.config.get("VIDEO_STEPS_DISTILLED", 8)
@@ -159,25 +164,34 @@ class VideoManager:
 
                 fps = self.config.get("VIDEO_FPS", 24)
 
+                timeout = self.config.get("VIDEO_GEN_TIMEOUT", 1200)
+                if use_distilled:
+                    timeout = self.config.get("VIDEO_GEN_TIMEOUT_DISTILLED", 600)
+
                 if scene.video_mode == "t2v":
                     clip_path = await self.comfy.generate_t2v(
                         prompt=prompt,
+                        negative_prompt=NEGATIVE_PROMPT,
                         width=width, height=height,
                         num_frames=num_frames,
                         fps=fps,
                         steps=steps,
                         cfg=cfg,
                         use_distilled=use_distilled,
+                        timeout=timeout,
                     )
                 elif scene.video_mode == "i2v":
                     clip_path = await self.comfy.generate_i2v(
                         prompt=prompt,
                         init_image_path=Path(scene.video_init_image),
+                        negative_prompt=NEGATIVE_PROMPT,
                         width=width, height=height,
                         num_frames=num_frames,
                         fps=fps,
                         steps=steps,
                         cfg=cfg,
+                        use_distilled=use_distilled,
+                        timeout=timeout,
                     )
                 else:
                     result.failure_reason = f"unknown video_mode: {scene.video_mode}"
@@ -236,16 +250,19 @@ class VideoManager:
             return scenes
 
         # 병합 매핑 생성: failed_idx → merge_target_idx
+        # 비디오 생성을 시도한 성공 씬만 유효한 병합 대상
+        valid_targets = {r.scene_index for r in results if r.success}
+        failed_set = set(failed_indices)
         merge_map: dict[int, int] = {}
         for fi in failed_indices:
             target = None
             for j in range(fi - 1, -1, -1):
-                if j in success_indices or j not in [f for f in failed_indices]:
+                if j in valid_targets:
                     target = j
                     break
             if target is None:
                 for j in range(fi + 1, len(scenes)):
-                    if j in success_indices or j not in [f for f in failed_indices]:
+                    if j in valid_targets:
                         target = j
                         break
             if target is not None:

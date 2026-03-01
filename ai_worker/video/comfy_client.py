@@ -15,6 +15,7 @@ LTX-2 워크플로우를 ComfyUI 서버에 제출하고 결과를 수신한다.
 
 import json
 import logging
+import random
 import uuid
 from pathlib import Path
 
@@ -69,7 +70,6 @@ class ComfyUIClient:
         cfg: float = 3.5,
         seed: int = -1,
         use_distilled: bool = False,
-        include_audio: bool = True,
         timeout: int = 300,
     ) -> Path:
         """Text-to-Video 생성.
@@ -84,7 +84,6 @@ class ComfyUIClient:
             cfg: CFG 스케일 (풀 3.5, Distilled 1.0)
             seed: 랜덤 시드 (-1이면 자동)
             use_distilled: True면 Distilled 워크플로우 사용
-            include_audio: LTX-2 오디오 동시 생성 여부
             timeout: 최대 대기 시간 (초)
 
         Returns:
@@ -94,8 +93,6 @@ class ComfyUIClient:
             RuntimeError: 생성 실패 (OOM, 타임아웃 등)
             ConnectionError: ComfyUI 서버 연결 불가
         """
-        import random
-
         if use_distilled:
             workflow = self._load_workflow("t2v_ltx2_distilled.json")
         else:
@@ -139,8 +136,6 @@ class ComfyUIClient:
         Returns:
             생성된 mp4 파일의 절대 경로
         """
-        import random
-
         workflow = self._load_workflow("t2v_ltx2_upscale.json")
         actual_seed = seed if seed >= 0 else random.randint(0, 2**32 - 1)
         workflow = self._patch_workflow(workflow, {
@@ -166,6 +161,7 @@ class ComfyUIClient:
         steps: int = 20,
         cfg: float = 3.5,
         seed: int = -1,
+        use_distilled: bool = False,
         timeout: int = 300,
     ) -> Path:
         """Image-to-Video 생성.
@@ -177,6 +173,7 @@ class ComfyUIClient:
             prompt: 영어 비디오 프롬프트
             init_image_path: 초기 프레임 이미지 파일 경로
             strength: LTXVImgToVideoInplace strength (0.0~1.0)
+            use_distilled: True면 Distilled 워크플로우 사용
             (나머지 파라미터는 generate_t2v와 동일)
 
         Returns:
@@ -184,25 +181,33 @@ class ComfyUIClient:
         """
         # 이미지 리사이즈 (OOM 방지 + 해상도 통일)
         resized_path = self._resize_image(init_image_path, width, height)
-        image_name = await self._upload_image(resized_path)
+        try:
+            image_name = await self._upload_image(resized_path)
 
-        import random
-        workflow = self._load_workflow("i2v_ltx2.json")
-        workflow = self._patch_workflow(workflow, {
-            "positive_prompt": prompt,
-            "negative_prompt": negative_prompt,
-            "init_image": image_name,
-            "width": width,
-            "height": height,
-            "length": num_frames,
-            "frames_number": num_frames,
-            "frame_rate": fps,
-            "strength": strength,
-            "steps": steps,
-            "cfg": cfg,
-            "noise_seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
-        })
-        return await self._queue_and_wait(workflow, timeout=timeout)
+            if use_distilled:
+                workflow = self._load_workflow("i2v_ltx2_distilled.json")
+            else:
+                workflow = self._load_workflow("i2v_ltx2.json")
+            workflow = self._patch_workflow(workflow, {
+                "positive_prompt": prompt,
+                "negative_prompt": negative_prompt,
+                "init_image": image_name,
+                "width": width,
+                "height": height,
+                "length": num_frames,
+                "frames_number": num_frames,
+                "frame_rate": fps,
+                "strength": strength,
+                "steps": steps,
+                "cfg": cfg,
+                "noise_seed": seed if seed >= 0 else random.randint(0, 2**32 - 1),
+            })
+            return await self._queue_and_wait(workflow, timeout=timeout)
+        finally:
+            # HIGH-6: 리사이즈된 임시 이미지 정리
+            if resized_path != init_image_path and resized_path.exists():
+                resized_path.unlink()
+                logger.debug("[comfy] 리사이즈 임시 파일 삭제: %s", resized_path.name)
 
     def _resize_image(self, image_path: Path, width: int, height: int) -> Path:
         """이미지를 target 해상도로 리사이즈한다.
@@ -235,14 +240,21 @@ class ComfyUIClient:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 
+    # 값 매칭에서 허용되는 placeholder 화이트리스트.
+    # 이 목록에 없는 문자열은 placeholder로 취급하지 않는다.
+    _PLACEHOLDER_WHITELIST = frozenset({
+        "positive_prompt", "negative_prompt", "init_image",
+    })
+
     def _patch_workflow(self, workflow: dict, params: dict) -> dict:
         """워크플로우 JSON의 노드 입력값을 params로 교체.
 
         두 가지 매칭 방식을 지원:
         1. 키 매칭: inputs의 키가 params의 키와 일치하면 값 교체
-        2. 값 매칭: inputs의 값이 문자열이고 params의 키와 일치하면 교체
-           (예: "text": "positive_prompt" → "text": "actual prompt text")
+        2. 값 매칭 (화이트리스트): inputs의 값이 허용된 placeholder이고
+           params에 해당 키가 있으면 교체
         """
+        applied: set[str] = set()
         for node_id, node_data in workflow.items():
             if not isinstance(node_data, dict) or "inputs" not in node_data:
                 continue
@@ -251,9 +263,20 @@ class ComfyUIClient:
                 # 1. 키 매칭
                 if key in params:
                     inputs[key] = params[key]
-                # 2. 값 매칭 (placeholder 교체)
-                elif isinstance(value, str) and value in params:
+                    applied.add(key)
+                # 2. 값 매칭 (화이트리스트 placeholder만 허용)
+                elif (
+                    isinstance(value, str)
+                    and value in self._PLACEHOLDER_WHITELIST
+                    and value in params
+                ):
                     inputs[key] = params[value]
+                    applied.add(value)
+
+        # 적용되지 않은 파라미터 경고 (디버깅용)
+        unapplied = set(params.keys()) - applied
+        if unapplied:
+            logger.debug("[comfy] 워크플로우에 적용되지 않은 파라미터: %s", unapplied)
         return workflow
 
     async def _upload_image(self, image_path: Path) -> str:
@@ -402,15 +425,34 @@ class ComfyUIClient:
                     filename = gif_info["filename"]
                     subfolder = gif_info.get("subfolder", "")
                     output_path = self._output_dir / subfolder / filename if subfolder else self._output_dir / filename
-                    if output_path.exists():
-                        logger.info("[comfy] 출력 파일: %s", output_path)
-                        return output_path
+                    result = await self._wait_for_file(output_path)
+                    logger.info("[comfy] 출력 파일: %s", result)
+                    return result
             if "images" in node_output:
                 for img_info in node_output["images"]:
                     filename = img_info["filename"]
                     if filename.endswith((".mp4", ".webp", ".gif")):
                         output_path = self._output_dir / filename
-                        if output_path.exists():
-                            return output_path
+                        result = await self._wait_for_file(output_path)
+                        return result
 
         raise RuntimeError(f"ComfyUI 출력 파일을 찾을 수 없음: prompt_id={prompt_id}")
+
+    async def _wait_for_file(self, path: Path, timeout: float = 30.0) -> Path:
+        """파일이 실제로 존재하고 크기가 안정될 때까지 대기.
+
+        Docker 볼륨 마운트에서 파일시스템 동기화 지연이 발생할 수 있으므로,
+        파일 존재 + 크기 안정(2회 연속 동일)을 확인한다.
+        """
+        import asyncio
+
+        start = asyncio.get_event_loop().time()
+        prev_size = -1
+        while asyncio.get_event_loop().time() - start < timeout:
+            if path.exists():
+                size = path.stat().st_size
+                if size > 0 and size == prev_size:
+                    return path
+                prev_size = size
+            await asyncio.sleep(0.5)
+        raise RuntimeError(f"출력 파일 대기 타임아웃: {path}")

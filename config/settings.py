@@ -333,7 +333,8 @@ COMFYUI_URL: str = os.getenv("COMFYUI_URL", "http://comfyui:8188")
 COMFYUI_VRAM_MODE: str = "lowvram"             # weight streaming 모드
 COMFYUI_RESERVE_VRAM: int = 2                  # GB 단위
 VIDEO_GEN_ENABLED: bool = os.getenv("VIDEO_GEN_ENABLED", "false").lower() == "true"
-VIDEO_GEN_TIMEOUT: int = int(os.getenv("VIDEO_GEN_TIMEOUT", "300"))
+VIDEO_GEN_TIMEOUT: int = int(os.getenv("VIDEO_GEN_TIMEOUT", "1200"))  # 20분 (RTX 3090 기준)
+VIDEO_GEN_TIMEOUT_DISTILLED: int = int(os.getenv("VIDEO_GEN_TIMEOUT_DISTILLED", "600"))  # 10분
 VIDEO_MODEL_FULL: str = "ltx-2-19b-dev-fp8.safetensors"              # 풀 모델 (FP8)
 VIDEO_MODEL_DISTILLED: str = "ltx-2-19b-distilled-fp8.safetensors"   # Distilled (FP8)
 VIDEO_MODEL: str = "ltx2_distilled"  # "ltx2" | "ltx2_distilled"
@@ -346,7 +347,6 @@ VIDEO_STEPS: int = 20
 VIDEO_STEPS_DISTILLED: int = 8
 VIDEO_CFG: float = 3.5
 VIDEO_CFG_DISTILLED: float = 1.0
-VIDEO_INCLUDE_AUDIO: bool = True     # LTX-2 오디오 동시 생성
 VIDEO_I2V_THRESHOLD: float = 0.6     # image_filter 적합성 임계값
 VIDEO_I2V_DENOISE: float = 0.75
 VIDEO_MAX_CLIPS_PER_POST: int = 8    # 글당 최대 생성 클립 수

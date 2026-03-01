@@ -99,7 +99,8 @@ def _load_video_styles() -> dict:
         try:
             with open(path, encoding="utf-8") as f:
                 _VIDEO_STYLES = json.load(f)
-        except Exception:
+        except Exception as e:
+            logger.error("[prompt] video_styles.json 로딩 실패: %s", e)
             _VIDEO_STYLES = {}
     return _VIDEO_STYLES
 
@@ -170,7 +171,11 @@ class VideoPromptEngine:
         title: str = "",
         body_summary: str = "",
     ) -> list:
-        """여러 씬의 비디오 프롬프트를 일괄 생성."""
+        """여러 씬의 비디오 프롬프트를 일괄 생성.
+
+        Phase 7에서 LLM 호출이 제로(0)가 되도록,
+        원본 프롬프트와 함께 simplified 버전도 미리 생성한다.
+        """
         for i, scene in enumerate(scenes):
             if getattr(scene, "video_mode", None) not in ("t2v", "i2v"):
                 continue
@@ -186,12 +191,19 @@ class VideoPromptEngine:
                     body_summary=body_summary,
                     has_init_image=(scene.video_mode == "i2v"),
                 )
+                # Phase 7 재시도용 simplified 프롬프트 미리 생성 (LLM 호출 제로 보장)
+                scene.video_prompt_simplified = self.simplify_prompt(
+                    scene.video_prompt
+                )
                 logger.info(
-                    "[prompt] 씬 %d 프롬프트 생성 완료 (%d자)", i, len(scene.video_prompt)
+                    "[prompt] 씬 %d 프롬프트 생성 완료 (%d자, simplified %d자)",
+                    i, len(scene.video_prompt),
+                    len(scene.video_prompt_simplified),
                 )
             except Exception as e:
                 logger.error("[prompt] 씬 %d 프롬프트 생성 실패: %s", i, e)
                 scene.video_prompt = None
+                scene.video_prompt_simplified = None
         return scenes
 
 

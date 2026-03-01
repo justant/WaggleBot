@@ -45,6 +45,12 @@
       "frame_rate": 24
     }
   },
+  "19": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "init_image"
+    }
+  },
   "7": {
     "class_type": "EmptyLTXVLatentVideo",
     "inputs": {
@@ -52,6 +58,16 @@
       "height": 720,
       "length": 97,
       "batch_size": 1
+    }
+  },
+  "20": {
+    "class_type": "LTXVImgToVideoInplace",
+    "inputs": {
+      "vae": ["1", 2],
+      "image": ["19", 0],
+      "latent": ["7", 0],
+      "strength": 0.75,
+      "bypass": false
     }
   },
   "10": {
@@ -88,7 +104,7 @@
       "guider": ["11", 0],
       "sampler": ["12", 0],
       "sigmas": ["13", 0],
-      "latent_image": ["7", 0]
+      "latent_image": ["20", 0]
     }
   },
   "16": {
@@ -104,7 +120,7 @@
       "images": ["16", 0],
       "frame_rate": 24,
       "loop_count": 0,
-      "filename_prefix": "ltx2_t2v_distilled",
+      "filename_prefix": "ltx2_i2v_distilled",
       "format": "video/h264-mp4",
       "pingpong": false,
       "save_output": true

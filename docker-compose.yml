@@ -162,6 +162,8 @@ services:
         condition: service_healthy
       fish-speech:
         condition: service_healthy
+      comfyui:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: python -m ai_worker.main

@@ -146,30 +146,14 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     if VIDEO_GEN_ENABLED:
         import gc
 
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
-        gc.collect()
-
-        # 24GB 환경: 1막 종료 후 VRAM 완전 반환되므로 OOM 위험 낮음
-        # available < required * 0.5 일 때만 긴급 정리 트리거
-        from ai_worker.gpu_manager import get_gpu_manager, ModelType
-        _gm = get_gpu_manager()
-        _video_vram = _gm.MODEL_VRAM_REQUIREMENTS.get(ModelType.VIDEO, 12.0)
-        _available = _gm.get_available_vram()
-        if _available < _video_vram * 0.5:
-            logger.warning(
-                "[content_processor] Phase 7: VRAM 부족 (available=%.1f GB < %.1f GB) — 긴급 정리",
-                _available, _video_vram * 0.5,
-            )
-            _gm.emergency_cleanup()
+        # ★ 2막 전환: LLM + TTS VRAM 완전 해제 시퀀스
+        await _clear_vram_for_video()
 
         from ai_worker.video.manager import VideoManager
         from ai_worker.video.comfy_client import ComfyUIClient
         from config.settings import (
-            get_comfyui_url, VIDEO_GEN_TIMEOUT, VIDEO_RESOLUTION,
+            get_comfyui_url, VIDEO_GEN_TIMEOUT, VIDEO_GEN_TIMEOUT_DISTILLED,
+            VIDEO_RESOLUTION,
             VIDEO_RESOLUTION_FALLBACK, VIDEO_NUM_FRAMES, VIDEO_NUM_FRAMES_FALLBACK,
             VIDEO_MAX_CLIPS_PER_POST, VIDEO_MAX_RETRY,
         )
@@ -183,6 +167,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
             "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
             "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
+            "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
             "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
             "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
         }
@@ -218,3 +203,72 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 7 스킵")
 
     return scenes
+
+
+async def _clear_vram_for_video() -> None:
+    """Phase 7 진입 전 — LLM/TTS VRAM 완전 해제 시퀀스.
+
+    1막(LLM+TTS) → 2막(비디오) 전환 시 Ollama와 Fish Speech의 VRAM을
+    명시적으로 해제하고, nvidia-smi로 실제 여유 VRAM을 확인한다.
+    """
+    import gc
+
+    from ai_worker.gpu_manager import GPUMemoryManager, get_gpu_manager
+    from config.settings import get_ollama_host, OLLAMA_MODEL, FISH_SPEECH_URL
+
+    logger.info("[VRAM] 2막 전환 시작: LLM/TTS VRAM 해제 시퀀스")
+
+    # 1) Ollama 강제 언로드 (keep_alive=0 → VRAM 즉시 해제)
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{get_ollama_host()}/api/generate",
+                json={"model": OLLAMA_MODEL, "keep_alive": 0},
+                timeout=10.0,
+            )
+        logger.info("[VRAM] Ollama 모델 언로드 완료 (keep_alive=0)")
+    except Exception as e:
+        logger.warning("[VRAM] Ollama 언로드 실패 (계속 진행): %s", e)
+
+    # 2) Fish Speech 모델 언로드 — 컨테이너는 유지하되 GPU 메모리만 해제
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{FISH_SPEECH_URL}/v1/models/unload",
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 404):
+                logger.info("[VRAM] Fish Speech 모델 언로드 완료")
+            else:
+                logger.warning("[VRAM] Fish Speech 언로드 응답: %d", resp.status_code)
+    except Exception as e:
+        logger.warning("[VRAM] Fish Speech 언로드 실패 (계속 진행): %s", e)
+
+    # 3) ai_worker 자체 PyTorch 캐시 정리
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    gc.collect()
+
+    # 4) 실제 여유 VRAM 확인 (nvidia-smi 기반 — 모든 프로세스 포함)
+    _gm = get_gpu_manager()
+    free_vram = GPUMemoryManager.get_system_available_vram()
+    if free_vram > 0:
+        logger.info("[VRAM] 시스템 여유 VRAM: %.1fGB", free_vram)
+        if free_vram < 20.0:
+            logger.warning(
+                "[VRAM] 여유 VRAM 부족 (%.1fGB < 20GB) — 긴급 정리 시도", free_vram,
+            )
+            _gm.emergency_cleanup()
+            free_vram = GPUMemoryManager.get_system_available_vram()
+            logger.info("[VRAM] 긴급 정리 후 여유 VRAM: %.1fGB", free_vram)
+    else:
+        # nvidia-smi 사용 불가 시 PyTorch 기준 폴백
+        free_vram = _gm.get_available_vram()
+        logger.info("[VRAM] PyTorch 기준 여유 VRAM: %.1fGB (nvidia-smi 사용 불가)", free_vram)
+
+    logger.info("[VRAM] 2막 전환 완료: %.1fGB 여유", free_vram)

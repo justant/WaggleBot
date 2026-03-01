@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,9 @@ def evaluate_image(image_path: Path) -> ImageSuitability:
 
 def _is_text_heavy(img: Image.Image) -> bool:
     """히스토그램 기반 텍스트 캡처 감지.
-    텍스트 캡처본: 배경 단색 + 텍스트 = 양극단 bimodal 분포.
+
+    텍스트 캡처본: bimodal 분포 + 낮은 엣지 밀도.
+    고대비 사진(야경, 플래시 촬영)도 bimodal이지만 엣지 밀도가 높다.
     """
     gray = img.convert("L")
     hist = gray.histogram()
@@ -125,19 +128,20 @@ def _is_text_heavy(img: Image.Image) -> bool:
     low_end = sum(hist[:25])
     high_end = sum(hist[230:])
     bimodal_ratio = (low_end + high_end) / total
-    return bimodal_ratio > 0.70
+    if bimodal_ratio <= 0.70:
+        return False
+    # 고대비 사진 제외: 엣지 밀도가 높으면 텍스트 캡처가 아님
+    return _edge_density(img) < 0.03
 
 
 def _color_diversity(img: Image.Image) -> float:
     """RGB 채널별 표준편차 평균. 높을수록 색상이 다양."""
-    import numpy as np
     arr = np.array(img)
     return float(np.mean([arr[:, :, c].std() for c in range(3)]))
 
 
 def _edge_density(img: Image.Image) -> float:
     """엣지 픽셀 비율 (0.0~1.0). 높을수록 디테일이 풍부."""
-    import numpy as np
     edges = img.convert("L").filter(ImageFilter.FIND_EDGES)
     arr = np.array(edges)
     return float((arr > 30).sum() / max(arr.size, 1))

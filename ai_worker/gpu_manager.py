@@ -201,7 +201,10 @@ class GPUMemoryManager:
 
     def get_available_vram(self) -> float:
         """
-        사용 가능한 VRAM (GB) 조회
+        사용 가능한 VRAM (GB) 조회 — ai_worker 프로세스 내부 PyTorch 기준.
+
+        주의: 다른 프로세스(Ollama, Fish Speech, ComfyUI)의 VRAM은 보이지 않음.
+        시스템 전체 VRAM을 확인하려면 get_system_available_vram() 사용.
 
         Returns:
             사용 가능한 VRAM (GB)
@@ -215,6 +218,31 @@ class GPUMemoryManager:
         except Exception:
             log.exception("Failed to get available VRAM")
             return 0.0
+
+    @staticmethod
+    def get_system_available_vram() -> float:
+        """nvidia-smi로 시스템 전체 실제 여유 VRAM 조회.
+
+        다른 프로세스(Ollama, Fish Speech, ComfyUI)의 VRAM 점유를 포함하여
+        실제 사용 가능한 여유 VRAM을 반환한다.
+
+        Returns:
+            시스템 전체 여유 VRAM (GB). 실패 시 0.0.
+        """
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                free_mb = float(result.stdout.strip().split("\n")[0])
+                return free_mb / 1024  # MB → GB
+        except Exception:
+            log.exception("nvidia-smi VRAM query failed")
+        return 0.0
 
     def can_load_model(self, required_vram_gb: float, safety_margin_gb: float = 2.0) -> bool:
         """
