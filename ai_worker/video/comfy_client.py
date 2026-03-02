@@ -58,6 +58,48 @@ class ComfyUIClient:
             logger.warning("[comfy] health_check 실패: %s", e)
             return False
 
+    async def interrupt_current(self) -> bool:
+        """현재 실행 중인 워크플로우를 중단한다.
+
+        Returns:
+            True: 중단 요청 성공
+            False: 서버 다운 또는 요청 실패
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{self.base_url}/interrupt", timeout=5.0,
+                )
+                ok = resp.status_code == 200
+                if ok:
+                    logger.info("[comfy] 현재 워크플로우 중단 요청 성공")
+                return ok
+        except Exception as e:
+            logger.warning("[comfy] interrupt 실패: %s", e)
+            return False
+
+    async def clear_queue(self) -> bool:
+        """대기 큐의 모든 워크플로우를 삭제한다.
+
+        Returns:
+            True: 큐 삭제 성공
+            False: 서버 다운 또는 요청 실패
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{self.base_url}/queue",
+                    json={"clear": True},
+                    timeout=5.0,
+                )
+                ok = resp.status_code == 200
+                if ok:
+                    logger.info("[comfy] 대기 큐 삭제 성공")
+                return ok
+        except Exception as e:
+            logger.warning("[comfy] clear_queue 실패: %s", e)
+            return False
+
     async def generate_t2v(
         self,
         prompt: str,
@@ -388,8 +430,17 @@ class ComfyUIClient:
 
                             elif msg_type == "execution_error":
                                 error_data = msg.get("data", {})
+                                err_msg = error_data.get("exception_message", "unknown")
+                                err_lower = err_msg.lower()
+                                if "cublas" in err_lower or "audio_patchify_proj" in err_lower:
+                                    logger.error(
+                                        "[comfy] CUDA/CUBLAS 에러 감지: %s — "
+                                        "LoRA/checkpoint 불일치 또는 VRAM 부족 가능성. "
+                                        "--reserve-vram 설정과 모델 파일을 점검하세요.",
+                                        err_msg[:300],
+                                    )
                                 raise RuntimeError(
-                                    f"ComfyUI 실행 에러: {error_data.get('exception_message', 'unknown')}"
+                                    f"ComfyUI 실행 에러: {err_msg}"
                                 )
 
                             elif msg_type == "progress":

@@ -113,7 +113,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - CLI_ARGS=--listen 0.0.0.0 --lowvram
+      - CLI_ARGS=--listen 0.0.0.0 --lowvram --reserve-vram 2
     deploy:
       resources:
         reservations:

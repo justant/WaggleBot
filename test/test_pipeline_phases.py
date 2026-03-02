@@ -1,16 +1,11 @@
-"""8-Phase 파이프라인 통합 테스트 — post_id 1136 대상
+"""8-Phase 파이프라인 통합 테스트 — 경량화 버전
 
-Phase 1: analyze_resources → ResourceProfile
-Phase 2: chunk_with_llm → raw script dict (LLM 실제 호출)
-Phase 3: validate_and_fix → validated script dict
-Phase 4: SceneDirector.direct() → list[SceneDecision]
-Phase 4.5: assign_video_modes → SceneDecision에 video_mode 설정
-Phase 5: TTS 합성 (Fish Speech, 샘플 1개)
-Phase 6: VideoPromptEngine → video_prompt
-Phase 7-8: 기존 결과물 확인 및 상태 점검
+Phase 1~6 + Phase 7-8 상태 점검.
+기본값: post_id=651, 이미지 3장, 텍스트 200자, 댓글 2개.
 
 Usage:
     DATABASE_URL="mysql+pymysql://wagglebot:wagglebot@localhost/wagglebot" \
+    TEST_POST_ID=651 \
     .venv/bin/python3 test/test_pipeline_phases.py
 """
 import asyncio
@@ -30,6 +25,8 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+for _noisy in ("websockets", "websockets.client", "urllib3", "httpx", "httpcore", "PIL"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger("pipeline_test")
 
 # 결과 저장
@@ -51,7 +48,12 @@ def banner(phase: str, title: str) -> None:
 from db.session import SessionLocal
 from db.models import Post, Content, Comment
 
-POST_ID = 1136
+POST_ID = int(os.environ.get("TEST_POST_ID", 651))
+
+# ── 경량화 파라미터 ──
+MAX_TEST_IMAGES = int(os.environ.get("MAX_TEST_IMAGES", 3))
+MAX_TEST_TEXT_CHARS = int(os.environ.get("MAX_TEST_TEXT_CHARS", 200))
+MAX_TEST_COMMENTS = int(os.environ.get("MAX_TEST_COMMENTS", 2))
 
 with SessionLocal() as db:
     post = db.query(Post).filter(Post.id == POST_ID).first()
@@ -67,6 +69,27 @@ with SessionLocal() as db:
     content_record = db.query(Content).filter(Content.post_id == POST_ID).first()
     existing_script_json = content_record.summary_text if content_record else None
 
+# ── 데이터 경량화 (테스트 시간 단축) ──
+orig_images, orig_text_len, orig_comments = len(images), len(content_text), len(comment_data)
+images = images[:MAX_TEST_IMAGES]
+if len(content_text) > MAX_TEST_TEXT_CHARS:
+    import re
+    sentences = re.split(r'(?<=[.!?。])\s*', content_text)
+    truncated = ""
+    for sent in sentences:
+        if len(truncated) + len(sent) > MAX_TEST_TEXT_CHARS:
+            break
+        truncated += sent + " "
+    content_text = truncated.strip() or content_text[:MAX_TEST_TEXT_CHARS]
+comment_data = comment_data[:MAX_TEST_COMMENTS]
+
+# post 객체에 경량화 반영
+post.content = content_text
+post.images = images
+
+logger.info("경량화: images %d→%d, text %d→%d자, comments %d→%d",
+            orig_images, len(images), orig_text_len, len(content_text),
+            orig_comments, len(comment_data))
 logger.info("Post loaded: id=%d, title=%s, images=%d, text=%d chars, comments=%d",
             POST_ID, title, len(images), len(content_text), len(comment_data))
 

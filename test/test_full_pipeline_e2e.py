@@ -1,14 +1,7 @@
-"""8-Phase 파이프라인 전체 E2E 테스트 — post_id 1136 대상
+"""8-Phase 파이프라인 전체 E2E 테스트 — 경량화 버전
 
-Phase 1: analyze_resources → ResourceProfile
-Phase 2: chunk_with_llm → raw script dict (Ollama 실제 호출)
-Phase 3: validate_and_fix → validated script dict
-Phase 4: SceneDirector → list[SceneDecision]
-Phase 4.5: assign_video_modes → video_mode (t2v/i2v)
-Phase 5: TTS 생성 → scene.text_lines dict 교체
-Phase 6: video_prompt 생성 → scene.video_prompt
-Phase 7: video_clip 생성 → scene.video_clip_path (ComfyUI LTX-2, 1~2씬 제한)
-Phase 8: FFmpeg 렌더링 → 최종 9:16 영상
+Phase 1~8 전체 파이프라인을 환경변수로 파라미터화하여 실행.
+기본값: post_id=651, 이미지 3장, 텍스트 200자, 댓글 2개, 비디오 2씬.
 
 Usage:
     DATABASE_URL="mysql+pymysql://wagglebot:wagglebot@localhost:3306/wagglebot" \
@@ -16,6 +9,7 @@ Usage:
     FISH_SPEECH_URL="http://localhost:8080" \
     COMFYUI_URL="http://localhost:8188" \
     VIDEO_GEN_ENABLED="true" \
+    MAX_TEST_SCENES=2 \
     .venv/bin/python3 test/test_full_pipeline_e2e.py
 """
 import asyncio
@@ -50,6 +44,8 @@ logging.basicConfig(
         logging.FileHandler(PROJECT_ROOT / "_result" / "pipeline_e2e.log", mode="w", encoding="utf-8"),
     ],
 )
+for _noisy in ("websockets", "websockets.client", "urllib3", "httpx", "httpcore", "PIL"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger("e2e_test")
 
 # 결과 저장
@@ -59,9 +55,14 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path("/tmp/wagglebot_e2e_test")
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-POST_ID = 1136
+POST_ID = int(os.environ.get("TEST_POST_ID", 651))
 # 시간 절약: Phase 7에서 최대 몇 개 씬만 LTX 생성
-MAX_VIDEO_SCENES = 2
+MAX_VIDEO_SCENES = int(os.environ.get("MAX_TEST_SCENES", 2))
+
+# ── 경량화 파라미터 ──
+MAX_TEST_IMAGES = int(os.environ.get("MAX_TEST_IMAGES", 3))
+MAX_TEST_TEXT_CHARS = int(os.environ.get("MAX_TEST_TEXT_CHARS", 200))
+MAX_TEST_COMMENTS = int(os.environ.get("MAX_TEST_COMMENTS", 2))
 
 
 def banner(phase: str, title: str) -> None:
@@ -78,7 +79,7 @@ def elapsed_str(ms: float) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 # DB 로드
 # ═══════════════════════════════════════════════════════════════════════
-banner("INIT", "DB에서 post_id 1136 로드")
+banner("INIT", f"DB에서 post_id {POST_ID} 로드 + 경량화")
 
 from db.session import SessionLocal
 from db.models import Post, Content, Comment
@@ -96,6 +97,29 @@ with SessionLocal() as db:
     content_record = db.query(Content).filter(Content.post_id == POST_ID).first()
     existing_script_json = content_record.summary_text if content_record else None
 
+# ── 데이터 경량화 (테스트 시간 단축) ──
+orig_images, orig_text_len, orig_comments = len(images), len(content_text), len(comment_data)
+images = images[:MAX_TEST_IMAGES]
+if len(content_text) > MAX_TEST_TEXT_CHARS:
+    # 문장 단위로 자르기 (마침표/물음표/느낌표 기준)
+    import re
+    sentences = re.split(r'(?<=[.!?。])\s*', content_text)
+    truncated = ""
+    for sent in sentences:
+        if len(truncated) + len(sent) > MAX_TEST_TEXT_CHARS:
+            break
+        truncated += sent + " "
+    content_text = truncated.strip() or content_text[:MAX_TEST_TEXT_CHARS]
+comment_data = comment_data[:MAX_TEST_COMMENTS]
+
+# post 객체의 content/images도 경량화 반영 (Phase 1에서 사용)
+post.content = content_text
+post.images = images
+
+logger.info("경량화: images %d→%d, text %d→%d자, comments %d→%d",
+            orig_images, len(images), orig_text_len, len(content_text),
+            orig_comments, len(comment_data))
+
 RESULTS["init"] = {
     "post_id": POST_ID,
     "title": title,
@@ -106,6 +130,14 @@ RESULTS["init"] = {
     "comments_count": len(comment_data),
     "comments": comment_data,
     "existing_video_path": content_record.video_path if content_record else None,
+    "truncation": {
+        "original_images": orig_images,
+        "original_text_len": orig_text_len,
+        "original_comments": orig_comments,
+        "max_images": MAX_TEST_IMAGES,
+        "max_text_chars": MAX_TEST_TEXT_CHARS,
+        "max_comments": MAX_TEST_COMMENTS,
+    },
 }
 logger.info("Post 로드 완료: title=%s, images=%d, text=%d자, comments=%d",
             title, len(images), len(content_text), len(comment_data))
@@ -574,12 +606,26 @@ RESULTS["phase6"] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Phase 7: Video Clip 생성 (ComfyUI LTX-2) — 1~2씬 제한
+# Phase 7: Video Clip 생성 (ComfyUI LTX-2) — 씬 수 제한
 # ═══════════════════════════════════════════════════════════════════════
 banner("Phase 7", f"ComfyUI LTX-2 비디오 생성 (최대 {MAX_VIDEO_SCENES}씬)")
 
 video_gen_results = []
 p7_success_count = 0
+_comfy_for_cleanup = None  # ComfyUI 정리용 참조
+
+
+def cleanup_comfyui(comfy_client) -> None:
+    """ComfyUI 현재 작업 중단 + 대기 큐 삭제."""
+    if comfy_client is None:
+        return
+    try:
+        asyncio.run(comfy_client.interrupt_current())
+        asyncio.run(comfy_client.clear_queue())
+        logger.info("[cleanup] ComfyUI 큐 정리 완료")
+    except Exception as e:
+        logger.warning("[cleanup] ComfyUI 정리 실패: %s", e)
+
 
 try:
     from ai_worker.video.comfy_client import ComfyUIClient
@@ -588,6 +634,7 @@ try:
 
     comfy_url = get_comfyui_url()
     comfy = ComfyUIClient(base_url=comfy_url)
+    _comfy_for_cleanup = comfy
 
     # ComfyUI 헬스체크
     import requests as _req
@@ -666,6 +713,8 @@ try:
             elapsed_p7 = (time.time() - t0) * 1000
             video_gen_results.append({"error": str(e)})
             logger.error("Phase 7 generate_all_clips 실패: %s", e, exc_info=True)
+        finally:
+            cleanup_comfyui(_comfy_for_cleanup)
     else:
         elapsed_p7 = 0
         video_gen_results.append({"error": "ComfyUI unhealthy"})
@@ -842,6 +891,9 @@ except Exception as e:
     service_status["fish_speech"] = {"status": f"unreachable: {e}"}
 
 RESULTS["service_status"] = service_status
+
+# ── ComfyUI 최종 정리 (이중 보장) ──
+cleanup_comfyui(_comfy_for_cleanup)
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -213,7 +213,14 @@ class VideoManager:
                     post_id, scene_index, attempt, e,
                 )
 
-                if "out of memory" in error_str:
+                if "out of memory" in error_str or "cublas" in error_str:
+                    if "cublas" in error_str:
+                        logger.warning(
+                            "[video] CUBLAS 에러 감지 (post=%d 씬=%d) — "
+                            "VRAM 정리 수행. LoRA/checkpoint 호환성 또는 "
+                            "--reserve-vram 설정을 점검하세요.",
+                            post_id, scene_index,
+                        )
                     try:
                         import torch
                         torch.cuda.empty_cache()
