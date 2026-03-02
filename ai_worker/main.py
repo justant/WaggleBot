@@ -9,7 +9,9 @@ Post A가 CPU로 렌더링되는 동안 Post B는 GPU로 LLM+TTS를 처리할 �
 """
 import asyncio
 import logging
+import signal
 
+from ai_worker.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
 from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
@@ -29,6 +31,26 @@ def _mark_post_failed(post_id: int) -> None:
                 session.commit()
     except Exception:
         logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
+
+
+def _recover_stuck_posts() -> None:
+    """시작 시 PROCESSING 상태로 고착된 포스트를 APPROVED로 복구한다."""
+    with SessionLocal() as session:
+        stuck = (
+            session.query(Post)
+            .filter(Post.status == PostStatus.PROCESSING)
+            .all()
+        )
+        if not stuck:
+            return
+        for post in stuck:
+            post.status = PostStatus.APPROVED
+            logger.warning(
+                "🔄 고착 포스트 복구: post_id=%d → APPROVED (이전 상태: PROCESSING)",
+                post.id,
+            )
+        session.commit()
+        logger.info("✅ %d건의 고착 포스트를 APPROVED로 복구 완료", len(stuck))
 
 
 # CUDA 리소스를 직렬화하는 세마포어 (LLM + TTS 는 순차 실행)
@@ -51,8 +73,9 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
     from ai_worker.processor import RobustProcessor
     processor = RobustProcessor()
     cuda_sem = _get_cuda_sem()
+    shutdown_event = get_shutdown_event()
 
-    while True:
+    while not is_shutting_down():
         post_id: int | None = None
         with SessionLocal() as session:
             post = (
@@ -65,7 +88,13 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
                 post_id = post.id
 
         if post_id is None:
-            await asyncio.sleep(AI_POLL_INTERVAL)
+            # 셧다운 이벤트 또는 폴링 타임아웃 대기
+            try:
+                await asyncio.wait_for(
+                    shutdown_event.wait(), timeout=AI_POLL_INTERVAL
+                )
+            except asyncio.TimeoutError:
+                pass
             continue
 
         async with cuda_sem:
@@ -79,6 +108,8 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
                 _mark_post_failed(post_id)
                 await asyncio.sleep(5)
 
+    logger.info("🛑 _llm_tts_worker 종료")
+
 
 async def _render_worker(render_queue: asyncio.Queue) -> None:
     """render_queue에서 꺼내 프리뷰 렌더링 (CPU libx264, GPU 점유 없음)."""
@@ -86,7 +117,15 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
     processor = RobustProcessor()
 
     while True:
-        post_id, script, audio_path = await render_queue.get()
+        try:
+            post_id, script, audio_path = await asyncio.wait_for(
+                render_queue.get(), timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            if is_shutting_down() and render_queue.empty():
+                break
+            continue
+
         try:
             # render_stage는 동기 CPU 작업 — event loop를 블록하지 않도록 executor 사용
             loop = asyncio.get_running_loop()
@@ -98,6 +137,8 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
             _mark_post_failed(post_id)
         finally:
             render_queue.task_done()
+
+    logger.info("🛑 _render_worker 종료")
 
 
 # ---------------------------------------------------------------------------
@@ -147,13 +188,51 @@ async def upload_once() -> bool:
 
 async def _upload_loop() -> None:
     """RENDERED 게시글을 주기적으로 업로드."""
-    while True:
+    shutdown_event = get_shutdown_event()
+
+    while not is_shutting_down():
         try:
             found = await upload_once()
         except Exception:
             logger.exception("업로드 루프 예외")
             found = False
-        await asyncio.sleep(AI_POLL_INTERVAL if not found else 1)
+
+        # 셧다운 이벤트 또는 폴링 타임아웃 대기
+        try:
+            await asyncio.wait_for(
+                shutdown_event.wait(),
+                timeout=AI_POLL_INTERVAL if not found else 1,
+            )
+        except asyncio.TimeoutError:
+            pass
+
+    logger.info("🛑 _upload_loop 종료")
+
+
+# ---------------------------------------------------------------------------
+# 큐 드레인
+# ---------------------------------------------------------------------------
+
+def _drain_render_queue(render_queue: asyncio.Queue) -> None:
+    """미처리 큐 항목의 포스트를 APPROVED로 복원한다."""
+    drained = 0
+    while not render_queue.empty():
+        try:
+            post_id, _script, _audio = render_queue.get_nowait()
+            with SessionLocal() as session:
+                post = session.query(Post).filter_by(id=post_id).first()
+                if post is not None and post.status == PostStatus.PROCESSING:
+                    post.status = PostStatus.APPROVED
+                    session.commit()
+                    logger.info("🔄 큐 드레인: post_id=%d → APPROVED", post_id)
+                    drained += 1
+            render_queue.task_done()
+        except Exception:
+            logger.exception("큐 드레인 중 오류")
+            break
+
+    if drained:
+        logger.info("✅ 큐 드레인 완료: %d건 복원", drained)
 
 
 # ---------------------------------------------------------------------------
@@ -161,12 +240,25 @@ async def _upload_loop() -> None:
 # ---------------------------------------------------------------------------
 
 async def _main_loop() -> None:
+    loop = asyncio.get_running_loop()
+    shutdown_event = get_shutdown_event()
+
+    # 시그널 핸들러 등록
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, request_shutdown)
+
     render_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
-    await asyncio.gather(
-        _llm_tts_worker(render_queue),
-        _render_worker(render_queue),
-        _upload_loop(),
-    )
+
+    try:
+        await asyncio.gather(
+            _llm_tts_worker(render_queue),
+            _render_worker(render_queue),
+            _upload_loop(),
+        )
+    finally:
+        logger.info("🛑 메인 루프 종료 — 큐 드레인 시작")
+        _drain_render_queue(render_queue)
+        logger.info("✅ Graceful shutdown 완료")
 
 
 async def _startup() -> None:
@@ -183,6 +275,10 @@ def main() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
     init_db()
+
+    # 시작 시 고착된 PROCESSING 포스트 복구
+    _recover_stuck_posts()
+
     logger.info("AI Worker 시작 (pipeline 모드, poll_interval=%ds)", AI_POLL_INTERVAL)
     asyncio.run(_startup())
     asyncio.run(_main_loop())

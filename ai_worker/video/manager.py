@@ -15,12 +15,39 @@ SceneDirector로부터 씬 리스트를 받아:
 import asyncio
 import gc
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from ai_worker.video.prompt_engine import NEGATIVE_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class VideoCheckpoint:
+    """Phase 7 비디오 생성 체크포인트."""
+    phase: int = 7
+    video_scenes_done: list[int] = field(default_factory=list)
+    video_clips: dict[str, str] = field(default_factory=dict)  # {"0": "path.mp4", ...}
+    total_scenes: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "phase": self.phase,
+            "video_scenes_done": self.video_scenes_done,
+            "video_clips": self.video_clips,
+            "total_scenes": self.total_scenes,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "VideoCheckpoint":
+        return cls(
+            phase=data.get("phase", 7),
+            video_scenes_done=data.get("video_scenes_done", []),
+            video_clips=data.get("video_clips", {}),
+            total_scenes=data.get("total_scenes", 0),
+        )
 
 
 @dataclass
@@ -50,14 +77,20 @@ class VideoManager:
         post_id: int,
         title: str,
         body_summary: str,
+        checkpoint: VideoCheckpoint | None = None,
+        on_scene_complete: Callable[[int, str], None] | None = None,
     ) -> list:
         """전체 씬에 대해 비디오 클립을 생성하고, 실패 씬을 처리한 최종 씬 리스트를 반환한다.
 
         처리 순서:
         1. ComfyUI 서버 health_check — 실패 시 빈 리스트 반환 (전체 스킵)
-        2. 씬별 순차 클립 생성 (VRAM 안전)
+        2. 씬별 순차 클립 생성 (VRAM 안전), 체크포인트 있으면 완료된 씬 스킵
         3. 실패 씬 처리: 재시도 → 씬 삭제 + 대본 병합
         4. 최종 유효 씬 리스트 반환
+
+        Args:
+            checkpoint: 이전 실행의 체크포인트 (None이면 처음부터)
+            on_scene_complete: 씬 완료 시 호출할 콜백 (scene_idx, clip_path)
         """
         # 1. health check
         if not await self.comfy.health_check():
@@ -68,6 +101,17 @@ class VideoManager:
         max_clips = self.config.get("VIDEO_MAX_CLIPS_PER_POST", 8)
         clip_count = 0
 
+        # 체크포인트에서 완료된 씬 정보 로드
+        done_scenes: set[int] = set()
+        done_clips: dict[str, str] = {}
+        if checkpoint is not None:
+            done_scenes = set(checkpoint.video_scenes_done)
+            done_clips = dict(checkpoint.video_clips)
+            logger.info(
+                "[video] 체크포인트 resume: post=%d, 완료=%d/%d씬",
+                post_id, len(done_scenes), checkpoint.total_scenes,
+            )
+
         # 2. 씬별 순차 생성
         for i, scene in enumerate(scenes):
             video_mode = getattr(scene, "video_mode", None)
@@ -77,6 +121,27 @@ class VideoManager:
             if clip_count >= max_clips:
                 logger.info("[video] post=%d 최대 클립 수 (%d) 도달 — 나머지 스킵", post_id, max_clips)
                 break
+
+            # 체크포인트에 있는 씬 → 파일 존재 확인 후 스킵
+            if i in done_scenes:
+                cached_path = done_clips.get(str(i))
+                if cached_path and Path(cached_path).exists():
+                    scene.video_clip_path = cached_path
+                    clip_count += 1
+                    self.results.append(VideoGenerationResult(
+                        scene_index=i, success=True,
+                        clip_path=Path(cached_path), attempts=0,
+                    ))
+                    logger.info(
+                        "[video] post=%d 씬=%d 체크포인트 히트 — 스킵",
+                        post_id, i,
+                    )
+                    continue
+                else:
+                    logger.warning(
+                        "[video] post=%d 씬=%d 체크포인트 파일 유실 — 재생성",
+                        post_id, i,
+                    )
 
             video_prompt = getattr(scene, "video_prompt", None)
             if not video_prompt:
@@ -89,6 +154,9 @@ class VideoManager:
             if result.success:
                 scene.video_clip_path = str(result.clip_path)
                 clip_count += 1
+                # 콜백 호출 (체크포인트 저장)
+                if on_scene_complete is not None:
+                    on_scene_complete(i, str(result.clip_path))
             else:
                 scene.video_generation_failed = True
 

@@ -4,7 +4,7 @@ import logging
 import threading
 
 import streamlit as st
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 
 from config.settings import load_pipeline_config, OLLAMA_MODEL, ENABLED_CRAWLERS
 from crawlers.plugin_manager import list_crawlers, CrawlerRegistry
@@ -103,18 +103,16 @@ def render() -> None:
     # ---------------------------------------------------------------------------
     if auto_approve_enabled:
         with SessionLocal() as _asess:
-            _qualify = (
-                _asess.query(Post)
-                .filter(
-                    Post.status == PostStatus.COLLECTED,
-                    Post.engagement_score >= auto_threshold,
-                )
-                .all()
+            _already_approved = st.session_state["auto_approved_ids"]
+            _auto_query = _asess.query(Post).filter(
+                Post.status == PostStatus.COLLECTED,
+                Post.engagement_score >= auto_threshold,
             )
-            _new_auto = [
-                p for p in _qualify
-                if p.id not in st.session_state["auto_approved_ids"]
-            ]
+            if _already_approved:
+                _auto_query = _auto_query.filter(
+                    Post.id.notin_(list(_already_approved))
+                )
+            _new_auto = _auto_query.all()
             if _new_auto:
                 for _p in _new_auto:
                     _p.status = PostStatus.EDITING
@@ -187,12 +185,14 @@ def render() -> None:
             st.session_state["inbox_page"] = 0
             st.rerun()
 
-    # 처리 현황 progress bar
+    # 처리 현황 progress bar (1쿼리)
     with SessionLocal() as _psess:
-        _total_ever = _psess.query(func.count(Post.id)).scalar() or 0
-        _total_decided = _psess.query(func.count(Post.id)).filter(
-            Post.status.notin_([PostStatus.COLLECTED])
-        ).scalar() or 0
+        _total_ever, _total_decided = _psess.query(
+            func.count(Post.id),
+            func.sum(case((Post.status != PostStatus.COLLECTED, 1), else_=0)),
+        ).one()
+        _total_ever = _total_ever or 0
+        _total_decided = int(_total_decided or 0)
     if _total_ever:
         _pct = _total_decided / _total_ever
         st.progress(_pct, text=f"전체 처리율: {_total_decided}/{_total_ever} ({_pct*100:.1f}%)")
@@ -238,37 +238,54 @@ def render() -> None:
     from db.models import Comment
 
     with SessionLocal() as session:
-        query = session.query(Post).filter(Post.status == PostStatus.COLLECTED)
+        # 기본 필터 구성
+        base_filter = [Post.status == PostStatus.COLLECTED]
         if site_filter:
-            query = query.filter(Post.site_code.in_(site_filter))
+            base_filter.append(Post.site_code.in_(site_filter))
         if image_filter == "이미지 있음":
-            query = query.filter(Post.images.isnot(None), Post.images != "[]")
+            base_filter.extend([Post.images.isnot(None), Post.images != "[]"])
         elif image_filter == "이미지 없음":
-            query = query.filter(or_(Post.images.is_(None), Post.images == "[]"))
-        posts = query.all()
+            base_filter.append(or_(Post.images.is_(None), Post.images == "[]"))
 
-        if sort_by == "인기도순":
-            posts = sorted(posts, key=lambda p: p.engagement_score or 0, reverse=True)
-        elif sort_by == "조회수순":
-            posts = sorted(posts, key=lambda p: (p.stats or {}).get("views", 0), reverse=True)
-        elif sort_by == "추천수순":
-            posts = sorted(posts, key=lambda p: (p.stats or {}).get("likes", 0), reverse=True)
-        else:
-            posts = sorted(posts, key=lambda p: p.created_at or 0, reverse=True)
+        # 1) 티어 카운트 — 1회 DB 집계 쿼리
+        _tier_row = session.query(
+            func.count(Post.id),
+            func.sum(case((Post.engagement_score >= 80, 1), else_=0)),
+            func.sum(case(
+                (Post.engagement_score >= 30, case((Post.engagement_score < 80, 1), else_=0)),
+                else_=0,
+            )),
+            func.sum(case((Post.engagement_score < 30, 1), else_=0)),
+        ).filter(*base_filter).one()
 
-        # 전체 티어 카운트 (페이지네이션 전)
-        _total_inbox = len(posts)
-        _total_high = sum(1 for p in posts if (p.engagement_score or 0) >= 80)
-        _total_normal = sum(1 for p in posts if 30 <= (p.engagement_score or 0) < 80)
-        _total_low = sum(1 for p in posts if (p.engagement_score or 0) < 30)
+        _total_inbox = _tier_row[0] or 0
+        _total_high = int(_tier_row[1] or 0)
+        _total_normal = int(_tier_row[2] or 0)
+        _total_low = int(_tier_row[3] or 0)
 
-        # 페이지네이션 — 초기 이미지/미디어 로딩 최소화
+        # 페이지네이션 파라미터 계산
         _INBOX_PAGE_SIZE = 20
         _max_page = max(0, (_total_inbox - 1) // _INBOX_PAGE_SIZE) if _total_inbox else 0
         if st.session_state["inbox_page"] > _max_page:
             st.session_state["inbox_page"] = _max_page
         _page = st.session_state["inbox_page"]
-        posts = posts[_page * _INBOX_PAGE_SIZE : (_page + 1) * _INBOX_PAGE_SIZE]
+
+        # 2) 메인 쿼리 — DB-level 정렬 + LIMIT/OFFSET
+        query = session.query(Post).filter(*base_filter)
+        if sort_by == "인기도순":
+            query = query.order_by(Post.engagement_score.desc())
+        elif sort_by == "조회수순":
+            query = query.order_by(
+                func.coalesce(func.json_extract(Post.stats, "$.views"), 0).desc()
+            )
+        elif sort_by == "추천수순":
+            query = query.order_by(
+                func.coalesce(func.json_extract(Post.stats, "$.likes"), 0).desc()
+            )
+        else:
+            query = query.order_by(Post.created_at.desc())
+
+        posts = query.limit(_INBOX_PAGE_SIZE).offset(_page * _INBOX_PAGE_SIZE).all()
 
         # 댓글 일괄 사전 로드 (N+1 → 1+1 쿼리)
         _all_comments: dict[int, list] = {}

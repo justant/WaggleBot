@@ -595,7 +595,7 @@ class RobustProcessor:
 
         # Phase 7: video clip 생성 (ComfyUI 경유)
         from ai_worker.video.comfy_client import ComfyUIClient
-        from ai_worker.video.manager import VideoManager
+        from ai_worker.video.manager import VideoCheckpoint, VideoManager
         from config.settings import (
             VIDEO_GEN_TIMEOUT,
             VIDEO_MAX_CLIPS_PER_POST,
@@ -626,13 +626,63 @@ class RobustProcessor:
             config=video_config,
         )
 
+        # 체크포인트 로드
+        checkpoint: VideoCheckpoint | None = None
+        with SessionLocal() as ckpt_sess:
+            _content = ckpt_sess.query(Content).filter_by(post_id=post_id).first()
+            if _content and _content.pipeline_state:
+                try:
+                    checkpoint = VideoCheckpoint.from_dict(_content.pipeline_state)
+                    logger.info(
+                        "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
+                        post_id,
+                        len(checkpoint.video_scenes_done),
+                        checkpoint.total_scenes,
+                    )
+                except Exception:
+                    logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
+                    checkpoint = None
+
+        # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
+        _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
+        _done_clips: dict[str, str] = dict(checkpoint.video_clips) if checkpoint else {}
+
+        def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
+            _done_scenes.append(scene_idx)
+            _done_clips[str(scene_idx)] = clip_path
+            try:
+                with SessionLocal() as cb_sess:
+                    ct = cb_sess.query(Content).filter_by(post_id=post_id).first()
+                    if ct is not None:
+                        ct.pipeline_state = VideoCheckpoint(
+                            phase=7,
+                            video_scenes_done=list(_done_scenes),
+                            video_clips=dict(_done_clips),
+                            total_scenes=len(scenes),
+                        ).to_dict()
+                        cb_sess.commit()
+            except Exception:
+                logger.warning("[video] 체크포인트 저장 실패 (비치명적)", exc_info=True)
+
         scenes = await manager.generate_all_clips(
             scenes=scenes,
             mood=script.mood,
             post_id=post_id,
             title=post_title,
             body_summary=body_summary,
+            checkpoint=checkpoint,
+            on_scene_complete=_on_scene_complete,
         )
+
+        # Phase 7 정상 완료 → 체크포인트 클리어
+        try:
+            with SessionLocal() as clear_sess:
+                ct = clear_sess.query(Content).filter_by(post_id=post_id).first()
+                if ct is not None:
+                    ct.pipeline_state = None
+                    clear_sess.commit()
+        except Exception:
+            logger.warning("[video] 체크포인트 클리어 실패 (비치명적)", exc_info=True)
 
         try:
             import torch
