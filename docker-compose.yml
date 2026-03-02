@@ -114,6 +114,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CLI_ARGS=--listen 0.0.0.0 --lowvram --reserve-vram 2
+      # CUBLAS 버전 일치: pip nvidia-cublas(13.1) + system cublasLt(13.0) 충돌 방지
+      - LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/nvidia/cu13/lib:/usr/local/cuda/lib64
     deploy:
       resources:
         reservations:

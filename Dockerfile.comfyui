@@ -21,6 +21,10 @@ WORKDIR /comfyui
 # PyTorch cu130 명시 설치 — comfy_kitchen cuda/triton 백엔드 활성화
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
+# CUBLAS 버전 일치: PyTorch pip 패키지의 nvidia-cublas(13.1)와 system CUDA(13.0)의
+# libcublasLt 버전 불일치 방지. pip 경로를 우선시하여 cublas+cublasLt 모두 동일 버전 사용.
+ENV LD_LIBRARY_PATH="/usr/local/lib/python3.11/dist-packages/nvidia/cu13/lib:${LD_LIBRARY_PATH}"
+
 # ComfyUI 클론 + 의존성 (이미 설치된 torch cu130은 유지됨)
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && pip install --no-cache-dir -r requirements.txt
