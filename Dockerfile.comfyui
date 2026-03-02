@@ -1,12 +1,12 @@
 # WaggleBot ComfyUI — LTX-2 19B FP8 비디오 생성 서버
 # GPU: RTX 3090 24GB (Ampere), VRAM 모드: --lowvram (weight streaming)
 #
-# 알려진 성능 제한 (향후 최적화 대상):
-#   - comfy_kitchen 백엔드: cu130+ PyTorch 필요 → 현재 비활성 (30~50% 성능 손실)
-#   - Flash Attention: CUDA 12.6 ↔ cu128 wheel 버전 불일치 → SDPA 폴백 (20~40% 손실)
-#   - 해결 방법: CUDA 베이스 이미지 + PyTorch 업그레이드 (cu130+ 안정화 후)
+# cu130 업그레이드 (2026-03-02):
+#   - CUDA 베이스: 12.6.3 → 13.0.1 (드라이버 591.86 호환)
+#   - PyTorch: cu128 → cu130 (comfy_kitchen cuda/triton 백엔드 활성화)
+#   - Flash Attention: CUDA/PyTorch 버전 일치로 설치 시도 (실패 시 SDPA 폴백)
 
-FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+FROM nvidia/cuda:13.0.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -18,13 +18,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /comfyui
 
-# ComfyUI 클론
+# PyTorch cu130 명시 설치 — comfy_kitchen cuda/triton 백엔드 활성화
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+
+# ComfyUI 클론 + 의존성 (이미 설치된 torch cu130은 유지됨)
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
     && pip install --no-cache-dir -r requirements.txt
 
-# Flash Attention: cu128 wheel ↔ cuda:12.6.3 런타임 버전 불일치로 미설치.
-# ComfyUI는 PyTorch 내장 SDPA(Scaled Dot Product Attention)로 대체 동작함.
-# cu130+ PyTorch 안정화 후 Flash Attention + comfy_kitchen 동시 활성화 예정.
+# Flash Attention: CUDA 13.0 + cu130 PyTorch 환경 일치
+# pre-built wheel 없으면 SDPA 자동 폴백 (runtime 이미지라 소스 빌드 불가)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || \
+    echo "WARN: flash-attn pre-built wheel not available, using PyTorch SDPA fallback"
 
 # VHS (Video Helper Suite) 커스텀 노드 — VHS_VideoCombine 노드 제공
 RUN cd custom_nodes && \
