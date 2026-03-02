@@ -32,8 +32,8 @@
 
 ## 6. 테스트 및 검증 (Test & Validation)
 - **테스트 결과물 저장 위치:**
-    - 렌더링 비디오: `media/output/preview_001.mp4`
-    - 실행 로그: `logs/llm_test_241026.log`
+    - 렌더링 비디오: `_result/media/output/preview_001.mp4`
+    - 실행 로그: `_result/logs/llm_test_241026.log`
 - **수동 재현/테스트 스텝:**
     1. `docker compose up ai_worker -d` 실행.
     2. `python scripts/insert_test_post.py` 로 테스트용 DB 레코드 삽입.

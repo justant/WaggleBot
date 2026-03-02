@@ -891,7 +891,7 @@ def _scenes_to_plan_and_sentences(
     plan: list[dict] = []
     images: list[str] = []
 
-    for scene in scenes:
+    for scene_i, scene in enumerate(scenes):
         img_idx: Optional[int] = None
         if scene.image_url:
             img_idx = len(images)
@@ -901,7 +901,7 @@ def _scenes_to_plan_and_sentences(
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
             sentences.append({"text": text, "section": "hook", "audio": audio, "voice_override": None})
-            plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx})
+            plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "img_text":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -916,7 +916,7 @@ def _scenes_to_plan_and_sentences(
             if psl:
                 sent_dict["lines"] = psl
             sentences.append(sent_dict)
-            plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
+            plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "text_only":
             # 여러 줄 → 각각 별도 plan 엔트리 → 렌더러가 누적 스태킹
@@ -933,7 +933,7 @@ def _scenes_to_plan_and_sentences(
                 if psl:
                     sent_dict["lines"] = psl
                 sentences.append(sent_dict)
-                plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
+                plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
 
         elif scene.type == "img_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -941,7 +941,7 @@ def _scenes_to_plan_and_sentences(
             if text:
                 sent_idx = len(sentences)
                 sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
-            plan.append({"type": "img_only", "sent_idx": sent_idx, "img_idx": img_idx})
+            plan.append({"type": "img_only", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "outro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -949,7 +949,7 @@ def _scenes_to_plan_and_sentences(
             if text:
                 sent_idx = len(sentences)
                 sentences.append({"text": text, "section": "closer", "audio": audio, "voice_override": None})
-            plan.append({"type": "outro", "sent_idx": sent_idx, "img_idx": img_idx})
+            plan.append({"type": "outro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
     return sentences, plan, images
 
@@ -1072,10 +1072,20 @@ def _get_scene_for_entry(
     sentences: list[dict],
     scenes_list: list | None,
 ) -> object | None:
-    """plan entry에 대응하는 SceneDecision을 찾는다."""
+    """plan entry에 대응하는 SceneDecision을 찾는다.
+
+    1차: scene_idx 인덱스로 O(1) 직접 참조 (plan에 scene_idx가 있을 때)
+    2차: 텍스트 부분문자열 매칭 폴백 (하위 호환)
+    """
     if scenes_list is None:
         return None
 
+    # 1차: scene_idx 인덱스 기반 조회
+    scene_idx = entry.get("scene_idx")
+    if scene_idx is not None and 0 <= scene_idx < len(scenes_list):
+        return scenes_list[scene_idx]
+
+    # 2차: 텍스트 매칭 폴백
     sent_idx = entry.get("sent_idx")
     if sent_idx is None:
         return None

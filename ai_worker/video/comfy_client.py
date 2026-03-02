@@ -104,7 +104,6 @@ class ComfyUIClient:
             "width": width,
             "height": height,
             "length": num_frames,
-            "frames_number": num_frames,
             "frame_rate": fps,
             "steps": steps,
             "cfg": cfg,
@@ -142,7 +141,6 @@ class ComfyUIClient:
             "positive_prompt": prompt,
             "negative_prompt": negative_prompt,
             "length": num_frames,
-            "frames_number": num_frames,
             "frame_rate": fps,
             "noise_seed": actual_seed,
         })
@@ -195,7 +193,6 @@ class ComfyUIClient:
                 "width": width,
                 "height": height,
                 "length": num_frames,
-                "frames_number": num_frames,
                 "frame_rate": fps,
                 "strength": strength,
                 "steps": steps,
