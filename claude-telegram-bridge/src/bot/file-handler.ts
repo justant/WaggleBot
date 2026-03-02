@@ -114,8 +114,9 @@ export class FileHandler {
 
   /**
    * 파일을 Telegram으로 전송
+   * @param forceDocument true이면 항상 다운로드 가능한 문서로 전송
    */
-  async sendFile(chatId: number, filePath: string): Promise<void> {
+  async sendFile(chatId: number, filePath: string, forceDocument = false): Promise<void> {
     const resolved = sanitizePath(filePath);
     if (!resolved) {
       await this.wrapper.bot.sendMessage(chatId, "⛔ 접근할 수 없는 경로입니다.");
@@ -148,7 +149,12 @@ export class FileHandler {
       const isPhoto = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"].includes(ext);
       const isVideo = [".mp4", ".mov", ".avi", ".mkv", ".webm"].includes(ext);
 
-      if (isText && stat.size < 4000) {
+      if (forceDocument) {
+        // 다운로드 가능한 문서로 전송
+        await this.wrapper.bot.sendDocument(chatId, resolved, {
+          caption: `📄 ${relPath}`,
+        });
+      } else if (isText && stat.size < 4000) {
         // 작은 텍스트 파일은 메시지로 인라인 전송
         const content = fs.readFileSync(resolved, "utf-8");
         const fileName = path.basename(resolved);

@@ -40,7 +40,7 @@ const summary = raw
   .substring(0, 500)
   .trim();
 
-// Find recently modified files in _result/
+// Find recently modified files in _result/ — 상대 경로로 전송 (Docker 컨테이너 호환)
 const recentFiles = [];
 try {
   const files = readdirSync(RESULT_DIR);
@@ -50,7 +50,7 @@ try {
     const fullPath = join(RESULT_DIR, f);
     const stat = statSync(fullPath);
     if (stat.isFile() && now - stat.mtimeMs < RECENT_THRESHOLD_MS) {
-      recentFiles.push(fullPath);
+      recentFiles.push(`_result/${f}`);
     }
   }
 } catch {

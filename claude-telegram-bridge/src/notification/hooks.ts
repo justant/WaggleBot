@@ -72,11 +72,11 @@ export class HookServer {
         }
         await this.notifier.notify("success", "작업 완료", body);
 
-        // 결과 파일들 Telegram으로 전송
+        // 결과 파일들 다운로드 가능한 문서로 전송
         for (const userId of config.telegram.allowedUserIds) {
           for (const filePath of resultFiles) {
             try {
-              await this.fileHandler.sendFile(userId, filePath);
+              await this.fileHandler.sendFile(userId, filePath, true);
             } catch (err) {
               logger.error("Failed to send result file", { filePath, error: err });
             }

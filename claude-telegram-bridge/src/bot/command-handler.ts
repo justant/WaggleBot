@@ -167,6 +167,6 @@ Claude Code 명령은 Termius + tmux에서 직접 수행
 .md 파일을 전송하면 _request/에 저장됩니다.
 
 🔔 자동 알림
-- _result/ 새 파일 생성 시 자동 전송
-- Claude Code 작업 완료/에러/권한요청 알림
+- Claude Code 작업 완료 시 결과 파일 전송
+- Claude Code 권한 요청 시 알림
 - 일일 브리핑 (설정 시)`;

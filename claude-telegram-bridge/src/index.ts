@@ -1,5 +1,3 @@
-import path from "path";
-import chokidar from "chokidar";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { TelegramBotWrapper } from "./bot/telegram-bot.js";
@@ -40,24 +38,6 @@ async function main(): Promise<void> {
   // Start hook server (Claude Code 이벤트 수신)
   hookServer.start();
 
-  // Watch _result/ directory for new files → 자동 알림
-  const resultDir = path.join(config.paths.wagglebotRoot, "_result");
-  const watcher = chokidar.watch(resultDir, {
-    ignoreInitial: true,
-    depth: 1,
-  });
-
-  watcher.on("add", async (filePath: string) => {
-    const fileName = path.basename(filePath);
-    if (fileName.startsWith(".")) return; // hidden files 무시
-    logger.info("New result file detected", { fileName });
-    await notifier.notifyFileCreated(`_result/${fileName}`);
-
-    for (const userId of config.telegram.allowedUserIds) {
-      await fileHandler.sendFile(userId, filePath);
-    }
-  });
-
   // Schedule daily briefing
   if (config.scheduler.dailyBriefEnabled) {
     cronManager.addJob("daily-brief", config.scheduler.dailyBriefCron, async () => {
@@ -70,7 +50,6 @@ async function main(): Promise<void> {
     logger.info(`Received ${signal}, shutting down...`);
     cronManager.stopAll();
     hookServer.stop();
-    await watcher.close();
     await wrapper.stop();
     process.exit(0);
   };
