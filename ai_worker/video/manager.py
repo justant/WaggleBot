@@ -12,6 +12,7 @@ SceneDirector로부터 씬 리스트를 받아:
 - ai_worker.llm.client의 call_ollama_raw()만 간접 사용 (prompt_engine 경유).
 """
 
+import asyncio
 import gc
 import logging
 from dataclasses import dataclass
@@ -96,6 +97,27 @@ class VideoManager:
 
         return scenes
 
+    async def _cleanup_after_cublas_error(self) -> None:
+        """CUBLAS 에러 후 ComfyUI 상태 복구."""
+        try:
+            await self.comfy.interrupt_current()
+            await self.comfy.clear_queue()
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"{self.comfy.base_url}/free",
+                        json={"unload_models": True, "free_memory": True},
+                        timeout=10.0,
+                    )
+                logger.info("[video] ComfyUI 모델 언로드 + 메모리 해제 완료")
+            except Exception as e:
+                logger.warning("[video] ComfyUI /free 호출 실패: %s", e)
+            await asyncio.sleep(5)
+            logger.info("[video] CUBLAS 에러 후 ComfyUI 정리 완료")
+        except Exception as e:
+            logger.error("[video] ComfyUI 정리 실패: %s", e)
+
     async def _generate_single_clip(
         self,
         scene,
@@ -110,9 +132,12 @@ class VideoManager:
         3차: 768×512, 65프레임, 15스텝, 풀 모델
         4차: 768×512, 65프레임, 8스텝, Distilled 폴백 (CFG=1.0)
         모두 실패: VideoGenerationResult(success=False) 반환
+
+        CUBLAS 에러 2회 연속 발생 시 조기 스킵 (CUDA 컨텍스트 오염 방지).
         """
         max_attempts = self.config.get("VIDEO_MAX_RETRY", 4)
         result = VideoGenerationResult(scene_index=scene_index, success=False)
+        cublas_consecutive = 0
 
         for attempt in range(1, max_attempts + 1):
             result.attempts = attempt
@@ -213,20 +238,36 @@ class VideoManager:
                     post_id, scene_index, attempt, e,
                 )
 
-                if "out of memory" in error_str or "cublas" in error_str:
-                    if "cublas" in error_str:
+                is_cublas = "cublas" in error_str
+                if "out of memory" in error_str or is_cublas:
+                    if is_cublas:
+                        cublas_consecutive += 1
                         logger.warning(
-                            "[video] CUBLAS 에러 감지 (post=%d 씬=%d) — "
-                            "VRAM 정리 수행. LoRA/checkpoint 호환성 또는 "
-                            "--reserve-vram 설정을 점검하세요.",
-                            post_id, scene_index,
+                            "[video] CUBLAS 에러 감지 (post=%d 씬=%d, 연속 %d회) — "
+                            "ComfyUI 정리 수행",
+                            post_id, scene_index, cublas_consecutive,
                         )
+                        await self._cleanup_after_cublas_error()
+
+                        if cublas_consecutive >= 2:
+                            logger.error(
+                                "[video] 씬 %d: CUBLAS 에러 2회 연속 — "
+                                "CUDA 컨텍스트 오염 가능성, 씬 스킵",
+                                scene_index,
+                            )
+                            result.failure_reason = "cublas_repeated"
+                            break
+                    else:
+                        cublas_consecutive = 0
+
                     try:
                         import torch
                         torch.cuda.empty_cache()
                     except ImportError:
                         pass
                     gc.collect()
+                else:
+                    cublas_consecutive = 0
 
                 if attempt < max_attempts:
                     continue

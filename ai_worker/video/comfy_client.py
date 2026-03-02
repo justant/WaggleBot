@@ -253,11 +253,41 @@ class ComfyUIClient:
 
         원본 이미지가 target보다 큰 경우에만 리사이즈하며,
         비율을 유지하면서 target 크기에 맞춘다.
+
+        종횡비 3:1 초과 시 center-crop으로 3:1 이내로 조정한 후 리사이즈한다.
+        (극단적 종횡비 이미지는 VAE Encode 시 CUBLAS 에러를 유발할 수 있음)
         """
         from PIL import Image
 
         img = Image.open(image_path).convert("RGB")
+        orig_w, orig_h = img.size
+
+        # 종횡비 가드: 3:1 초과 시 center-crop
+        aspect = max(orig_w, orig_h) / max(min(orig_w, orig_h), 1)
+        if aspect > 3.0:
+            logger.warning(
+                "[comfy] 극단적 종횡비 감지: %dx%d (ratio=%.1f:1) — center-crop 적용",
+                orig_w, orig_h, aspect,
+            )
+            if orig_w > orig_h:
+                new_w = orig_h * 3
+                left = (orig_w - new_w) // 2
+                img = img.crop((left, 0, left + new_w, orig_h))
+            else:
+                new_h = orig_w * 3
+                top = (orig_h - new_h) // 2
+                img = img.crop((0, top, orig_w, top + new_h))
+            logger.info(
+                "[comfy] center-crop 결과: %dx%d → %dx%d",
+                orig_w, orig_h, img.width, img.height,
+            )
+
         if img.width <= width and img.height <= height:
+            if img.size != (orig_w, orig_h):
+                # center-crop이 적용된 경우 저장
+                resized_path = image_path.parent / f"resized_{image_path.name}"
+                img.save(resized_path, quality=95)
+                return resized_path
             return image_path
 
         img.thumbnail((width, height), Image.LANCZOS)
@@ -265,7 +295,7 @@ class ComfyUIClient:
         img.save(resized_path, quality=95)
         logger.info(
             "[comfy] 이미지 리사이즈: %dx%d → %dx%d (%s)",
-            img.width, img.height, width, height, resized_path.name,
+            orig_w, orig_h, img.width, img.height, resized_path.name,
         )
         return resized_path
 

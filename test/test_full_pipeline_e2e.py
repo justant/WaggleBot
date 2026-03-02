@@ -55,9 +55,9 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 TMP_DIR = Path("/tmp/wagglebot_e2e_test")
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-POST_ID = int(os.environ.get("TEST_POST_ID", 651))
+POST_ID = int(os.environ.get("TEST_POST_ID", 915))
 # 시간 절약: Phase 7에서 최대 몇 개 씬만 LTX 생성
-MAX_VIDEO_SCENES = int(os.environ.get("MAX_TEST_SCENES", 2))
+MAX_VIDEO_SCENES = int(os.environ.get("MAX_TEST_SCENES", 1))
 
 # ── 경량화 파라미터 ──
 MAX_TEST_IMAGES = int(os.environ.get("MAX_TEST_IMAGES", 3))

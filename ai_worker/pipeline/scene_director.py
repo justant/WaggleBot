@@ -165,7 +165,17 @@ def assign_video_modes(
                 local_path = _download_and_cache_image(scene.image_url, image_cache_dir)
                 if local_path and local_path.exists():
                     suitability = evaluate_image(local_path)
-                    if suitability.score >= i2v_threshold:
+                    # extreme_aspect_ratio는 점수와 무관하게 I2V 차단
+                    # (LTX-2 리사이즈 시 CUBLAS 에러 유발)
+                    if "extreme_aspect_ratio" in suitability.reason:
+                        scene.video_mode = "t2v"
+                        logger.info(
+                            "[scene] 씬 %d (%s): extreme_aspect_ratio → T2V 강제 전환 "
+                            "(score=%.3f, %dx%d)",
+                            i, scene.type, suitability.score,
+                            suitability.width, suitability.height,
+                        )
+                    elif suitability.score >= i2v_threshold:
                         scene.video_mode = "i2v"
                         scene.video_init_image = str(local_path)
                         logger.info(

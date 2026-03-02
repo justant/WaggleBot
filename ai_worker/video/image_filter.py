@@ -70,7 +70,21 @@ def evaluate_image(image_path: Path) -> ImageSuitability:
         score += 0.10
         reasons.append("wide_aspect_ratio")
     else:
+        # 종횡비 3:1 초과 → I2V 완전 부적합 (CUBLAS 에러 유발)
+        # 다른 항목 점수와 무관하게 최종 score를 0.0으로 강제
         reasons.append("extreme_aspect_ratio")
+        category = _classify_image(img, reasons)
+        logger.warning(
+            "[image_filter] 극단적 종횡비 차단: %s (%dx%d, ratio=%.1f:1) → score=0.0",
+            image_path.name, w, h, ratio,
+        )
+        return ImageSuitability(
+            score=0.0,
+            reason=", ".join(reasons),
+            category=category,
+            width=w,
+            height=h,
+        )
 
     # 3. 텍스트 밀도
     if not _is_text_heavy(img):
