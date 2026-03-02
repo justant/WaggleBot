@@ -123,10 +123,10 @@ services:
               capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats').read()"]
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 30s
       retries: 5
-      start_period: 120s
+      start_period: 300s
 
   ai_worker:
     build: .
@@ -197,6 +197,29 @@ services:
       SLACK_ALERTS_ENABLED: ${SLACK_ALERTS_ENABLED:-false}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
     command: python -m monitoring.daemon
+
+  telegram-bridge:
+    build:
+      context: ./claude-telegram-bridge
+      dockerfile: Dockerfile
+    container_name: telegram-bridge
+    restart: unless-stopped
+    ports:
+      - "${HOOKS_PORT:-3847}:3847"
+    volumes:
+      - ./:/wagglebot:ro
+      - ./_request:/wagglebot/_request
+      - ./_result:/wagglebot/_result:ro
+      - ./claude-telegram-bridge/data:/app/data
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      WAGGLEBOT_ROOT: /wagglebot
+      HOOKS_PORT: "3847"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DAILY_BRIEF_ENABLED: ${DAILY_BRIEF_ENABLED:-false}
+      DAILY_BRIEF_CRON: ${DAILY_BRIEF_CRON:-0 9 * * *}
 
 volumes:
   mariadb_data:

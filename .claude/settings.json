@@ -1,4 +1,29 @@
 {
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /home/justant/Data/WaggleBot/claude-telegram-bridge/scripts/stop-notify.mjs",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -X POST http://localhost:3847/hook -H 'Content-Type: application/json' -d '{\"event\":\"user_input_needed\",\"data\":{\"message\":\"Claude Code가 사용자 승인을 기다리고 있습니다. Termius에서 확인해주세요.\"}}' > /dev/null 2>&1 || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },

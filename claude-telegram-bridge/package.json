@@ -1,0 +1,27 @@
+{
+  "name": "claude-telegram-bridge",
+  "version": "2.0.0",
+  "description": "WaggleBot Telegram Bridge — 파일 관리 · Git · 알림 전용",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "simple-git": "^3.22.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

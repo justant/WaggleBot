@@ -31,6 +31,12 @@ _result/
 !.claude/settings.json
 !.claude/skills/
 
+_request/
+claude-telegram-bridge/node_modules/
+claude-telegram-bridge/dist/
+claude-telegram-bridge/data/
+claude-telegram-bridge/.env
+
 test/test_layout_output
 test/test_llm_output
 test/test_tts_output
