@@ -186,6 +186,95 @@ class VideoManager:
         except Exception as e:
             logger.error("[video] ComfyUI 정리 실패: %s", e)
 
+    def _is_distilled_mode(self) -> bool:
+        """VIDEO_WORKFLOW_MODE가 distilled인지 반환한다."""
+        return self.config.get("VIDEO_WORKFLOW_MODE", "full") == "distilled"
+
+    def _resolve_attempt_params(
+        self,
+        scene,
+        attempt: int,
+        post_id: int,
+        scene_index: int,
+    ) -> dict:
+        """시도 번호(attempt)에 따른 생성 파라미터를 결정한다.
+
+        Distilled 모드: 모든 시도에서 distilled 워크플로우 사용.
+        Full 모드: 1~3차 full 워크플로우, 4차 distilled 폴백.
+
+        4단계 공통 해상도/프롬프트 다운그레이드:
+            1차: 원본 해상도 + 원본 프롬프트
+            2차: 원본 해상도 + 단순화 프롬프트
+            3차: 폴백 해상도 + 단순화 프롬프트
+            4차: 폴백 해상도 + 단순화 프롬프트 (재시도)
+        """
+        simplified = getattr(scene, "video_prompt_simplified", None) or scene.video_prompt
+        is_distilled = self._is_distilled_mode()
+
+        if attempt == 1:
+            width, height = self.config["VIDEO_RESOLUTION"]
+            num_frames = self.config["VIDEO_NUM_FRAMES"]
+            prompt = scene.video_prompt
+        elif attempt == 2:
+            width, height = self.config["VIDEO_RESOLUTION"]
+            num_frames = self.config["VIDEO_NUM_FRAMES"]
+            prompt = simplified
+            logger.warning(
+                "[video] post=%d 씬=%d 프롬프트 단순화 재시도 (attempt=%d)",
+                post_id, scene_index, attempt,
+            )
+        elif attempt == 3:
+            width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
+            num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+            prompt = simplified
+            logger.warning(
+                "[video] post=%d 씬=%d 해상도 다운그레이드 재시도 %dx%d (attempt=%d)",
+                post_id, scene_index, width, height, attempt,
+            )
+        else:
+            width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
+            num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+            prompt = simplified
+
+        # Full 모드: 4차에만 distilled 전환 / Distilled 모드: 전 시도 distilled
+        if is_distilled:
+            use_distilled = True
+            steps = self.config.get("VIDEO_STEPS_DISTILLED", 8)
+            cfg = self.config.get("VIDEO_CFG_DISTILLED", 1.0)
+            if attempt == 1:
+                logger.info(
+                    "[video] post=%d 씬=%d Distilled 모드 (steps=%d, cfg=%.1f)",
+                    post_id, scene_index, steps, cfg,
+                )
+        elif attempt <= 3:
+            use_distilled = False
+            steps = self.config.get("VIDEO_STEPS", 20) if attempt <= 2 else 15
+            cfg = self.config.get("VIDEO_CFG", 3.5)
+        else:
+            # Full 모드 4차: distilled 폴백
+            use_distilled = True
+            steps = self.config.get("VIDEO_STEPS_DISTILLED", 8)
+            cfg = self.config.get("VIDEO_CFG_DISTILLED", 1.0)
+            logger.warning(
+                "[video] post=%d 씬=%d Distilled 폴백 재시도 %dx%d (attempt=%d)",
+                post_id, scene_index, width, height, attempt,
+            )
+
+        timeout = self.config.get("VIDEO_GEN_TIMEOUT", 1200)
+        if use_distilled:
+            timeout = self.config.get("VIDEO_GEN_TIMEOUT_DISTILLED", 600)
+
+        return {
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "num_frames": num_frames,
+            "steps": steps,
+            "cfg": cfg,
+            "use_distilled": use_distilled,
+            "timeout": timeout,
+        }
+
     async def _generate_single_clip(
         self,
         scene,
@@ -194,12 +283,15 @@ class VideoManager:
     ) -> VideoGenerationResult:
         """단일 씬의 비디오 클립을 생성한다.
 
-        4단계 재시도 전략:
-        1차: 1280×720, 97프레임, 20스텝, 풀 모델
-        2차: 프롬프트 단순화, 동일 설정
-        3차: 768×512, 65프레임, 15스텝, 풀 모델
-        4차: 768×512, 65프레임, 8스텝, Distilled 폴백 (CFG=1.0)
-        모두 실패: VideoGenerationResult(success=False) 반환
+        4단계 재시도 전략 (해상도/프롬프트 다운그레이드는 모드 무관):
+            1차: 원본 해상도, 원본 프롬프트
+            2차: 원본 해상도, 단순화 프롬프트
+            3차: 폴백 해상도, 단순화 프롬프트
+            4차: 폴백 해상도, 단순화 프롬프트 (재시도)
+
+        VIDEO_WORKFLOW_MODE에 따라:
+            "distilled" → 모든 시도에서 distilled 워크플로우 (8 steps, CFG 1.0)
+            "full"      → 1~3차 full 워크플로우, 4차 distilled 폴백
 
         CUBLAS 에러 2회 연속 발생 시 조기 스킵 (CUDA 컨텍스트 오염 방지).
         """
@@ -210,81 +302,34 @@ class VideoManager:
         for attempt in range(1, max_attempts + 1):
             result.attempts = attempt
             try:
-                # Phase 6에서 미리 생성된 simplified 프롬프트 사용 (Phase 7에서 LLM 호출 제로)
-                simplified = getattr(scene, "video_prompt_simplified", None) or scene.video_prompt
-
-                if attempt == 1:
-                    width, height = self.config["VIDEO_RESOLUTION"]
-                    num_frames = self.config["VIDEO_NUM_FRAMES"]
-                    steps = self.config.get("VIDEO_STEPS", 20)
-                    cfg = self.config.get("VIDEO_CFG", 3.5)
-                    prompt = scene.video_prompt
-                    use_distilled = False
-                elif attempt == 2:
-                    prompt = simplified
-                    width, height = self.config["VIDEO_RESOLUTION"]
-                    num_frames = self.config["VIDEO_NUM_FRAMES"]
-                    steps = self.config.get("VIDEO_STEPS", 20)
-                    cfg = self.config.get("VIDEO_CFG", 3.5)
-                    use_distilled = False
-                    logger.warning(
-                        "[video] post=%d 씬=%d 프롬프트 단순화 재시도 (attempt=%d)",
-                        post_id, scene_index, attempt,
-                    )
-                elif attempt == 3:
-                    prompt = simplified
-                    width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
-                    num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
-                    steps = 15
-                    cfg = self.config.get("VIDEO_CFG", 3.5)
-                    use_distilled = False
-                    logger.warning(
-                        "[video] post=%d 씬=%d 해상도 다운그레이드 재시도 %dx%d (attempt=%d)",
-                        post_id, scene_index, width, height, attempt,
-                    )
-                else:
-                    # 4차: Distilled 폴백
-                    prompt = simplified
-                    width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
-                    num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
-                    steps = self.config.get("VIDEO_STEPS_DISTILLED", 8)
-                    cfg = self.config.get("VIDEO_CFG_DISTILLED", 1.0)
-                    use_distilled = True
-                    logger.warning(
-                        "[video] post=%d 씬=%d Distilled 폴백 재시도 %dx%d (attempt=%d)",
-                        post_id, scene_index, width, height, attempt,
-                    )
+                params = self._resolve_attempt_params(scene, attempt, post_id, scene_index)
 
                 fps = self.config.get("VIDEO_FPS", 24)
 
-                timeout = self.config.get("VIDEO_GEN_TIMEOUT", 1200)
-                if use_distilled:
-                    timeout = self.config.get("VIDEO_GEN_TIMEOUT_DISTILLED", 600)
-
                 if scene.video_mode == "t2v":
                     clip_path = await self.comfy.generate_t2v(
-                        prompt=prompt,
+                        prompt=params["prompt"],
                         negative_prompt=NEGATIVE_PROMPT,
-                        width=width, height=height,
-                        num_frames=num_frames,
+                        width=params["width"], height=params["height"],
+                        num_frames=params["num_frames"],
                         fps=fps,
-                        steps=steps,
-                        cfg=cfg,
-                        use_distilled=use_distilled,
-                        timeout=timeout,
+                        steps=params["steps"],
+                        cfg=params["cfg"],
+                        use_distilled=params["use_distilled"],
+                        timeout=params["timeout"],
                     )
                 elif scene.video_mode == "i2v":
                     clip_path = await self.comfy.generate_i2v(
-                        prompt=prompt,
+                        prompt=params["prompt"],
                         init_image_path=Path(scene.video_init_image),
                         negative_prompt=NEGATIVE_PROMPT,
-                        width=width, height=height,
-                        num_frames=num_frames,
+                        width=params["width"], height=params["height"],
+                        num_frames=params["num_frames"],
                         fps=fps,
-                        steps=steps,
-                        cfg=cfg,
-                        use_distilled=use_distilled,
-                        timeout=timeout,
+                        steps=params["steps"],
+                        cfg=params["cfg"],
+                        use_distilled=params["use_distilled"],
+                        timeout=params["timeout"],
                     )
                 else:
                     result.failure_reason = f"unknown video_mode: {scene.video_mode}"

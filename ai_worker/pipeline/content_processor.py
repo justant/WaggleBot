@@ -156,9 +156,15 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             VIDEO_RESOLUTION,
             VIDEO_RESOLUTION_FALLBACK, VIDEO_NUM_FRAMES, VIDEO_NUM_FRAMES_FALLBACK,
             VIDEO_MAX_CLIPS_PER_POST, VIDEO_MAX_RETRY,
+            VIDEO_STEPS, VIDEO_STEPS_DISTILLED,
+            VIDEO_CFG, VIDEO_CFG_DISTILLED,
+            VIDEO_FPS, VIDEO_WORKFLOW_MODE,
         )
 
-        logger.info("[content_processor] Phase 7: 비디오 클립 생성 시작 (VRAM 해제 완료)")
+        logger.info(
+            "[content_processor] Phase 7: 비디오 클립 생성 시작 "
+            "(VRAM 해제 완료, mode=%s)", VIDEO_WORKFLOW_MODE,
+        )
 
         comfy = ComfyUIClient(base_url=get_comfyui_url())
         video_config = {
@@ -170,6 +176,12 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
             "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
             "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
+            "VIDEO_STEPS": VIDEO_STEPS,
+            "VIDEO_STEPS_DISTILLED": VIDEO_STEPS_DISTILLED,
+            "VIDEO_CFG": VIDEO_CFG,
+            "VIDEO_CFG_DISTILLED": VIDEO_CFG_DISTILLED,
+            "VIDEO_FPS": VIDEO_FPS,
+            "VIDEO_WORKFLOW_MODE": VIDEO_WORKFLOW_MODE,
         }
 
         manager = VideoManager(

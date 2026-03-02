@@ -335,6 +335,8 @@ COMFYUI_RESERVE_VRAM: int = 2                  # GB 단위
 VIDEO_GEN_ENABLED: bool = os.getenv("VIDEO_GEN_ENABLED", "false").lower() == "true"
 VIDEO_GEN_TIMEOUT: int = int(os.getenv("VIDEO_GEN_TIMEOUT", "1200"))  # 20분 (RTX 3090 기준)
 VIDEO_GEN_TIMEOUT_DISTILLED: int = int(os.getenv("VIDEO_GEN_TIMEOUT_DISTILLED", "600"))  # 10분
+# "distilled" | "full" — .env에서 전환. distilled=빠른 테스트, full=고품질 최종본
+VIDEO_WORKFLOW_MODE: str = os.getenv("VIDEO_WORKFLOW_MODE", "full").lower()
 VIDEO_MODEL_FULL: str = "ltx-2-19b-dev-fp8.safetensors"              # 풀 모델 (FP8)
 VIDEO_MODEL_DISTILLED: str = "ltx-2-19b-distilled-fp8.safetensors"   # Distilled (FP8)
 VIDEO_MODEL: str = "ltx2_distilled"  # "ltx2" | "ltx2_distilled"

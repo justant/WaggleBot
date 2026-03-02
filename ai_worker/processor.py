@@ -598,16 +598,23 @@ class RobustProcessor:
         from ai_worker.video.manager import VideoCheckpoint, VideoManager
         from config.settings import (
             VIDEO_GEN_TIMEOUT,
+            VIDEO_GEN_TIMEOUT_DISTILLED,
             VIDEO_MAX_CLIPS_PER_POST,
             VIDEO_MAX_RETRY,
             VIDEO_NUM_FRAMES,
             VIDEO_NUM_FRAMES_FALLBACK,
             VIDEO_RESOLUTION,
             VIDEO_RESOLUTION_FALLBACK,
+            VIDEO_STEPS,
+            VIDEO_STEPS_DISTILLED,
+            VIDEO_CFG,
+            VIDEO_CFG_DISTILLED,
+            VIDEO_FPS,
+            VIDEO_WORKFLOW_MODE,
             get_comfyui_url,
         )
 
-        logger.info("[video] Phase 7: 비디오 클립 생성 시작")
+        logger.info("[video] Phase 7: 비디오 클립 생성 시작 (mode=%s)", VIDEO_WORKFLOW_MODE)
 
         comfy = ComfyUIClient(base_url=get_comfyui_url())
         video_config = {
@@ -616,8 +623,15 @@ class RobustProcessor:
             "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
             "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
             "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
+            "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
             "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
             "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
+            "VIDEO_STEPS": VIDEO_STEPS,
+            "VIDEO_STEPS_DISTILLED": VIDEO_STEPS_DISTILLED,
+            "VIDEO_CFG": VIDEO_CFG,
+            "VIDEO_CFG_DISTILLED": VIDEO_CFG_DISTILLED,
+            "VIDEO_FPS": VIDEO_FPS,
+            "VIDEO_WORKFLOW_MODE": VIDEO_WORKFLOW_MODE,
         }
 
         manager = VideoManager(
