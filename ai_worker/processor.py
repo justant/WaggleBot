@@ -145,7 +145,9 @@ class RobustProcessor:
                     video_path = self._safe_render_video(post, audio_path, script.to_json())
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
-                # ===== Content 저장 =====
+                # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
+                session.expire_all()
+                post = session.query(Post).filter_by(id=post.id).first()
                 self._save_content(post, session, script, audio_path, video_path)
 
                 # ===== 썸네일 생성 =====
@@ -503,6 +505,9 @@ class RobustProcessor:
             last_error: 마지막 에러
             attempts: 시도 횟수
         """
+        # stale 객체 방지: 장시간 작업 후 세션 갱신
+        session.expire_all()
+        post = session.query(Post).filter_by(id=post.id).first()
         post.status = PostStatus.FAILED
         session.commit()
 
@@ -872,6 +877,10 @@ class RobustProcessor:
                 video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
             else:
                 video_path = self._safe_render_video(post, audio_path, script.to_json())
+
+            # 렌더링 후 세션 갱신 (렌더링 중 다른 프로세스가 레코드 수정 가능)
+            session.expire_all()
+            post = session.query(Post).filter_by(id=post_id).first()
 
             self._save_content(post, session, script, audio_path, video_path)
             logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)

@@ -112,7 +112,7 @@ class ComfyUIClient:
         cfg: float = 3.5,
         seed: int = -1,
         use_distilled: bool = False,
-        timeout: int = 300,
+        timeout: int = 1200,
     ) -> Path:
         """Text-to-Video 생성.
 
@@ -202,7 +202,7 @@ class ComfyUIClient:
         cfg: float = 3.5,
         seed: int = -1,
         use_distilled: bool = False,
-        timeout: int = 300,
+        timeout: int = 1200,
     ) -> Path:
         """Image-to-Video 생성.
 
@@ -409,15 +409,13 @@ class ComfyUIClient:
             await asyncio.sleep(interval)
 
     async def _queue_and_wait(self, workflow: dict, timeout: int = 300) -> Path:
-        """워크플로우를 큐에 제출하고 완료까지 WebSocket으로 대기.
+        """워크플로우를 큐에 제출하고 완료까지 polling으로 대기.
 
         절차:
         1. POST /prompt — prompt_id 획득
-        2. WebSocket ws://{host}/ws?clientId={client_id} 연결
-        3. "executing" 메시지 수신 시 진행 상황 로깅
-        4. "executed" 이벤트에서 출력 파일 경로 추출
-        5. GET /history/{prompt_id}에서 output 파일 경로 확인
-        6. 파일이 공유 볼륨에 있으면 해당 경로 반환
+        2. GET /history/{prompt_id} polling (3초 간격)
+        3. completed=True이면 output 파일 경로 확인
+        4. 파일이 공유 볼륨에 있으면 해당 경로 반환
 
         타임아웃 시 RuntimeError("ComfyUI generation timeout") 발생.
         """
@@ -436,54 +434,10 @@ class ComfyUIClient:
             prompt_id = resp.json()["prompt_id"]
             logger.info("[comfy] 워크플로우 제출: prompt_id=%s", prompt_id)
 
-        # 2. WebSocket 대기 (연결 끊김 시 polling 폴백)
-        import websockets
-
-        ws_host = self.base_url.replace("http://", "").replace("https://", "")
-        ws_url = f"ws://{ws_host}/ws?clientId={self.client_id}"
-
+        # 2. Polling 대기 (WebSocket 레이스 컨디션 회피)
         try:
             async with asyncio.timeout(timeout):
-                try:
-                    async with websockets.connect(
-                        ws_url, ping_interval=20, ping_timeout=60,
-                    ) as ws:
-                        while True:
-                            msg = json.loads(await ws.recv())
-                            msg_type = msg.get("type")
-
-                            if msg_type == "executing":
-                                node = msg.get("data", {}).get("node")
-                                if node is None:
-                                    break
-                                logger.debug("[comfy] 실행 중: node=%s", node)
-
-                            elif msg_type == "execution_error":
-                                error_data = msg.get("data", {})
-                                err_msg = error_data.get("exception_message", "unknown")
-                                err_lower = err_msg.lower()
-                                if "cublas" in err_lower or "audio_patchify_proj" in err_lower:
-                                    logger.error(
-                                        "[comfy] CUDA/CUBLAS 에러 감지: %s — "
-                                        "LoRA/checkpoint 불일치 또는 VRAM 부족 가능성. "
-                                        "--reserve-vram 설정과 모델 파일을 점검하세요.",
-                                        err_msg[:300],
-                                    )
-                                raise RuntimeError(
-                                    f"ComfyUI 실행 에러: {err_msg}"
-                                )
-
-                            elif msg_type == "progress":
-                                data = msg.get("data", {})
-                                logger.debug(
-                                    "[comfy] 진행률: %d/%d",
-                                    data.get("value", 0), data.get("max", 1),
-                                )
-                except (websockets.exceptions.ConnectionClosed, OSError) as ws_err:
-                    logger.warning(
-                        "[comfy] WebSocket 끊김 — polling 폴백: %s", ws_err,
-                    )
-                    await self._poll_until_done(prompt_id)
+                await self._poll_until_done(prompt_id)
         except asyncio.TimeoutError:
             raise RuntimeError(f"ComfyUI generation timeout ({timeout}초)")
 
