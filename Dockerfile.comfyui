@@ -1,5 +1,10 @@
-# WaggleBot ComfyUI — LTX-2 19B FP8 비디오 생성 서버
-# GPU: RTX 3090 24GB (Ampere), VRAM 모드: --lowvram (weight streaming)
+# WaggleBot ComfyUI — LTX-2 GGUF Q4 비디오 생성 서버
+# GPU: RTX 3090 24GB (Ampere)
+#
+# GGUF Q4 전환 (2026-03-03):
+#   - UNet: FP8 checkpoint(~20GB, --lowvram 필수) → GGUF Q4(~12.7GB, GPU 직접 로드)
+#   - 텍스트 인코더: --fp8_e4m3fn-text-enc로 GPU 실행 (CPU 12분 → GPU 수초)
+#   - --lowvram 제거: 모든 모델이 22GB VRAM에 개별 적재 가능
 #
 # cu130 업그레이드 (2026-03-02):
 #   - CUDA 베이스: 12.6.3 → 13.0.1 (드라이버 591.86 호환)
@@ -47,11 +52,15 @@ RUN cd custom_nodes && \
     cd ComfyUI-LTXVideo && \
     pip install --no-cache-dir -r requirements.txt || true
 
+# ComfyUI-GGUF — GGUF 양자화 모델 로더 (UnetLoaderGGUF 노드 제공)
+# GGUF Q4 UNet(~12.7GB)을 GPU에 직접 로드하여 --lowvram 없이 실행 가능
+RUN cd custom_nodes && \
+    git clone https://github.com/city96/ComfyUI-GGUF.git && \
+    pip install --no-cache-dir gguf
+
 EXPOSE 8188
 
-# --lowvram: 19B FP8 모델을 시스템 RAM으로 오프로드 (weight streaming)
-#   → VRAM에는 ~450MB 버퍼만 상주, 나머지는 RAM에서 PCIe 스트리밍
-#   → 시스템 RAM 최소 32GB 권장 (64GB 이상 시 Swap 방지)
-# --reserve-vram 2: ComfyUI 자체용 2GB VRAM 예약 (OOM 방지)
-# 주의: --normalvram 사용 시 텍스트 인코딩 단계 OOM 발생 (GitHub Issue #12047)
-CMD ["python3", "main.py", "--listen", "0.0.0.0", "--lowvram", "--reserve-vram", "2"]
+# GGUF Q4 + --lowvram: 텍스트 인코더(24.4GB BF16) CPU 오프로드 + GGUF Q4 streaming
+# --fp8_e4m3fn-text-enc: 기본 파이프라인(non-custom-node)용 유지
+# 참고: docker-compose.yml command: 로 오버라이드됨 (이 CMD는 단독 실행 시 사용)
+CMD ["python3", "main.py", "--listen", "0.0.0.0", "--lowvram", "--reserve-vram", "2", "--fp8_e4m3fn-text-enc"]

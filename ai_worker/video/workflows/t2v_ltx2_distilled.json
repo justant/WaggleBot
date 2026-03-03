@@ -1,8 +1,8 @@
 {
   "1": {
-    "class_type": "CheckpointLoaderSimple",
+    "class_type": "UnetLoaderGGUF",
     "inputs": {
-      "ckpt_name": "ltx-2-19b-distilled-fp8.safetensors"
+      "unet_name": "ltx-2-19b-distilled_Q4_K_M.gguf"
     }
   },
   "2": {
@@ -10,7 +10,13 @@
     "inputs": {
       "ltxv_path": "ltx-2-19b-distilled-fp8.safetensors",
       "gemma_path": "gemma-3-12b-it-qat-q4_0-unquantized/model-00001-of-00005.safetensors",
-      "max_length": 1024
+      "max_length": 256
+    }
+  },
+  "21": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "LTX2_video_vae_bf16.safetensors"
     }
   },
   "15": {
@@ -95,7 +101,7 @@
     "class_type": "VAEDecode",
     "inputs": {
       "samples": ["14", 0],
-      "vae": ["1", 2]
+      "vae": ["21", 0]
     }
   },
   "18": {

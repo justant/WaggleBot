@@ -108,12 +108,26 @@ services:
       - ./checkpoints/text_encoders:/comfyui/models/text_encoders
       - ./checkpoints/latent_upscale_models:/comfyui/models/latent_upscale_models
       - ./checkpoints/loras:/comfyui/models/loras
+      - ./checkpoints/diffusion_models:/comfyui/models/diffusion_models
+      - ./checkpoints/vae:/comfyui/models/vae
       - ./ai_worker/video/workflows:/comfyui/custom_workflows
       - ./media/tmp/videos:/comfyui/output
+    # GGUF Q4 전환 (2026-03-03):
+    #   UNet: GGUF Q4(~12.7GB) — --lowvram streaming (FP8 20GB 대비 4x 작은 데이터)
+    #   텍스트 인코더: Gemma 3 12B BF16 — CPU 실행 (max_length=256으로 ~3분)
+    #   VAE: BF16(~2.3GB)
+    # --lowvram: 텍스트 인코더(24.4GB BF16)가 24GB VRAM 초과 → CPU 오프로드 필수
+    #   GGUF Q4 UNet은 streaming 데이터량 1/4 → 기존 FP8 대비 전송 속도 4x 향상
+    # --fp8_e4m3fn-text-enc: 기본 파이프라인(non-custom-node)용 유지
+    command: >-
+      python3 main.py
+      --listen 0.0.0.0
+      --lowvram
+      --reserve-vram 2
+      --fp8_e4m3fn-text-enc
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - CLI_ARGS=--listen 0.0.0.0 --lowvram --reserve-vram 2
       # CUBLAS 버전 일치: pip nvidia-cublas(13.1) + system cublasLt(13.0) 충돌 방지
       - LD_LIBRARY_PATH=/usr/local/lib/python3.11/dist-packages/nvidia/cu13/lib:/usr/local/cuda/lib64
     deploy:

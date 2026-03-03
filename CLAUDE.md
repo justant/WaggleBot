@@ -59,7 +59,7 @@ Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행.
 
 **VRAM (RTX 3090 24GB):** 2막 구조로 운영.
 1막(LLM): qwen2.5:14b 8-bit 단독 실행(~14GB). 대본/자막/프롬프트 생성.
-2막(미디어): LLM 완전 해제 후 Fish Speech(~5GB) + LTX-2(~12GB, ComfyUI --lowvram) 실행.
+2막(미디어): LLM 완전 해제 후 Fish Speech(~5GB) + LTX-2 GGUF Q4(~12.7GB, ComfyUI --lowvram) 실행.
 각 단계 후 `torch.cuda.empty_cache()` + `gc.collect()` 유지. GPU 컨텍스트 매니저 필수.
 동시 모델 로드는 총 VRAM 합계 18GB 이하일 때만 허용 (6GB 안전마진).
 ```python
@@ -68,8 +68,8 @@ with gpu_manager.managed_inference(ModelType.LLM, "name"):
 ```
 
 **FFmpeg:** `h264_nvenc` 필수. `libx264` 수동 지정 금지. 프리뷰(480x854)는 CPU 허용.
-**ComfyUI:** `--lowvram --reserve-vram 2` 고정. 19B FP8 모델은 시스템 RAM 오프로드(weight streaming).
-`--normalvram` 사용 금지 (텍스트 인코딩 OOM 발생).
+**ComfyUI:** `--lowvram --reserve-vram 2` 고정. GGUF Q4 UNet(~12.7GB) + 텍스트 인코더 CPU 오프로드.
+`--normalvram` 사용 금지 (텍스트 인코딩 OOM 발생). GGUF 로더는 ComfyUI-GGUF 커스텀 노드 사용.
 **LTX-2 프레임 규칙:** `1+8k` (9, 17, 25, ..., 97). 해상도는 8의 배수. `video_utils.validate_frame_count()` / `validate_resolution()` 사용 필수.
 
 ## 코딩 규칙
