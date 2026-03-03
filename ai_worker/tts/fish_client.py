@@ -529,11 +529,17 @@ async def _warmup_model() -> None:
     try:
         async with httpx.AsyncClient(timeout=_timeout) as client:
             try:
+                # 첫 번째: 모델 로드 트리거
                 await client.post(
                     f"{FISH_SPEECH_URL}/v1/tts",
                     json={"text": "안녕하세요.", "format": TTS_OUTPUT_FORMAT, "references": references},
                 )
-                logger.info("Fish Speech 모델 웜업 완료")
+                # 두 번째: voice cloning 안정화 확인
+                await client.post(
+                    f"{FISH_SPEECH_URL}/v1/tts",
+                    json={"text": "테스트 문장입니다.", "format": TTS_OUTPUT_FORMAT, "references": references},
+                )
+                logger.info("Fish Speech 모델 웜업 완료 (2회)")
             except Exception as exc:
                 logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
     finally:

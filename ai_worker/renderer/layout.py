@@ -380,9 +380,32 @@ def _create_base_frame(
     ht = g.get("header_title")
     if ht:
         font = _load_font(font_dir, "NotoSansKR-Bold.ttf", ht.get("font_size", 52))
-        max_chars = ht.get("max_chars", 22)
-        display = title[:max_chars] + "..." if len(title) > max_chars else title
-        lines = _wrap_korean(display, font, ht.get("max_width", 860))
+        max_chars = ht.get("max_chars", 40)
+        display = title[:max_chars] if len(title) > max_chars else title
+        max_w = ht.get("max_width", 860)
+        try:
+            display_w = font.getlength(display)
+        except AttributeError:
+            display_w = float(font.getbbox(display)[2])
+        if display_w <= max_w:
+            lines = [display]
+        else:
+            # 픽셀 기반 글자 단위 truncation — "..." 포함 최대 길이
+            suffix = "..."
+            try:
+                suffix_w = font.getlength(suffix)
+            except AttributeError:
+                suffix_w = float(font.getbbox(suffix)[2])
+            truncated = ""
+            for ch in display:
+                try:
+                    cand_w = font.getlength(truncated + ch)
+                except AttributeError:
+                    cand_w = float(font.getbbox(truncated + ch)[2])
+                if cand_w + suffix_w > max_w:
+                    break
+                truncated += ch
+            lines = [truncated.rstrip() + suffix]
         lh = int(ht.get("font_size", 52) * 1.3)
         draw = ImageDraw.Draw(base)
 
@@ -965,6 +988,44 @@ def _escape_ffmpeg_text(text: str) -> str:
     return text
 
 
+def _render_video_text_overlay(
+    text: str,
+    layout: dict,
+    font_dir: Path,
+    out_png: Path,
+) -> Path:
+    """비디오 텍스트를 투명 PNG 오버레이로 PIL 렌더링한다.
+
+    _draw_centered_text()를 사용하여 img_text/text_only와 동일한
+    폰트 렌더링 엔진(PIL 내장 stroke)으로 텍스트를 그린다.
+    """
+    ta = layout["scenes"]["video_text"]["elements"]["text_area"]
+    cw = layout["canvas"]["width"]
+    ch = layout["canvas"]["height"]
+
+    font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
+    lh = ta.get("line_height", int(ta["font_size"] * 1.4))
+    stroke_color = ta.get("stroke_color", "")
+    stroke_width = ta.get("stroke_width", 0)
+
+    overlay = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    lines = _wrap_korean(text, font, ta["max_width"])
+    total_h = len(lines) * lh
+    y_start = ta["y"] - total_h // 2
+
+    _draw_centered_text(
+        draw, lines, font, y_start, lh,
+        ta["color"], cw,
+        stroke_color=stroke_color,
+        stroke_width=stroke_width,
+    )
+
+    overlay.save(str(out_png), "PNG")
+    return out_png
+
+
 def _render_video_segment(
     base_frame: Image.Image,
     scene,
@@ -978,7 +1039,6 @@ def _render_video_segment(
     from ai_worker.video.video_utils import resize_clip_to_layout, loop_or_trim_clip
 
     va = layout["scenes"]["video_text"]["elements"]["video_area"]
-    ta = layout["scenes"]["video_text"]["elements"]["text_area"]
 
     tmp_dir = output_path.parent
     base_png = tmp_dir / f"base_{output_path.stem}.png"
@@ -995,20 +1055,16 @@ def _render_video_segment(
     fitted_clip = tmp_dir / f"fitted_{output_path.stem}.mp4"
     loop_or_trim_clip(resized_clip, fitted_clip, target_duration=duration)
 
-    font_path = font_dir / "NotoSansKR-Medium.ttf"
-    stroke_color = ta.get("stroke_color", "#000000")
-    stroke_width = ta.get("stroke_width", 3)
+    # PIL로 텍스트 오버레이 PNG 생성 (FFmpeg drawtext 대신)
+    text_overlay_png = tmp_dir / f"txtoverlay_{output_path.stem}.png"
+    _render_video_text_overlay(text, layout, font_dir, text_overlay_png)
 
     filter_complex = (
         f"[0:v]loop=loop={int(duration * 30)}:size=1:start=0,"
         f"setpts=N/{30}/TB,fps={30}[base];"
         f"[base][1:v]overlay={va['x']}:{va['y']}:shortest=1[vwith];"
-        f"[vwith]drawtext=text='{_escape_ffmpeg_text(text)}':"
-        f"fontfile='{font_path}':"
-        f"fontsize={ta['font_size']}:"
-        f"fontcolor={ta['color']}:"
-        f"borderw={stroke_width}:bordercolor={stroke_color}:"
-        f"x=(w-text_w)/2:y={ta['y']}[vout]"
+        f"[2:v]scale={layout['canvas']['width']}:{layout['canvas']['height']}[txt];"
+        f"[vwith][txt]overlay=0:0[vout]"
     )
 
     codec = _resolve_codec()
@@ -1018,6 +1074,7 @@ def _render_video_segment(
         "ffmpeg", "-y",
         "-i", str(base_png),
         "-i", str(fitted_clip),
+        "-i", str(text_overlay_png),
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-t", f"{duration:.3f}",
@@ -1035,6 +1092,7 @@ def _render_video_segment(
     base_png.unlink(missing_ok=True)
     resized_clip.unlink(missing_ok=True)
     fitted_clip.unlink(missing_ok=True)
+    text_overlay_png.unlink(missing_ok=True)
 
     logger.debug("[layout] video_segment 생성: %s (%.2fs)", output_path.name, duration)
     return output_path

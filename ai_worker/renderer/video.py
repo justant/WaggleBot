@@ -70,7 +70,7 @@ def render_preview(
     width, height = 480, 854
     codec = "libx264"
     bgm_vol = float(cfg.get("bgm_volume", "0.15"))
-    font_name = cfg.get("subtitle_font", "NanumGothic")
+    font_name = cfg.get("subtitle_font", "NotoSansKR-Medium")
     font = _resolve_font_path(font_name)
 
     output_path = _site_video_dir / f"post_{post.origin_id}_SD.mp4"
@@ -503,15 +503,14 @@ def _compose_final(
         wrapped    = _wrap_korean(clean_text, width=18)
         text_file  = _TEMP_DIR / f"drawtext_{output_path.stem}.txt"
         text_file.write_text(wrapped, encoding="utf-8")
-        fontsize   = int(width * 0.042)   # ~45px @1080w
+        fontsize   = int(width * 0.043)   # ~46px @1080w (layout.py와 동일)
         fontfile_opt = f":fontfile={font}" if font else ""
         dt_filter = (
             f"[0:v]drawtext=textfile='{text_file}'"
             f"{fontfile_opt}"
             f":fontsize={fontsize}"
             f":fontcolor=white"
-            f":borderw=3:bordercolor=black"
-            f":box=1:boxcolor=black@0.5:boxborderw=10"
+            f":borderw=2:bordercolor=black"
             f":x=(w-text_w)/2:y=h*0.75"
             f":line_spacing=12"
         )

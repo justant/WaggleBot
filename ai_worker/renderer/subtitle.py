@@ -67,30 +67,31 @@ def _build_styles(mood: str, fontname: str, base_size: int) -> str:
     mv = 60  # 화면 하단 여백 픽셀
 
     # (name, fontname, size, primary, outline, back, bold, italic, outline_w, shadow, align, mv)
+    # Bold=0, outline≤2, shadow=0 으로 통일 → layout.py 정적 씬과 동일한 두께
     presets: dict[str, list[tuple]] = {
         "shocking": [
-            ("Hook",    fontname, base_size + 10, _WHITE,  _RED,        _TRANSPARENT, 1, 0, 4, 2, 2, mv),
-            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _TRANSPARENT, 1, 0, 3, 1, 2, mv),
-            ("Comment", fontname, base_size - 6,  _CYAN,   _BLACK,      _SEMI_BLACK,  0, 1, 2, 1, 2, mv),
-            ("Closer",  fontname, base_size - 2,  _YELLOW, _BLACK,      _TRANSPARENT, 1, 0, 3, 1, 2, mv),
+            ("Hook",    fontname, base_size + 6,  _WHITE,  _RED,        _TRANSPARENT, 0, 0, 2, 0, 2, mv),
+            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
+            ("Comment", fontname, base_size - 4,  _CYAN,   _BLACK,      _SEMI_BLACK,  0, 1, 2, 0, 2, mv),
+            ("Closer",  fontname, base_size - 2,  _YELLOW, _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
         ],
         "serious": [
-            ("Hook",    fontname, base_size + 6,  _YELLOW, _BLACK,      _SEMI_BLACK,  1, 0, 0, 0, 2, mv),
-            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _SEMI_BLACK,  1, 0, 0, 0, 2, mv),
-            ("Comment", fontname, base_size - 6,  _CYAN,   _BLACK,      _SEMI_BLACK,  0, 1, 0, 0, 2, mv),
+            ("Hook",    fontname, base_size + 4,  _YELLOW, _BLACK,      _SEMI_BLACK,  0, 0, 0, 0, 2, mv),
+            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _SEMI_BLACK,  0, 0, 0, 0, 2, mv),
+            ("Comment", fontname, base_size - 4,  _CYAN,   _BLACK,      _SEMI_BLACK,  0, 1, 0, 0, 2, mv),
             ("Closer",  fontname, base_size - 2,  _WHITE,  _BLACK,      _SEMI_BLACK,  0, 0, 0, 0, 2, mv),
         ],
         "heartwarming": [
-            ("Hook",    fontname, base_size + 6,  _YELLOW, _BLACK,      _TRANSPARENT, 1, 0, 3, 1, 2, mv),
-            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _TRANSPARENT, 0, 0, 3, 1, 2, mv),
-            ("Comment", fontname, base_size - 6,  _YELLOW, _BLACK,      _SEMI_BLACK,  0, 1, 2, 1, 2, mv),
-            ("Closer",  fontname, base_size - 2,  _WHITE,  _BLACK,      _TRANSPARENT, 0, 0, 3, 1, 2, mv),
+            ("Hook",    fontname, base_size + 4,  _YELLOW, _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
+            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
+            ("Comment", fontname, base_size - 4,  _YELLOW, _BLACK,      _SEMI_BLACK,  0, 1, 2, 0, 2, mv),
+            ("Closer",  fontname, base_size - 2,  _WHITE,  _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
         ],
         "funny": [
-            ("Hook",    fontname, base_size + 8,  _YELLOW, _BLACK,      _TRANSPARENT, 1, 0, 3, 2, 2, mv),
-            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _TRANSPARENT, 1, 0, 3, 1, 2, mv),
-            ("Comment", fontname, base_size - 6,  _CYAN,   _BLACK,      _SEMI_BLACK,  0, 1, 2, 1, 2, mv),
-            ("Closer",  fontname, base_size - 2,  _YELLOW, _BLACK,      _TRANSPARENT, 1, 0, 3, 1, 2, mv),
+            ("Hook",    fontname, base_size + 6,  _YELLOW, _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
+            ("Default", fontname, base_size,      _WHITE,  _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
+            ("Comment", fontname, base_size - 4,  _CYAN,   _BLACK,      _SEMI_BLACK,  0, 1, 2, 0, 2, mv),
+            ("Closer",  fontname, base_size - 2,  _YELLOW, _BLACK,      _TRANSPARENT, 0, 0, 2, 0, 2, mv),
         ],
     }
 
@@ -102,7 +103,7 @@ def _build_styles(mood: str, fontname: str, base_size: int) -> str:
     bubble_style = _style_line(
         "CommentBubble", fontname, base_size - 2,
         _BLACK, _BLACK, _YELLOW_SEMI,
-        1, 0, 0, 0,
+        0, 0, 0, 0,
         alignment=8, margin_v=80, border_style=3,
     )
     return base_styles + "\n" + bubble_style
@@ -210,7 +211,7 @@ def build_ass(
     height: int,
 ) -> str:
     """ASS 자막 파일 전체 내용(문자열) 생성."""
-    base_size    = max(40, int(width * 0.050))   # 1080w → 54px
+    base_size    = max(40, int(width * 0.043))   # 1080w → 46px (layout.py와 동일)
     style_block  = _build_styles(mood, fontname, base_size)
 
     header_lines = [

@@ -38,11 +38,11 @@
       "x":50,
       "y": 190,
       "max_width": 980,
-      "font_size": 55,
+      "font_size": 46,
       "font_weight": "bold",
       "align": "left",
       "color": "#000000",
-      "max_chars": 19
+      "max_chars": 40
     }
   },
   "scenes": {
@@ -52,7 +52,7 @@
     },
     "img_text": {
       "description": "이미지 + 텍스트 — img_text.svg",
-      "text_max_chars": 20,
+      "text_max_chars": 28,
       "elements": {
         "image_area": {
           "x": 90,
@@ -66,29 +66,29 @@
           "x": 540,
           "y": 1570,
           "max_width": 900,
-          "font_size": 60,
+          "font_size": 46,
           "font_weight": "medium",
           "align": "center",
           "color": "#000000",
-          "line_height": 90,
+          "line_height": 70,
           "max_lines": 2
         }
       }
     },
     "text_only": {
       "description": "텍스트만, 동적 Y좌표 — text_only.svg",
-      "text_max_chars": 20,
+      "text_max_chars": 28,
       "elements": {
         "text_area": {
           "x": 540,
           "max_width": 950,
-          "font_size": 60,
+          "font_size": 46,
           "font_weight": "medium",
           "align": "center",
           "color": "#000000",
           "prev_text_color": "#888888",
-          "line_height": 110,
-          "slot_gap": 5,
+          "line_height": 80,
+          "slot_gap": 10,
           "y_coords": [550, 700, 850],
           "max_slots": 3
         }
@@ -133,7 +133,7 @@
     },
     "video_text": {
       "description": "비디오 배경 + 하단 텍스트 — LTX-Video 클립 위에 자막 렌더링",
-      "text_max_chars": 20,
+      "text_max_chars": 28,
       "elements": {
         "video_area": {
           "x": 90,
@@ -147,14 +147,12 @@
           "x": 540,
           "y": 1570,
           "max_width": 900,
-          "font_size": 60,
+          "font_size": 46,
           "font_weight": "medium",
           "align": "center",
-          "color": "#FFFFFF",
-          "line_height": 90,
-          "max_lines": 2,
-          "stroke_color": "#000000",
-          "stroke_width": 3
+          "color": "#000000",
+          "line_height": 70,
+          "max_lines": 2
         }
       }
     }
@@ -162,11 +160,6 @@
   "layout_algorithm": {
     "img_heavy_threshold": 0.8,
     "img_mixed_threshold": 0.3,
-    "sfx": {
-      "intro":     "click.mp3",
-      "img_text":  "shutter.mp3",
-      "text_only": "pop.mp3",
-      "outro":     "ding.mp3"
-    }
+    "sfx": {}
   }
 }
