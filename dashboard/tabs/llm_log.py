@@ -1,4 +1,9 @@
-"""LLM 호출 이력 (LLM Log) 탭."""
+"""LLM 호출 이력 (LLM Log) 탭.
+
+두 가지 서브뷰로 구분:
+- 대본 LLM: chunk, generate_script, generate_script_editor
+- 비디오 LLM: video_prompt_t2v, video_prompt_i2v, video_prompt_simplify
+"""
 
 import json
 from datetime import datetime, timezone, timedelta
@@ -9,6 +14,16 @@ from sqlalchemy import func
 
 from db.models import Post, LLMLog
 from db.session import SessionLocal
+
+# ── 카테고리 정의 ────────────────────────────────────
+_SCRIPT_TYPES = ("chunk", "generate_script", "generate_script_editor")
+_VIDEO_TYPES = ("video_prompt_t2v", "video_prompt_i2v", "video_prompt_simplify")
+
+_VIDEO_MODE_LABELS = {
+    "video_prompt_t2v": "T2V",
+    "video_prompt_i2v": "I2V",
+    "video_prompt_simplify": "Simplify",
+}
 
 
 def _copyable_code(text: str, key: str) -> None:
@@ -91,6 +106,107 @@ def _copyable_code(text: str, key: str) -> None:
     )
 
 
+def _render_stats(db, cutoff: datetime, call_types: tuple[str, ...]) -> None:
+    """통계 카드 렌더링."""
+    base_q = db.query(LLMLog).filter(
+        LLMLog.created_at >= cutoff,
+        LLMLog.call_type.in_(call_types),
+    )
+    total = base_q.count()
+    success_cnt = base_q.filter(LLMLog.success == True).count()  # noqa: E712
+    avg_dur = (
+        db.query(func.avg(LLMLog.duration_ms))
+        .filter(LLMLog.created_at >= cutoff, LLMLog.call_type.in_(call_types))
+        .scalar()
+        or 0
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("총 호출 (기간)", total)
+    c2.metric(
+        "성공률",
+        f"{(success_cnt / total * 100):.1f}%" if total else "N/A",
+    )
+    c3.metric("평균 응답시간", f"{avg_dur:.0f}ms" if avg_dur else "N/A")
+
+
+def _render_script_log(log, posts_map: dict[int, Post]) -> None:
+    """대본 LLM 로그 항목 하나를 expander로 렌더링."""
+    is_editor = log.call_type == "generate_script_editor"
+    if log.success:
+        icon = "🔵" if is_editor else "✅"
+    else:
+        icon = "❌"
+    post = posts_map.get(log.post_id) if log.post_id else None
+    site = post.site_code if post else "-"
+    title = (post.title[:30] + "…") if post and len(post.title) > 30 else (post.title if post else "-")
+    img_count = len(post.images) if post and isinstance(post.images, list) else 0
+    hdr = f"{icon} #{log.id} {site} | {title} | 이미지 {img_count}장"
+
+    with st.expander(hdr):
+        mc, rc = st.columns(2)
+        with mc:
+            st.markdown(
+                f"**모델:** `{log.model_name or '-'}`  \n"
+                f"**본문 길이:** {log.content_length}자"
+            )
+            if log.error_message:
+                st.error(log.error_message)
+        with rc:
+            if log.parsed_result:
+                st.markdown("**파싱 결과**")
+                st.json(log.parsed_result)
+
+        st.markdown("**프롬프트**")
+        _copyable_code(log.prompt_text or "(없음)", key=f"prompt_{log.id}")
+        st.markdown("**LLM 응답**")
+        _copyable_code(log.raw_response or "(없음)", key=f"response_{log.id}")
+
+
+def _render_video_log(log, posts_map: dict[int, Post]) -> None:
+    """비디오 LLM 로그 항목 하나를 expander로 렌더링."""
+    icon = "✅" if log.success else "❌"
+    mode_label = _VIDEO_MODE_LABELS.get(log.call_type, log.call_type)
+
+    # parsed_result에서 씬 인덱스 추출
+    scene_idx = "-"
+    video_mode = mode_label
+    if isinstance(log.parsed_result, dict):
+        si = log.parsed_result.get("scene_index")
+        if si is not None:
+            scene_idx = str(si)
+        vm = log.parsed_result.get("video_mode")
+        if vm:
+            video_mode = vm.upper()
+
+    post = posts_map.get(log.post_id) if log.post_id else None
+    site = post.site_code if post else "-"
+    title = (post.title[:30] + "…") if post and len(post.title) > 30 else (post.title if post else "-")
+
+    hdr = f"{icon} #{log.id} [{mode_label}] 씬 {scene_idx} | {site} | {title}"
+
+    with st.expander(hdr):
+        mc, rc = st.columns(2)
+        with mc:
+            st.markdown(
+                f"**유형:** `{mode_label}` ({video_mode})  \n"
+                f"**씬 번호:** {scene_idx}  \n"
+                f"**응답시간:** {log.duration_ms or 0}ms  \n"
+                f"**입력 길이:** {log.content_length}자"
+            )
+            if log.error_message:
+                st.error(log.error_message)
+        with rc:
+            if log.raw_response:
+                st.markdown("**생성된 프롬프트**")
+                st.info(log.raw_response)
+
+        st.markdown("**LLM 입력 (시스템 프롬프트)**")
+        _copyable_code(log.prompt_text or "(없음)", key=f"vprompt_{log.id}")
+        st.markdown("**LLM 응답 (원시)**")
+        _copyable_code(log.raw_response or "(없음)", key=f"vresponse_{log.id}")
+
+
 def render() -> None:
     """LLM 이력 탭 렌더링."""
 
@@ -101,53 +217,97 @@ def render() -> None:
         if st.button("🔄 새로고침", key="llm_refresh_btn", width="stretch"):
             st.rerun()
 
-    # 필터 컨트롤
-    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-    with col_f1:
-        filter_call_type = st.selectbox(
-            "호출 유형",
-            ["전체", "chunk", "generate_script", "generate_script_editor"],
-            key="llm_filter_type",
-        )
-    with col_f2:
-        filter_success = st.selectbox(
-            "성공 여부", ["전체", "성공", "실패"], key="llm_filter_success"
-        )
-    with col_f3:
-        filter_days = st.selectbox(
-            "기간",
-            [7, 30, 90],
-            format_func=lambda d: f"최근 {d}일",
-            key="llm_filter_days",
-        )
-    with col_f4:
-        filter_post_id = st.number_input(
-            "Post ID",
-            min_value=0,
-            value=0,
-            step=1,
-            key="llm_filter_post_id",
-            help="0이면 전체 표시",
-        )
+    # ── 서브뷰 선택 ─────────────────────────────────
+    sub_view = st.radio(
+        "카테고리",
+        ["📝 대본 LLM (TTS·씬)", "🎬 비디오 LLM (씬별 프롬프트)"],
+        horizontal=True,
+        key="llm_sub_view",
+    )
+    is_video_view = sub_view.startswith("🎬")
+
+    # ── 필터 컨트롤 ─────────────────────────────────
+    if is_video_view:
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            filter_call_type = st.selectbox(
+                "프롬프트 유형",
+                ["전체", "video_prompt_t2v", "video_prompt_i2v", "video_prompt_simplify"],
+                format_func=lambda v: {
+                    "전체": "전체",
+                    "video_prompt_t2v": "T2V (텍스트→비디오)",
+                    "video_prompt_i2v": "I2V (이미지→비디오)",
+                    "video_prompt_simplify": "Simplify (재시도용)",
+                }.get(v, v),
+                key="llm_vfilter_type",
+            )
+        with col_f2:
+            filter_success = st.selectbox(
+                "성공 여부", ["전체", "성공", "실패"], key="llm_vfilter_success"
+            )
+        with col_f3:
+            filter_days = st.selectbox(
+                "기간",
+                [7, 30, 90],
+                format_func=lambda d: f"최근 {d}일",
+                key="llm_vfilter_days",
+            )
+        with col_f4:
+            filter_post_id = st.number_input(
+                "Post ID",
+                min_value=0,
+                value=0,
+                step=1,
+                key="llm_vfilter_post_id",
+                help="0이면 전체 표시",
+            )
+        active_types = _VIDEO_TYPES
+    else:
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            filter_call_type = st.selectbox(
+                "호출 유형",
+                ["전체", "chunk", "generate_script", "generate_script_editor"],
+                key="llm_filter_type",
+            )
+        with col_f2:
+            filter_success = st.selectbox(
+                "성공 여부", ["전체", "성공", "실패"], key="llm_filter_success"
+            )
+        with col_f3:
+            filter_days = st.selectbox(
+                "기간",
+                [7, 30, 90],
+                format_func=lambda d: f"최근 {d}일",
+                key="llm_filter_days",
+            )
+        with col_f4:
+            filter_post_id = st.number_input(
+                "Post ID",
+                min_value=0,
+                value=0,
+                step=1,
+                key="llm_filter_post_id",
+                help="0이면 전체 표시",
+            )
+        active_types = _SCRIPT_TYPES
 
     with SessionLocal() as _db:
         _cutoff = datetime.now(timezone.utc) - timedelta(days=filter_days)
 
-        # 전체 기간 통계 (호출유형/성공여부 필터 무관)
-        _base_q = _db.query(LLMLog).filter(LLMLog.created_at >= _cutoff)
-        _total_period = _base_q.count()
-        _success_period = _base_q.filter(LLMLog.success == True).count()  # noqa: E712
-        _avg_dur = (
-            _db.query(func.avg(LLMLog.duration_ms))
-            .filter(LLMLog.created_at >= _cutoff)
-            .scalar()
-            or 0
-        )
+        # 통계
+        _render_stats(_db, _cutoff, active_types)
 
-        # 필터 적용 로그 목록
+        st.divider()
+
+        # 필터 적용 로그 조회
         _fq = _db.query(LLMLog).filter(LLMLog.created_at >= _cutoff)
+
         if filter_call_type != "전체":
             _fq = _fq.filter(LLMLog.call_type == filter_call_type)
+        else:
+            _fq = _fq.filter(LLMLog.call_type.in_(active_types))
+
         if filter_success == "성공":
             _fq = _fq.filter(LLMLog.success == True)  # noqa: E712
         elif filter_success == "실패":
@@ -157,8 +317,8 @@ def render() -> None:
 
         _logs = _fq.order_by(LLMLog.created_at.desc()).limit(200).all()
 
-        # 로그에 연결된 Post 일괄 조회 (헤더 표시용)
-        _post_ids = {_l.post_id for _l in _logs if _l.post_id is not None}
+        # Post 일괄 조회
+        _post_ids = {lg.post_id for lg in _logs if lg.post_id is not None}
         _posts_map: dict[int, Post] = {}
         if _post_ids:
             _posts_map = {
@@ -166,56 +326,12 @@ def render() -> None:
                 for p in _db.query(Post).filter(Post.id.in_(_post_ids)).all()
             }
 
-    # 통계 카드
-    _sc1, _sc2, _sc3 = st.columns(3)
-    _sc1.metric("총 호출 (기간)", _total_period)
-    _sc2.metric(
-        "성공률",
-        f"{(_success_period / _total_period * 100):.1f}%" if _total_period else "N/A",
-    )
-    _sc3.metric("평균 응답시간", f"{_avg_dur:.0f}ms" if _avg_dur else "N/A")
-
-    st.divider()
-
     if not _logs:
         st.info("조건에 맞는 이력이 없습니다.")
     else:
         st.caption(f"최근 {filter_days}일 이력 (최대 200건 표시)")
         for _log in _logs:
-            _is_editor = _log.call_type == "generate_script_editor"
-            if _log.success:
-                _icon = "🔵" if _is_editor else "✅"
+            if is_video_view:
+                _render_video_log(_log, _posts_map)
             else:
-                _icon = "❌"
-            _post = _posts_map.get(_log.post_id) if _log.post_id else None
-            _site = _post.site_code if _post else "-"
-            _title = (_post.title[:30] + "…") if _post and len(_post.title) > 30 else (_post.title if _post else "-")
-            _img_count = len(_post.images) if _post and isinstance(_post.images, list) else 0
-            _hdr = (
-                f"{_icon} #{_log.id} "
-                f"{_site} | {_title} | 이미지 {_img_count}장"
-            )
-            with st.expander(_hdr):
-                _mc, _rc = st.columns(2)
-                with _mc:
-                    st.markdown(
-                        f"**모델:** `{_log.model_name or '-'}`  \n"
-                        f"**본문 길이:** {_log.content_length}자"
-                    )
-                    if _log.error_message:
-                        st.error(_log.error_message)
-                with _rc:
-                    if _log.parsed_result:
-                        st.markdown("**파싱 결과**")
-                        st.json(_log.parsed_result)
-
-                st.markdown("**프롬프트**")
-                _copyable_code(
-                    _log.prompt_text or "(없음)",
-                    key=f"prompt_{_log.id}",
-                )
-                st.markdown("**LLM 응답**")
-                _copyable_code(
-                    _log.raw_response or "(없음)",
-                    key=f"response_{_log.id}",
-                )
+                _render_script_log(_log, _posts_map)

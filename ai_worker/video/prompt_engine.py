@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 from ai_worker.llm.client import call_ollama_raw
+from ai_worker.llm.logger import LLMCallTimer, log_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -126,18 +127,23 @@ class VideoPromptEngine:
         title: str = "",
         body_summary: str = "",
         has_init_image: bool = False,
+        post_id: int | None = None,
+        scene_index: int | None = None,
     ) -> str:
         """한국어 텍스트 → LTX-2용 영어 프롬프트 변환."""
         korean_text = " ".join(text_lines)
         if title:
             korean_text = f"[제목: {title}] {korean_text}"
 
+        video_mode = "i2v" if has_init_image else "t2v"
+        call_type = f"video_prompt_{video_mode}"
+
         if has_init_image:
             prompt_input = _I2V_SYSTEM.format(
                 korean_text=korean_text,
                 mood=mood,
             )
-            raw = call_ollama_raw(prompt=prompt_input, max_tokens=120, temperature=0.3)
+            max_tok, temp = 120, 0.3
         else:
             style_hint = _get_style_hint(mood)
             prompt_input = _T2V_PROMPT_SYSTEM_V2.format(
@@ -145,11 +151,41 @@ class VideoPromptEngine:
                 korean_text=korean_text,
                 mood=mood,
             )
-            raw = call_ollama_raw(prompt=prompt_input, max_tokens=180, temperature=0.4)
+            max_tok, temp = 180, 0.4
+
+        success = True
+        error_msg: str | None = None
+        raw = ""
+        with LLMCallTimer() as timer:
+            try:
+                raw = call_ollama_raw(prompt=prompt_input, max_tokens=max_tok, temperature=temp)
+            except Exception as exc:
+                success = False
+                error_msg = str(exc)
+                raise
+            finally:
+                _scene_meta = {"scene_index": scene_index, "video_mode": video_mode}
+                log_llm_call(
+                    call_type=call_type,
+                    post_id=post_id,
+                    model_name="",
+                    prompt_text=prompt_input,
+                    raw_response=raw,
+                    parsed_result=_scene_meta,
+                    content_length=len(korean_text),
+                    success=success,
+                    error_message=error_msg,
+                    duration_ms=timer.elapsed_ms,
+                )
 
         return _clean_prompt(raw)
 
-    def simplify_prompt(self, original_prompt: str) -> str:
+    def simplify_prompt(
+        self,
+        original_prompt: str,
+        post_id: int | None = None,
+        scene_index: int | None = None,
+    ) -> str:
         """재시도용 프롬프트 단순화 (2-3문장).
 
         카메라 + 주요 동작만 남기고 오디오, 세부 조명, 보조 캐릭터 제거.
@@ -161,7 +197,30 @@ class VideoPromptEngine:
             "Present tense, one paragraph.\n\n"
             f"Original: {original_prompt}\n\nSimplified:"
         )
-        raw = call_ollama_raw(prompt=system, max_tokens=80, temperature=0.2)
+        success = True
+        error_msg: str | None = None
+        raw = ""
+        with LLMCallTimer() as timer:
+            try:
+                raw = call_ollama_raw(prompt=system, max_tokens=80, temperature=0.2)
+            except Exception as exc:
+                success = False
+                error_msg = str(exc)
+                raise
+            finally:
+                _scene_meta = {"scene_index": scene_index, "video_mode": "simplify"}
+                log_llm_call(
+                    call_type="video_prompt_simplify",
+                    post_id=post_id,
+                    model_name="",
+                    prompt_text=system,
+                    raw_response=raw,
+                    parsed_result=_scene_meta,
+                    content_length=len(original_prompt),
+                    success=success,
+                    error_message=error_msg,
+                    duration_ms=timer.elapsed_ms,
+                )
         return _clean_prompt(raw)
 
     def generate_batch(
@@ -170,6 +229,7 @@ class VideoPromptEngine:
         mood: str,
         title: str = "",
         body_summary: str = "",
+        post_id: int | None = None,
     ) -> list:
         """여러 씬의 비디오 프롬프트를 일괄 생성.
 
@@ -190,10 +250,14 @@ class VideoPromptEngine:
                     title=title,
                     body_summary=body_summary,
                     has_init_image=(scene.video_mode == "i2v"),
+                    post_id=post_id,
+                    scene_index=i,
                 )
                 # Phase 7 재시도용 simplified 프롬프트 미리 생성 (LLM 호출 제로 보장)
                 scene.video_prompt_simplified = self.simplify_prompt(
-                    scene.video_prompt
+                    scene.video_prompt,
+                    post_id=post_id,
+                    scene_index=i,
                 )
                 logger.info(
                     "[prompt] 씬 %d 프롬프트 생성 완료 (%d자, simplified %d자)",

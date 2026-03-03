@@ -134,6 +134,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             mood=script.get("mood", "daily"),
             title=post.title or "",
             body_summary=body_summary,
+            post_id=getattr(post, "id", None),
         )
         logger.info(
             "[content_processor] Phase 6 완료: %d개 프롬프트 생성",

@@ -151,8 +151,12 @@ class LLMLog(Base):
     """LLM 호출 이력 — 프롬프트 튜닝용 상세 로그.
 
     call_type:
-        'generate_script' — llm.generate_script() (ScriptData 생성)
-        'chunk'           — llm_chunker.chunk_with_llm() (청킹 전용)
+        'generate_script'        — llm.generate_script() (ScriptData 생성)
+        'chunk'                  — llm_chunker.chunk_with_llm() (청킹 전용)
+        'generate_script_editor' — 대시보드 편집기에서 재생성
+        'video_prompt_t2v'       — T2V 비디오 프롬프트 생성
+        'video_prompt_i2v'       — I2V 비디오 프롬프트 생성
+        'video_prompt_simplify'  — 재시도용 프롬프트 단순화
     """
     __tablename__ = "llm_logs"
     __table_args__ = (

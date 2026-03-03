@@ -568,6 +568,7 @@ class RobustProcessor:
             mood=script.mood,
             title=post_title,
             body_summary=body_summary,
+            post_id=post_id,
         )
         logger.info(
             "[video] Phase 6 완료: %d개 프롬프트 생성",
