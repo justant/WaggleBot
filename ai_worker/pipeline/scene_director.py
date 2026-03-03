@@ -386,10 +386,10 @@ class SceneDirector:
             intro_img = self._images.pop(0)
             intro_type = "img_text"
         else:
-            # 이미지 없으면 mood 폴더에서 랜덤
+            # 이미지 없으면 mood 폴더에서 랜덤 (로컬 에셋이므로 타입은 항상 intro)
             intro_asset = _pick_asset("intro_image_dir")
             intro_img = str(intro_asset) if intro_asset else None
-            intro_type = "img_only" if intro_img else "intro"
+            intro_type = "intro"
 
         scenes.append(SceneDecision(
             type=intro_type,

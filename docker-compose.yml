@@ -153,12 +153,16 @@ services:
       - ./media:/app/media
       - /app/venv
       - /app/__pycache__
+      # WSL2: libnvidia-encode.so.1 등 NVENC 라이브러리 마운트
+      - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
     environment:
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen2.5:7b}"
       LLM_MODEL: "${OLLAMA_MODEL:-qwen2.5:7b}"
       DEFAULT_MODEL: "${OLLAMA_MODEL:-qwen2.5:7b}"
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
+      # WSL2: NVENC 라이브러리 경로
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
       OLLAMA_HOST: "http://host.docker.internal:11434"
       OLLAMA_BASE_URL: "http://host.docker.internal:11434"
@@ -226,7 +230,7 @@ services:
     volumes:
       - ./:/wagglebot:ro
       - ./_request:/wagglebot/_request
-      - ./_result:/wagglebot/_result:ro
+      - ./_result:/wagglebot/_result
       - ./claude-telegram-bridge/data:/app/data
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}

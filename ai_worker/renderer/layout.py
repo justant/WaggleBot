@@ -208,14 +208,15 @@ def _run_async(coro) -> object:
 
 
 def _resolve_codec() -> str:
-    """RTX 3090 전용 — 항상 h264_nvenc 반환."""
-    return "h264_nvenc"
+    """h264_nvenc 우선, 불가 시 libx264 폴백."""
+    from ai_worker.video.video_utils import _nvenc_available
+    return "h264_nvenc" if _nvenc_available() else "libx264"
 
 
 def _get_encoder_args(codec: str) -> list[str]:
     if codec == "h264_nvenc":
         return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p"]
 
 
 # ---------------------------------------------------------------------------

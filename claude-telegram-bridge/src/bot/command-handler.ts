@@ -33,7 +33,7 @@ export class CommandHandler {
       );
     }));
 
-    bot.onText(/\/help/, auth(async (msg) => {
+    bot.onText(/\/h(?:elp)?$/, auth(async (msg) => {
       await bot.sendMessage(msg.chat.id, HELP_TEXT);
     }));
 
@@ -42,26 +42,27 @@ export class CommandHandler {
     }));
 
     // === File Commands ===
-    bot.onText(/\/request/, auth(async (msg) => {
+    bot.onText(/\/rq(?:\s+(.+))?/, auth(async (msg, match) => {
+      const arg = match?.[1]?.trim();
+      if (arg === "-d") {
+        await this.fileHandler.deleteRequestFiles(msg.chat.id);
+        return;
+      }
       await this.fileHandler.listRequestFiles(msg.chat.id);
     }));
 
-    bot.onText(/\/result/, auth(async (msg) => {
+    bot.onText(/\/rs(?:\s+(.+))?/, auth(async (msg, match) => {
+      const arg = match?.[1]?.trim();
+      if (arg === "-d") {
+        await this.fileHandler.deleteResultFiles(msg.chat.id);
+        return;
+      }
       await this.fileHandler.listResultFiles(msg.chat.id);
     }));
 
-    bot.onText(/\/files(?:\s+(.+))?/, auth(async (msg, match) => {
+    bot.onText(/\/f(?:\s+(.+))?/, auth(async (msg, match) => {
       const subPath = match?.[1]?.trim() || ".";
       await this.explorer.browse(msg.chat.id, subPath);
-    }));
-
-    bot.onText(/\/send(?:\s+(.+))?/, auth(async (msg, match) => {
-      const filePath = match?.[1]?.trim();
-      if (!filePath) {
-        await bot.sendMessage(msg.chat.id, "사용법: /send <파일경로>\n예: /send CLAUDE.md");
-        return;
-      }
-      await this.fileHandler.sendFile(msg.chat.id, filePath);
     }));
 
     // === Git Commands ===
@@ -114,6 +115,12 @@ export class CommandHandler {
       case "dir":
         await this.explorer.browse(chatId, value);
         break;
+      case "reqpage":
+        await this.fileHandler.listRequestFiles(chatId, parseInt(value, 10) || 0);
+        break;
+      case "respage":
+        await this.fileHandler.listResultFiles(chatId, parseInt(value, 10) || 0);
+        break;
       case "noop":
         break;
       default:
@@ -151,22 +158,24 @@ const HELP_TEXT = `🐝 WaggleBot Telegram Bridge
 Claude Code 명령은 Termius + tmux에서 직접 수행
 
 📂 파일 관리
-/request - 작업지시서 목록 (_request/)
-/result - 결과 보고서 목록 (_result/)
-/files [경로] - 디렉토리 탐색
-/send <파일> - 파일 전송
+/rq — 작업지시서 목록 (_request/)
+/rq -d — 작업지시서 전체 삭제
+/rs — 결과 보고서 목록 (_result/)
+/rs -d — 결과 보고서 전체 삭제
+/f [경로] — 디렉토리 탐색
 
 🔧 Git (읽기전용)
-/git [명령] - status, log, diff, branch
+/git [명령] — status, log, diff, branch
 
 📊 기타
-/brief - 프로젝트 브리핑
-/menu - 메인 메뉴
+/brief — 프로젝트 브리핑
+/menu — 메인 메뉴
+/h — 이 도움말
 
 📎 파일 업로드
-.md 파일을 전송하면 _request/에 저장됩니다.
+파일을 전송하면 _request/에 저장됩니다.
 
 🔔 자동 알림
-- Claude Code 작업 완료 시 결과 파일 전송
-- Claude Code 권한 요청 시 알림
-- 일일 브리핑 (설정 시)`;
+• Claude Code 작업 완료 시 결과 파일 전송
+• Claude Code 권한 요청 시 알림
+• 일일 브리핑 (설정 시)`;

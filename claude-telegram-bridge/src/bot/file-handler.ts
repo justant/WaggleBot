@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import TelegramBot from "node-telegram-bot-api";
 import { TelegramBotWrapper } from "./telegram-bot.js";
-import { fileListKeyboard } from "./keyboard.js";
+import { fileListKeyboard, confirmKeyboard } from "./keyboard.js";
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { sanitizePath } from "../utils/sanitizer.js";
@@ -12,20 +12,13 @@ export class FileHandler {
   constructor(private wrapper: TelegramBotWrapper) {}
 
   /**
-   * .md 파일 업로드 → _request/ 에 저장
+   * 파일 업로드 → _request/ 에 저장 (모든 파일 타입)
    */
   async handleUpload(msg: TelegramBot.Message): Promise<void> {
     const doc = msg.document;
     if (!doc) return;
 
     const fileName = doc.file_name || "unknown";
-    if (!fileName.endsWith(".md")) {
-      await this.wrapper.bot.sendMessage(
-        msg.chat.id,
-        "📎 .md 파일만 업로드할 수 있습니다.",
-      );
-      return;
-    }
 
     if (doc.file_size && doc.file_size > config.limits.maxFileSize) {
       await this.wrapper.bot.sendMessage(
@@ -63,17 +56,33 @@ export class FileHandler {
   /**
    * _request/ 디렉토리 파일 목록
    */
-  async listRequestFiles(chatId: number): Promise<void> {
+  async listRequestFiles(chatId: number, page: number = 0): Promise<void> {
     const dir = path.join(config.paths.wagglebotRoot, "_request");
-    await this.listDirectory(chatId, dir, "_request", "request");
+    await this.listDirectory(chatId, dir, "_request", "file", page, "reqpage");
   }
 
   /**
    * _result/ 디렉토리 파일 목록
    */
-  async listResultFiles(chatId: number): Promise<void> {
+  async listResultFiles(chatId: number, page: number = 0): Promise<void> {
     const dir = path.join(config.paths.wagglebotRoot, "_result");
-    await this.listDirectory(chatId, dir, "_result", "result");
+    await this.listDirectory(chatId, dir, "_result", "file", page, "respage");
+  }
+
+  /**
+   * _request/ 디렉토리 전체 파일 삭제
+   */
+  async deleteRequestFiles(chatId: number): Promise<void> {
+    const dir = path.join(config.paths.wagglebotRoot, "_request");
+    await this.deleteDirectoryFiles(chatId, dir, "_request");
+  }
+
+  /**
+   * _result/ 디렉토리 파일 삭제 (sample/ 하위 디렉토리 보존)
+   */
+  async deleteResultFiles(chatId: number): Promise<void> {
+    const dir = path.join(config.paths.wagglebotRoot, "_result");
+    await this.deleteDirectoryFiles(chatId, dir, "_result", ["sample"]);
   }
 
   private async listDirectory(
@@ -81,6 +90,8 @@ export class FileHandler {
     dir: string,
     label: string,
     prefix: string,
+    page: number = 0,
+    pagePrefix?: string,
   ): Promise<void> {
     try {
       if (!fs.existsSync(dir)) {
@@ -89,18 +100,22 @@ export class FileHandler {
       }
 
       const files = fs.readdirSync(dir)
-        .filter((f) => f.endsWith(".md"))
+        .filter((f) => {
+          const fullPath = path.join(dir, f);
+          return fs.statSync(fullPath).isFile();
+        })
+        .sort()
         .map((name) => ({
           name,
           path: path.join(dir, name),
         }));
 
       if (files.length === 0) {
-        await this.wrapper.bot.sendMessage(chatId, `📂 ${label}/ 에 .md 파일이 없습니다.`);
+        await this.wrapper.bot.sendMessage(chatId, `📂 ${label}/ 에 파일이 없습니다.`);
         return;
       }
 
-      const keyboard = fileListKeyboard(files, "file");
+      const keyboard = fileListKeyboard(files, prefix, page, pagePrefix);
       await this.wrapper.bot.sendMessage(
         chatId,
         `📂 ${label}/ (${files.length}개 파일)`,
@@ -109,6 +124,49 @@ export class FileHandler {
     } catch (err) {
       logger.error("List directory failed", { dir, error: err });
       await this.wrapper.bot.sendMessage(chatId, `❌ ${label}/ 조회 실패`);
+    }
+  }
+
+  private async deleteDirectoryFiles(
+    chatId: number,
+    dir: string,
+    label: string,
+    preserveDirs: string[] = [],
+  ): Promise<void> {
+    try {
+      if (!fs.existsSync(dir)) {
+        await this.wrapper.bot.sendMessage(chatId, `📂 ${label}/ 디렉토리가 비어있습니다.`);
+        return;
+      }
+
+      const entries = fs.readdirSync(dir);
+      let deletedCount = 0;
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry);
+        const stat = fs.statSync(fullPath);
+
+        if (stat.isFile()) {
+          fs.unlinkSync(fullPath);
+          deletedCount++;
+        } else if (stat.isDirectory() && !preserveDirs.includes(entry)) {
+          fs.rmSync(fullPath, { recursive: true });
+          deletedCount++;
+        }
+      }
+
+      if (deletedCount === 0) {
+        await this.wrapper.bot.sendMessage(chatId, `📂 ${label}/ 에 삭제할 파일이 없습니다.`);
+      } else {
+        logger.info(`Deleted ${deletedCount} items from ${label}/`);
+        await this.wrapper.bot.sendMessage(
+          chatId,
+          `🗑 ${label}/ 에서 ${deletedCount}개 항목을 삭제했습니다.`,
+        );
+      }
+    } catch (err) {
+      logger.error("Delete directory files failed", { dir, error: err });
+      await this.wrapper.bot.sendMessage(chatId, `❌ ${label}/ 삭제 실패`);
     }
   }
 
@@ -131,7 +189,7 @@ export class FileHandler {
 
       const stat = fs.statSync(resolved);
       if (stat.isDirectory()) {
-        await this.wrapper.bot.sendMessage(chatId, "❌ 디렉토리는 전송할 수 없습니다. /files 명령어를 사용하세요.");
+        await this.wrapper.bot.sendMessage(chatId, "❌ 디렉토리는 전송할 수 없습니다. /f 명령어를 사용하세요.");
         return;
       }
 
@@ -150,27 +208,22 @@ export class FileHandler {
       const isVideo = [".mp4", ".mov", ".avi", ".mkv", ".webm"].includes(ext);
 
       if (forceDocument) {
-        // 다운로드 가능한 문서로 전송
         await this.wrapper.bot.sendDocument(chatId, resolved, {
           caption: `📄 ${relPath}`,
         });
       } else if (isText && stat.size < 4000) {
-        // 작은 텍스트 파일은 메시지로 인라인 전송
         const content = fs.readFileSync(resolved, "utf-8");
         const fileName = path.basename(resolved);
         await this.wrapper.sendLong(chatId, `📄 ${fileName}\n\`\`\`\n${content}\n\`\`\``);
       } else if (isPhoto) {
-        // 사진: 미리보기 + 파일 다운로드
         await this.wrapper.bot.sendPhoto(chatId, resolved, {
           caption: `🖼 ${relPath}`,
         });
       } else if (isVideo) {
-        // 영상: Telegram 비디오 플레이어로 전송
         await this.wrapper.bot.sendVideo(chatId, resolved, {
           caption: `🎬 ${relPath}`,
         });
       } else {
-        // 그 외: document로 전송
         await this.wrapper.bot.sendDocument(chatId, resolved, {
           caption: `📄 ${relPath}`,
         });
