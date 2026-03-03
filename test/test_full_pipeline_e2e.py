@@ -48,6 +48,46 @@ for _noisy in ("websockets", "websockets.client", "urllib3", "httpx", "httpcore"
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger("e2e_test")
 
+
+# ── ai_worker 중지 (ComfyUI 큐 경합 방지) ─────────────────────────
+# E2E 테스트와 ai_worker가 동시에 ComfyUI에 프롬프트를 제출하면
+# 큐 대기로 인한 타임아웃이 발생한다. 테스트 전 ai_worker를 중지한다.
+import atexit
+
+_AI_WORKER_STOPPED = False
+
+
+def _stop_ai_worker() -> None:
+    global _AI_WORKER_STOPPED
+    result = subprocess.run(
+        ["docker", "compose", "stop", "ai_worker"],
+        capture_output=True, text=True, timeout=30,
+        cwd=PROJECT_ROOT,
+    )
+    if result.returncode == 0:
+        _AI_WORKER_STOPPED = True
+        logger.info("ai_worker 컨테이너 중지 완료 (ComfyUI 큐 경합 방지)")
+    else:
+        logger.warning("ai_worker 중지 실패 (무시하고 계속): %s", result.stderr.strip())
+
+
+def _restart_ai_worker() -> None:
+    if not _AI_WORKER_STOPPED:
+        return
+    result = subprocess.run(
+        ["docker", "compose", "start", "ai_worker"],
+        capture_output=True, text=True, timeout=30,
+        cwd=PROJECT_ROOT,
+    )
+    if result.returncode == 0:
+        logger.info("ai_worker 컨테이너 재시작 완료")
+    else:
+        logger.warning("ai_worker 재시작 실패: %s", result.stderr.strip())
+
+
+_stop_ai_worker()
+atexit.register(_restart_ai_worker)
+
 # 결과 저장
 RESULTS: dict[str, dict] = {}
 OUTPUT_DIR = PROJECT_ROOT / "_result"
