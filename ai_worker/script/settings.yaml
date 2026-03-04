@@ -1,0 +1,23 @@
+# ── Ollama 호출 파라미터 ──
+generation:
+  num_predict: 2048
+  temperature: 0.7
+  timeout_sec: 180
+  retry_count: 2
+
+summary:
+  num_predict: 400
+  temperature: 0.5
+  timeout_sec: 120
+
+# ── 대본 품질 기준 ──
+quality:
+  min_plain_text_length: 10
+  max_body_chars: 21
+  max_hook_chars: 15
+
+# ── 프롬프트 버전 ──
+prompt_version: v2
+
+# ── 최소 댓글 인용 수 ──
+min_comments: 3

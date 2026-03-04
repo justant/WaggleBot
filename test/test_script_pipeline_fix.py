@@ -17,9 +17,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-def test_parse_script_json_new_format():
+def testparse_script_json_new_format():
     """수정 3: 새 포맷(type/author) 파싱 검증."""
-    from ai_worker.llm.client import _parse_script_json
+    from ai_worker.script.parser import parse_script_json
 
     raw = json.dumps({
         "hook": "30대 중반 소개팅의 현실?",
@@ -42,7 +42,7 @@ def test_parse_script_json_new_format():
         "mood": "daily",
     }, ensure_ascii=False)
 
-    script = _parse_script_json(raw)
+    script = parse_script_json(raw)
 
     # body 블록 검증
     assert len(script.body) == 2
@@ -56,12 +56,12 @@ def test_parse_script_json_new_format():
     assert script.body[1]["author"] == "ㅇㅇ"
     assert script.body[1]["lines"] == ["30대 후반이면 괜찮은 사람은", "이미 짝 찾아 가정을 이루었을"]
 
-    print("PASS: test_parse_script_json_new_format")
+    print("PASS: testparse_script_json_new_format")
 
 
-def test_parse_script_json_legacy_compat():
+def testparse_script_json_legacy_compat():
     """수정 3: type 필드 없는 기존 형식 하위호환 검증."""
-    from ai_worker.llm.client import _parse_script_json
+    from ai_worker.script.parser import parse_script_json
 
     raw = json.dumps({
         "hook": "테스트",
@@ -75,7 +75,7 @@ def test_parse_script_json_legacy_compat():
         "mood": "daily",
     }, ensure_ascii=False)
 
-    script = _parse_script_json(raw)
+    script = parse_script_json(raw)
 
     # type 없는 dict → 기본값 "body"
     assert script.body[0]["type"] == "body"
@@ -85,12 +85,12 @@ def test_parse_script_json_legacy_compat():
     assert script.body[1]["type"] == "body"
     assert script.body[1]["lines"] == ["레거시 문자열 항목"]
 
-    print("PASS: test_parse_script_json_legacy_compat")
+    print("PASS: testparse_script_json_legacy_compat")
 
 
 def test_extract_fields_regex_type_author():
     """수정 3: regex 폴백에서 type/author 추출 검증."""
-    from ai_worker.llm.client import _extract_fields_regex
+    from ai_worker.script.parser import _extract_fields_regex
 
     # 의도적으로 JSON 파싱이 실패할 수 있는 약간 깨진 형태지만
     # regex가 추출할 수 있는 수준의 문자열
@@ -236,8 +236,8 @@ def test_distribute_images_with_images():
 
 
 if __name__ == "__main__":
-    test_parse_script_json_new_format()
-    test_parse_script_json_legacy_compat()
+    testparse_script_json_new_format()
+    testparse_script_json_legacy_compat()
     test_extract_fields_regex_type_author()
     test_script_data_to_plain_text_comment()
     test_script_data_to_plain_text_legacy()

@@ -17,7 +17,6 @@
   ratio >= 0.3 → balanced  : 이미지 균등 분배
   ratio <  0.3 → text_heavy: text_only 위주, 앞에서 일부만 image_text
 """
-import hashlib
 import json
 import logging
 import shutil
@@ -26,18 +25,29 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageFont
 
 from config.settings import ASSETS_DIR, MEDIA_DIR
 
-logger = logging.getLogger(__name__)
+# ── 내부 모듈 re-import (기존 import 경로 호환) ──
+from ai_worker.renderer._frames import (
+    CANVAS_W, CANVAS_H, HEADER_H, HEADER_COLOR,
+    _create_base_frame, _render_intro_frame, _render_image_text_frame,
+    _render_text_only_frame, _render_image_only_frame, _render_outro_frame,
+    _render_video_text_overlay, _wrap_korean, _draw_centered_text,
+    _truncate, _fit_cover, _paste_rounded, _load_image,
+)
+from ai_worker.renderer._tts import (
+    _tts_chunk_async, _generate_tts_chunks, _merge_chunks,
+    _get_audio_duration, _unpack_line, _INTRO_PAUSE_SEC,
+)
+from ai_worker.renderer._encode import (
+    _render_video_segment, _render_static_segment,
+    _resolve_codec, _get_encoder_args, _escape_ffmpeg_text,
+    _build_layout_sfx_filter,
+)
 
-# 캔버스 기본 상수 (layout.json 미로드 시 fallback)
-CANVAS_W = 1080
-CANVAS_H = 1920
-HEADER_H = 160
-HEADER_COLOR = "#4A44FF"
+logger = logging.getLogger(__name__)
 
 _LAYOUT_CONFIG: dict | None = None
 
@@ -69,7 +79,7 @@ def _apply_vf_weight(font: ImageFont.FreeTypeFont, filename: str) -> None:
     elif "LIGHT" in name_upper:
         weight_name = "Light"
     else:
-        return  # Regular: 기본값 유지
+        return
     try:
         font.set_variation_by_name(weight_name)
     except Exception:
@@ -77,10 +87,7 @@ def _apply_vf_weight(font: ImageFont.FreeTypeFont, filename: str) -> None:
 
 
 def _load_font(font_dir: Path, filename: str, size: int) -> ImageFont.FreeTypeFont:
-    """폰트 로드 (assets/fonts → 시스템 한글 → PIL 기본 폰트).
-
-    Variable Font(VF)인 경우 파일명에서 Bold/Medium/Light를 감지해 굵기 축을 설정한다.
-    """
+    """폰트 로드 (assets/fonts → 시스템 한글 → PIL 기본 폰트)."""
     font_path = font_dir / filename
     if font_path.exists():
         try:
@@ -112,88 +119,6 @@ def _load_font(font_dir: Path, filename: str, size: int) -> ImageFont.FreeTypeFo
         return ImageFont.load_default()
 
 
-def _truncate(text: str, max_chars: int) -> str:
-    """max_chars 초과 시 (max_chars-2)자 + '..'."""
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 2] + ".."
-
-
-def _wrap_korean(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
-    """한글 텍스트 줄바꿈 — 단어(공백) 단위 우선, 긴 단어는 강제 분리."""
-    def _w(t: str) -> float:
-        try:
-            return font.getlength(t)
-        except AttributeError:
-            return float(font.getbbox(t)[2])
-
-    if _w(text) <= max_width:
-        return [text]
-
-    words = text.split(" ")
-    lines: list[str] = []
-    current = ""
-
-    for word in words:
-        candidate = f"{current} {word}" if current else word
-        if _w(candidate) <= max_width:
-            current = candidate
-        else:
-            if current:
-                lines.append(current)
-            # 단어 자체가 max_width 초과 → 글자 단위 강제 분리
-            if _w(word) > max_width:
-                for ch in word:
-                    if current and _w(current + ch) > max_width:
-                        lines.append(current)
-                        current = ch
-                    else:
-                        current = (current or "") + ch
-            else:
-                current = word
-
-    if current.strip():
-        lines.append(current.rstrip())
-    return lines or [text]
-
-
-def _draw_centered_text(
-    draw: ImageDraw.ImageDraw,
-    lines: list[str],
-    font: ImageFont.FreeTypeFont,
-    y_start: int,
-    line_height: int,
-    color: str,
-    canvas_w: int,
-    stroke_color: str = "",
-    stroke_width: int = 0,
-) -> int:
-    """줄 목록을 중앙 정렬로 그리고, 마지막 줄 아래 y를 반환한다."""
-    y = y_start
-    for line in lines:
-        try:
-            lw = font.getlength(line)
-        except AttributeError:
-            lw = font.getbbox(line)[2]
-        cx = int((canvas_w - lw) / 2)
-        if stroke_color and stroke_width > 0:
-            draw.text((cx, y), line, font=font, fill=color,
-                      stroke_width=stroke_width, stroke_fill=stroke_color)
-        else:
-            draw.text((cx, y), line, font=font, fill=color)
-        y += line_height
-    return y
-
-
-def _get_audio_duration(path: Path) -> float:
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True, check=True,
-    )
-    return float(result.stdout.strip())
-
-
 def _run_async(coro) -> object:
     import asyncio
     try:
@@ -207,433 +132,6 @@ def _run_async(coro) -> object:
     return asyncio.run(coro)
 
 
-def _resolve_codec() -> str:
-    """h264_nvenc 반환 (RTX 3090 필수 환경)."""
-    return "h264_nvenc"
-
-
-def _get_encoder_args(codec: str) -> list[str]:
-    return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
-
-
-# ---------------------------------------------------------------------------
-# 이미지 유틸리티
-# ---------------------------------------------------------------------------
-
-_dc_session: requests.Session | None = None
-
-
-def _get_dc_session() -> requests.Session:
-    """DCInside 이미지 다운로드용 세션 (쿠키 워밍업 포함)."""
-    global _dc_session
-    if _dc_session is not None:
-        return _dc_session
-    _dc_session = requests.Session()
-    _dc_session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/131.0.0.0 Safari/537.36",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-    })
-    try:
-        _dc_session.get("https://www.dcinside.com/", timeout=10)
-        logger.debug("DCInside 이미지 세션 워밍업 OK (cookies=%d)",
-                     len(_dc_session.cookies))
-    except Exception:
-        logger.debug("DCInside 이미지 세션 워밍업 실패 — 쿠키 없이 시도")
-    return _dc_session
-
-
-def _load_image(
-    src: str, cache_dir: Path, max_retries: int = 2,
-) -> Optional[Image.Image]:
-    """URL 또는 로컬 경로에서 이미지 로드. 실패 시 재시도 후 None."""
-    if src.startswith("http://") or src.startswith("https://"):
-        url_hash = hashlib.md5(src.encode()).hexdigest()[:16]
-        cache_path = cache_dir / f"img_{url_hash}.jpg"
-        if not cache_path.exists():
-            for attempt in range(max_retries + 1):
-                try:
-                    if "dcinside.com" in src:
-                        sess = _get_dc_session()
-                        resp = sess.get(src, timeout=15, headers={
-                            "Referer": "https://gall.dcinside.com/",
-                            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                            "Sec-Fetch-Dest": "image",
-                            "Sec-Fetch-Mode": "no-cors",
-                            "Sec-Fetch-Site": "cross-site",
-                        })
-                    else:
-                        _hdrs = {
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                          "Chrome/131.0.0.0 Safari/537.36",
-                            "Referer": f"{src.split('/')[0]}//{src.split('/')[2]}/",
-                            "Accept": "image/*,*/*;q=0.8",
-                        }
-                        resp = requests.get(src, timeout=15, headers=_hdrs)
-                    resp.raise_for_status()
-                    if len(resp.content) < 200:
-                        logger.warning(
-                            "이미지 크기 의심 (%d bytes, 플레이스홀더?): %s",
-                            len(resp.content), src,
-                        )
-                        return None
-                    cache_path.write_bytes(resp.content)
-                    break
-                except Exception as e:
-                    if attempt < max_retries:
-                        import time
-                        time.sleep(1 * (attempt + 1))
-                        logger.debug(
-                            "이미지 다운로드 재시도 (%d/%d): %s",
-                            attempt + 1, max_retries, src,
-                        )
-                    else:
-                        logger.warning(
-                            "이미지 다운로드 실패 (재시도 %d회 후): %s — %s",
-                            max_retries, src, e,
-                        )
-                        return None
-        try:
-            return Image.open(cache_path).convert("RGB")
-        except Exception as e:
-            logger.warning("이미지 열기 실패: %s — %s", cache_path, e)
-            return None
-    try:
-        return Image.open(src).convert("RGB")
-    except Exception as e:
-        logger.warning("로컬 이미지 로드 실패: %s — %s", src, e)
-        return None
-
-
-def _fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
-    """Cover 모드: 비율 유지 + 중앙 크롭."""
-    iw, ih = img.size
-    scale = max(w / iw, h / ih)
-    nw, nh = int(iw * scale), int(ih * scale)
-    img = img.resize((nw, nh), Image.LANCZOS)
-    left = (nw - w) // 2
-    top = (nh - h) // 2
-    return img.crop((left, top, left + w, top + h))
-
-
-def _paste_rounded(
-    base: Image.Image, overlay: Image.Image,
-    x: int, y: int, radius: int,
-) -> Image.Image:
-    """둥근 모서리 마스크로 overlay를 base에 붙여넣기."""
-    w, h = overlay.size
-    mask = Image.new("L", (w, h), 0)
-    md = ImageDraw.Draw(mask)
-    try:
-        md.rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=radius, fill=255)
-    except AttributeError:
-        md.rectangle([(0, 0), (w - 1, h - 1)], fill=255)
-    base = base.convert("RGBA")
-    ov = overlay.convert("RGBA")
-    ov.putalpha(mask)
-    base.paste(ov, (x, y), ov)
-    return base.convert("RGB")
-
-
-# ---------------------------------------------------------------------------
-# 베이스 프레임 베이킹
-# ---------------------------------------------------------------------------
-
-def _create_base_frame(
-    layout: dict,
-    title: str,
-    font_dir: Path,
-    assets_dir: Path,
-) -> Image.Image:
-    """영상 전용 베이스 프레임을 생성한다.
-
-    base_layout.png 위에 헤더 고정 위치의 제목을 1회 합성한다.
-    모든 씬 렌더러가 이 프레임을 .copy()해서 사용하므로
-    제목이 어떤 씬에서도 동일한 위치에 출력된다.
-    """
-    g = layout["global"]
-    cw = layout["canvas"]["width"]
-    ch = layout["canvas"]["height"]
-
-    # 1. 배경 템플릿 로드
-    _proj_root = Path(__file__).resolve().parent.parent.parent
-    tpl_path = _proj_root / g.get("base_layout", "assets/backgrounds/base_layout.png")
-    if tpl_path.exists():
-        base = Image.open(tpl_path).convert("RGB")
-        # 캔버스 크기와 다를 경우 리사이즈
-        if base.size != (cw, ch):
-            base = base.resize((cw, ch), Image.LANCZOS)
-    else:
-        logger.warning("base_template 없음: %s — 흰 배경 fallback", tpl_path)
-        base = Image.new("RGB", (cw, ch), g.get("background_color", "#FFFFFF"))
-        draw_bg = ImageDraw.Draw(base)
-        draw_bg.rectangle(
-            [(0, 0), (cw, g.get("header_height", HEADER_H))],
-            fill=g.get("header_color", HEADER_COLOR),
-        )
-
-    # 2. 헤더 고정 위치에 제목 렌더링
-    ht = g.get("header_title")
-    if ht:
-        font = _load_font(font_dir, "NotoSansKR-Bold.ttf", ht.get("font_size", 52))
-        max_chars = ht.get("max_chars", 40)
-        display = title[:max_chars] if len(title) > max_chars else title
-        max_w = ht.get("max_width", 860)
-        try:
-            display_w = font.getlength(display)
-        except AttributeError:
-            display_w = float(font.getbbox(display)[2])
-        if display_w <= max_w:
-            lines = [display]
-        else:
-            # 픽셀 기반 글자 단위 truncation — "..." 포함 최대 길이
-            suffix = "..."
-            try:
-                suffix_w = font.getlength(suffix)
-            except AttributeError:
-                suffix_w = float(font.getbbox(suffix)[2])
-            truncated = ""
-            for ch in display:
-                try:
-                    cand_w = font.getlength(truncated + ch)
-                except AttributeError:
-                    cand_w = float(font.getbbox(truncated + ch)[2])
-                if cand_w + suffix_w > max_w:
-                    break
-                truncated += ch
-            lines = [truncated.rstrip() + suffix]
-        lh = int(ht.get("font_size", 52) * 1.3)
-        draw = ImageDraw.Draw(base)
-
-        x_pos = ht.get("x", 50)  # layout.json의 "x": 50 값을 가져옴
-        y_curr = ht.get("y", 200)
-        color = ht.get("color", "#000000")
-
-        for line in lines:
-            draw.text((x_pos, y_curr), line, font=font, fill=color)
-            y_curr += lh
-
-    return base
-
-
-# ---------------------------------------------------------------------------
-# 씬 렌더러 (모두 base_frame.copy()에서 시작)
-# ---------------------------------------------------------------------------
-
-def _render_intro_frame(
-    base_frame: Image.Image,
-    out_path: Path,
-) -> Path:
-    """씬 1: intro — 베이스 프레임 그대로 저장 (제목은 헤더에 이미 있음)."""
-    base_frame.copy().save(str(out_path), "PNG")
-    return out_path
-
-
-def _render_image_text_frame(
-    base_frame: Image.Image,
-    img_pil: Optional[Image.Image],
-    text: str,
-    layout: dict,
-    font_dir: Path,
-    out_path: Path,
-) -> Path:
-    """씬 2: image_text — 베이스 프레임 + 이미지(900×900) + 하단 텍스트."""
-    sc = layout["scenes"]["image_text"]
-    ia = sc["elements"]["image_area"]
-    ta = sc["elements"]["text_area"]
-    max_chars = sc.get("text_max_chars", 12)
-    max_lines: int = ta.get("max_lines", 2)
-
-    font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
-    lh = ta.get("line_height", int(ta["font_size"] * 1.4))
-
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
-
-    # ── 이미지 영역 ───────────────────────────────────────────
-    iw, ih = ia["width"], ia["height"]
-    if img_pil is not None:
-        fitted = _fit_cover(img_pil, iw, ih)
-        img = _paste_rounded(img, fitted, ia["x"], ia["y"], ia.get("border_radius", 0))
-        draw = ImageDraw.Draw(img)
-    else:
-        try:
-            draw.rounded_rectangle(
-                [(ia["x"], ia["y"]), (ia["x"] + iw, ia["y"] + ih)],
-                radius=ia.get("border_radius", 0), fill="#CCCCCC",
-            )
-        except AttributeError:
-            draw.rectangle([(ia["x"], ia["y"]), (ia["x"] + iw, ia["y"] + ih)], fill="#CCCCCC")
-
-    # ── 텍스트 영역 ───────────────────────────────────────────
-    lines = _wrap_korean(text, font, ta["max_width"])
-    total_h = len(lines) * lh
-    y_start = ta["y"] - total_h // 2
-    _draw_centered_text(draw, lines, font, y_start, lh, ta["color"], layout["canvas"]["width"])
-
-    img.save(str(out_path), "PNG")
-    return out_path
-
-
-def _render_text_only_frame(
-    base_frame: Image.Image,
-    text_history: list[dict],   # [{"lines": list[str], "is_new": bool, "block_type": str, "author": str|None}]
-    layout: dict,
-    font_dir: Path,
-    out_path: Path,
-) -> Path:
-    """씬 3: text_only — 동적 Y좌표로 텍스트 배치.
-
-    슬롯 간격은 len(lines) × (line_height + slot_gap)으로 동적 계산.
-    1줄 슬롯: 150px 전진, 2줄 슬롯: 300px 전진.
-    comment 타입은 닉네임 + 다른 색상으로 시각 구분.
-    """
-    sc = layout["scenes"]["text_only"]
-    ta = sc["elements"]["text_area"]
-
-    font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
-    author_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", max(int(ta["font_size"] * 0.55), 20))
-    lh: int = ta.get("line_height", 120)
-    slot_gap: int = ta.get("slot_gap", 5)
-    new_color: str = ta.get("color", "#000000")
-    prev_color: str = ta.get("prev_text_color", "#888888")
-    comment_color: str = "#00BCD4"       # 댓글 본문: 청록색
-    comment_prev_color: str = "#5E9EA0"  # 댓글 이전: 흐린 청록
-    author_color: str = "#9E9E9E"        # 닉네임: 회색
-    y_start: int = ta.get("y_coords", [550])[0]
-    cw = layout["canvas"]["width"]
-
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
-
-    current_y = y_start
-    for entry in text_history:
-        is_new = entry.get("is_new", False)
-        block_type = entry.get("block_type", "body")
-        author = entry.get("author")
-        slot_y = current_y
-
-        # comment 타입: 닉네임을 먼저 표시
-        if block_type == "comment" and author:
-            author_text = f"@{author}"
-            try:
-                aw = author_font.getlength(author_text)
-            except AttributeError:
-                aw = author_font.getbbox(author_text)[2]
-            ax = int((cw - aw) / 2)
-            draw.text((ax, slot_y), author_text, font=author_font, fill=author_color)
-            slot_y += int(lh * 0.55)
-
-        # 본문/댓글 텍스트 색상 결정
-        if block_type == "comment":
-            color = comment_color if is_new else comment_prev_color
-        else:
-            color = new_color if is_new else prev_color
-
-        for line_text in entry["lines"]:
-            try:
-                lw = font.getlength(line_text)
-            except AttributeError:
-                lw = font.getbbox(line_text)[2]
-            cx = int((cw - lw) / 2)
-            draw.text((cx, slot_y), line_text, font=font, fill=color)
-            slot_y += lh
-
-        # 다음 슬롯 시작 y: 줄 수 × (line_height + slot_gap) + 닉네임 여분
-        author_extra = int(lh * 0.55) if (block_type == "comment" and author) else 0
-        current_y += len(entry["lines"]) * (lh + slot_gap) + author_extra
-
-    img.save(str(out_path), "PNG")
-    return out_path
-
-
-def _render_image_only_frame(
-    base_frame: Image.Image,
-    img_pil: Optional[Image.Image],
-    layout: dict,
-    out_path: Path,
-) -> Path:
-    """씬 image_only — 베이스 프레임 + 이미지 전체 화면 cover 렌더링. 텍스트 없음."""
-    sc = layout["scenes"]["image_only"]
-    ia = sc["elements"]["image_area"]
-
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
-
-    if img_pil is not None:
-        fitted = _fit_cover(img_pil, ia["width"], ia["height"])
-        img = _paste_rounded(img, fitted, ia["x"], ia["y"], ia.get("border_radius", 0))
-    else:
-        try:
-            draw.rounded_rectangle(
-                [(ia["x"], ia["y"]), (ia["x"] + ia["width"], ia["y"] + ia["height"])],
-                radius=ia.get("border_radius", 0), fill="#CCCCCC",
-            )
-        except AttributeError:
-            draw.rectangle(
-                [(ia["x"], ia["y"]), (ia["x"] + ia["width"], ia["y"] + ia["height"])],
-                fill="#CCCCCC",
-            )
-
-    img.save(str(out_path), "PNG")
-    return out_path
-
-
-def _render_outro_frame(
-    base_frame: Image.Image,
-    img_pil: Optional[Image.Image],
-    overlay_text: str,
-    layout: dict,
-    font_dir: Path,
-    out_path: Path,
-) -> Path:
-    """씬 4: outro — 베이스 프레임 + 대형 이미지 + 선택적 오버레이."""
-    sc = layout["scenes"]["outro"]
-    ia = sc["elements"]["image_area"]
-    ot = sc["elements"]["overlay_text"]
-
-    font = _load_font(font_dir, "NotoSansKR-Regular.ttf", ot["font_size"])
-    lh = int(ot["font_size"] * 1.3)
-    cw = layout["canvas"]["width"]
-
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
-
-    # ── 이미지 ────────────────────────────────────────────────
-    if img_pil is not None:
-        fitted = _fit_cover(img_pil, ia["width"], ia["height"])
-        img = _paste_rounded(img, fitted, ia["x"], ia["y"], ia.get("border_radius", 0))
-        draw = ImageDraw.Draw(img)
-    else:
-        try:
-            draw.rounded_rectangle(
-                [(ia["x"], ia["y"]), (ia["x"] + ia["width"], ia["y"] + ia["height"])],
-                radius=ia.get("border_radius", 0), fill="#CCCCCC",
-            )
-        except AttributeError:
-            draw.rectangle(
-                [(ia["x"], ia["y"]), (ia["x"] + ia["width"], ia["y"] + ia["height"])],
-                fill="#CCCCCC",
-            )
-
-    # ── 오버레이 텍스트 (선택) ────────────────────────────────
-    if overlay_text:
-        lines = _wrap_korean(overlay_text, font, ot["max_width"])
-        total_h = len(lines) * lh
-        y_start = ot["y"] - total_h // 2
-        _draw_centered_text(
-            draw, lines, font, y_start, lh,
-            ot["color"], cw,
-            stroke_color=ot.get("stroke_color", ""),
-            stroke_width=ot.get("stroke_width", 0),
-        )
-
-    img.save(str(out_path), "PNG")
-    return out_path
-
-
 # ---------------------------------------------------------------------------
 # 배분 알고리즘
 # ---------------------------------------------------------------------------
@@ -643,11 +141,7 @@ def _plan_sequence(
     images: list[str],
     layout: dict,
 ) -> list[dict]:
-    """이미지:텍스트 비율에 따라 씬 유형을 결정한다.
-
-    Returns:
-        [{"type": scene_type, "sent_idx": int|None, "img_idx": int|None}, ...]
-    """
+    """이미지:텍스트 비율에 따라 씬 유형을 결정한다."""
     alg = layout.get("layout_algorithm", {})
     heavy_thr = alg.get("image_heavy_threshold", 0.8)
     mixed_thr = alg.get("image_mixed_threshold", 0.3)
@@ -698,220 +192,13 @@ def _plan_sequence(
 
 
 # ---------------------------------------------------------------------------
-# TTS 유틸리티
-# ---------------------------------------------------------------------------
-
-_INTRO_PAUSE_SEC: float = 0.5  # 제목 읽기 후 본문 시작 전 숨고르기 (초)
-
-
-async def _tts_chunk_async(
-    text: str,
-    idx: int,
-    output_dir: Path,
-    scene_type: str = "image_text",
-    pre_audio: str | None = None,
-    voice_key: str = "default",
-) -> float:
-    """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Fish Speech 호출.
-
-    Args:
-        text:       읽을 텍스트
-        idx:        프레임 인덱스 (출력 파일명 결정)
-        output_dir: TTS 청크 저장 디렉터리
-        scene_type: 씬 타입 (Fish Speech 감정 태그 결정)
-        pre_audio:  content_processor에서 사전 생성된 오디오 경로 (있으면 복사)
-        voice_key:  VOICE_PRESETS 키 (pipeline.json의 tts_voice)
-    """
-    import asyncio
-    import shutil
-    from ai_worker.tts.fish_client import synthesize as fish_synthesize
-
-    out_path = output_dir / f"chunk_{idx:03d}.wav"
-    if not text or not text.strip():
-        return 0.0
-
-    # 사전 생성된 오디오 재사용
-    if pre_audio:
-        pre_path = Path(pre_audio)
-        if pre_path.exists() and pre_path.stat().st_size > 0:
-            shutil.copy2(pre_path, out_path)
-            logger.debug("[layout] TTS 재사용: 프레임=%d %s", idx, pre_path.name)
-            return _get_audio_duration(out_path)
-
-    # Fish Speech 신규 생성
-    for attempt in range(2):
-        try:
-            await fish_synthesize(text=text, scene_type=scene_type, voice_key=voice_key, output_path=out_path)
-            break
-        except Exception:
-            if attempt == 0:
-                logger.warning("[layout] TTS 청크 %d 실패 — 5초 후 재시도", idx, exc_info=True)
-                await asyncio.sleep(5.0)  # Fish Speech 부하 완화 대기
-            else:
-                logger.error("[layout] TTS 청크 %d 최종 실패", idx)
-                return 0.0
-
-    if not out_path.exists() or out_path.stat().st_size == 0:
-        return 0.0
-    return _get_audio_duration(out_path)
-
-
-async def _generate_tts_chunks(
-    plan: list[dict],
-    sentences: list[dict],
-    output_dir: Path,
-    voice: str,
-    rate: str,
-    outro_duration: float = 1.5,
-) -> list[float]:
-    """plan 순서로 TTS를 생성하고 각 프레임의 지속 시간 목록을 반환한다.
-
-    sentences[sent_idx]에 "audio" 키가 있으면 사전 생성 오디오 재사용.
-    없으면 Fish Speech로 신규 생성.
-    """
-    import asyncio
-    durations: list[float] = []
-    for frame_idx, entry in enumerate(plan):
-        sent_idx = entry.get("sent_idx")
-        if sent_idx is not None and sent_idx < len(sentences):
-            sent = sentences[sent_idx]
-            text = sent["text"]
-            pre_audio = sent.get("audio")          # 사전 생성 경로 (없으면 None)
-            scene_type = entry.get("type", "image_text")
-            chunk_voice = sent.get("voice_override") or voice
-            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice)
-
-            # 제목(intro) 읽기 후 본문 시작 전 숨고르기 삽입
-            if scene_type == "intro" and dur > 0:
-                chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
-                tmp_pad = chunk_path.with_suffix(".padded.wav")
-                pad_result = subprocess.run(
-                    [
-                        "ffmpeg", "-y", "-i", str(chunk_path),
-                        "-af", f"apad=pad_dur={_INTRO_PAUSE_SEC}",
-                        "-c:a", "pcm_s16le", str(tmp_pad),
-                    ],
-                    capture_output=True,
-                )
-                if pad_result.returncode == 0 and tmp_pad.exists() and tmp_pad.stat().st_size > 0:
-                    tmp_pad.replace(chunk_path)
-                    dur += _INTRO_PAUSE_SEC
-                    logger.debug(
-                        "[layout] intro TTS 뒤 %.1f초 숨고르기 삽입 (프레임=%d)", _INTRO_PAUSE_SEC, frame_idx
-                    )
-        else:
-            out_path = output_dir / f"chunk_{frame_idx:03d}.wav"
-            subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-                 "-t", str(outro_duration), "-c:a", "pcm_s16le", str(out_path)],
-                capture_output=True, check=True,
-            )
-            dur = outro_duration
-        durations.append(dur)
-        logger.debug("[layout] TTS 프레임 %d: %.2fs", frame_idx, dur)
-    return durations
-
-
-def _merge_chunks(chunk_paths: list[Path], output_path: Path) -> None:
-    valid = [c for c in chunk_paths if c.exists() and c.stat().st_size > 0]
-    if not valid:
-        raise RuntimeError("유효한 TTS 청크 없음")
-    concat_file = output_path.parent / "tts_concat.txt"
-    concat_file.write_text("".join(f"file '{c.resolve()}'\n" for c in valid), encoding="utf-8")
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-         "-i", str(concat_file), "-c", "copy", str(output_path)],
-        capture_output=True, check=True,
-    )
-    concat_file.unlink(missing_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# SFX 필터
-# ---------------------------------------------------------------------------
-
-def _build_layout_sfx_filter(
-    plan: list[dict],
-    timings: list[float],
-    audio_dir: Path,
-    layout: dict,
-    tts_input_idx: int = 1,
-    sfx_offset: float = -0.15,
-) -> tuple[list[str], str]:
-    """plan 씬 타입에 따른 효과음 amix 필터 구성."""
-    # ── 당분간 SFX 사용 금지 (2026-03-04) ──
-    tts_ref = f"[{tts_input_idx}:a]"
-    return [], f"{tts_ref}acopy[aout]"
-    # ── SFX 비활성화 끝 ──
-    sfx_map: dict[str, str] = layout.get("layout_algorithm", {}).get("sfx", {
-        "intro": "click.mp3",
-        "image_text": "shutter.mp3",
-        "text_only": "pop.mp3",
-        "outro": "ding.mp3",
-    })
-    vol_map = {"click.mp3": 0.6, "shutter.mp3": 0.5, "pop.mp3": 0.45, "ding.mp3": 0.4}
-
-    extra_inputs: list[str] = []
-    filter_parts: list[str] = []
-    sfx_labels: list[str] = []
-    current_idx = tts_input_idx + 1
-
-    for i, (entry, t_start) in enumerate(zip(plan, timings)):
-        sfx_file = sfx_map.get(entry["type"], "pop.mp3")
-        sfx_path = audio_dir / sfx_file
-        if not sfx_path.exists():
-            continue
-        vol = vol_map.get(sfx_file, 0.4)
-        delay_ms = max(0, int((t_start + sfx_offset) * 1000))
-        label = f"sfx{i}"
-        extra_inputs += ["-i", str(sfx_path)]
-        filter_parts.append(f"[{current_idx}:a]adelay={delay_ms}|{delay_ms},volume={vol}[{label}]")
-        sfx_labels.append(f"[{label}]")
-        current_idx += 1
-
-    tts_ref = f"[{tts_input_idx}:a]"
-    if sfx_labels:
-        all_refs = tts_ref + "".join(sfx_labels)
-        n = 1 + len(sfx_labels)
-        filter_str = ";".join(filter_parts) + f";{all_refs}amix=inputs={n}:normalize=0[aout]"
-    else:
-        filter_str = f"{tts_ref}acopy[aout]"
-
-    return extra_inputs, filter_str
-
-
-# ---------------------------------------------------------------------------
 # SceneDecision 변환 유틸리티
 # ---------------------------------------------------------------------------
-
-def _unpack_line(item) -> tuple[str, str | None]:
-    """text_lines 요소에서 (text, audio_path)를 추출한다.
-
-    content_processor Phase 5 이후 text_lines 요소가
-    str → {"text": str, "audio": str|None} dict로 교체되므로 양쪽 형식 모두 처리.
-    """
-    if isinstance(item, dict):
-        return item.get("text", ""), item.get("audio")
-    return str(item), None
-
 
 def _scenes_to_plan_and_sentences(
     scenes: list,
 ) -> tuple[list[dict], list[dict], list[str]]:
-    """SceneDecision 목록을 내부 렌더러 형식 (sentences, plan, images)으로 변환한다.
-
-    text_only SceneDecision의 여러 text_lines는 각각 별도 plan 엔트리로 분리해
-    렌더러의 누적 스태킹 메커니즘과 호환되도록 한다.
-
-    text_lines 요소가 str 또는 dict{"text", "audio"} 모두 처리.
-    사전 생성 audio 경로는 sentences의 "audio" 키에 보존되어
-    _generate_tts_chunks에서 재사용된다.
-
-    Returns:
-        sentences : [{"text": str, "section": str, "audio": str|None}, ...]
-        plan      : [{"type": str, "sent_idx": int|None, "img_idx": int|None}, ...]
-        images    : [url_or_path, ...]  (plan의 img_idx 는 이 리스트 인덱스)
-    """
+    """SceneDecision 목록을 내부 렌더러 형식 (sentences, plan, images)으로 변환한다."""
     sentences: list[dict] = []
     plan: list[dict] = []
     images: list[str] = []
@@ -944,7 +231,6 @@ def _scenes_to_plan_and_sentences(
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "text_only":
-            # 여러 줄 → 각각 별도 plan 엔트리 → 렌더러가 누적 스태킹
             psl = getattr(scene, "pre_split_lines", None)
             for line in scene.text_lines:
                 text, audio = _unpack_line(line)
@@ -962,169 +248,21 @@ def _scenes_to_plan_and_sentences(
 
         elif scene.type == "image_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
-            sent_idx: Optional[int] = None
+            sent_idx_val: Optional[int] = None
             if text:
-                sent_idx = len(sentences)
+                sent_idx_val = len(sentences)
                 sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
-            plan.append({"type": "image_only", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+            plan.append({"type": "image_only", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "outro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
-            sent_idx: Optional[int] = None
+            sent_idx_val = None
             if text:
-                sent_idx = len(sentences)
+                sent_idx_val = len(sentences)
                 sentences.append({"text": text, "section": "closer", "audio": audio, "voice_override": None})
-            plan.append({"type": "outro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+            plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
     return sentences, plan, images
-
-
-# ---------------------------------------------------------------------------
-# 비디오 세그먼트 렌더링 (LTX-Video 확장)
-# ---------------------------------------------------------------------------
-
-def _escape_ffmpeg_text(text: str) -> str:
-    """FFmpeg drawtext용 텍스트 이스케이프."""
-    for ch in ("\\", "'", ":", ";", "%", "{", "}", '"'):
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
-
-def _render_video_text_overlay(
-    text: str,
-    layout: dict,
-    font_dir: Path,
-    out_png: Path,
-) -> Path:
-    """비디오 텍스트를 투명 PNG 오버레이로 PIL 렌더링한다.
-
-    _draw_centered_text()를 사용하여 image_text/text_only와 동일한
-    폰트 렌더링 엔진(PIL 내장 stroke)으로 텍스트를 그린다.
-    """
-    ta = layout["scenes"]["video_text"]["elements"]["text_area"]
-    cw = layout["canvas"]["width"]
-    ch = layout["canvas"]["height"]
-
-    font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
-    lh = ta.get("line_height", int(ta["font_size"] * 1.4))
-    stroke_color = ta.get("stroke_color", "")
-    stroke_width = ta.get("stroke_width", 0)
-
-    overlay = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-
-    lines = _wrap_korean(text, font, ta["max_width"])
-    total_h = len(lines) * lh
-    y_start = ta["y"] - total_h // 2
-
-    _draw_centered_text(
-        draw, lines, font, y_start, lh,
-        ta["color"], cw,
-        stroke_color=stroke_color,
-        stroke_width=stroke_width,
-    )
-
-    overlay.save(str(out_png), "PNG")
-    return out_png
-
-
-def _render_video_segment(
-    base_frame: Image.Image,
-    scene,
-    text: str,
-    duration: float,
-    layout: dict,
-    font_dir: Path,
-    output_path: Path,
-) -> Path:
-    """비디오 클립을 base_frame 위에 합성하여 세그먼트 mp4로 생성한다."""
-    from ai_worker.video.video_utils import resize_clip_to_layout, loop_or_trim_clip
-
-    va = layout["scenes"]["video_text"]["elements"]["video_area"]
-
-    tmp_dir = output_path.parent
-    base_png = tmp_dir / f"base_{output_path.stem}.png"
-    base_frame.copy().save(str(base_png), "PNG")
-
-    clip_path = Path(scene.video_clip_path)
-
-    resized_clip = tmp_dir / f"resized_{output_path.stem}.mp4"
-    resize_clip_to_layout(
-        clip_path, resized_clip,
-        width=va["width"], height=va["height"],
-    )
-
-    fitted_clip = tmp_dir / f"fitted_{output_path.stem}.mp4"
-    loop_or_trim_clip(resized_clip, fitted_clip, target_duration=duration)
-
-    # PIL로 텍스트 오버레이 PNG 생성 (FFmpeg drawtext 대신)
-    text_overlay_png = tmp_dir / f"txtoverlay_{output_path.stem}.png"
-    _render_video_text_overlay(text, layout, font_dir, text_overlay_png)
-
-    filter_complex = (
-        f"[0:v]loop=loop={int(duration * 30)}:size=1:start=0,"
-        f"setpts=N/{30}/TB,fps={30}[base];"
-        f"[base][1:v]overlay={va['x']}:{va['y']}:shortest=1[vwith];"
-        f"[2:v]scale={layout['canvas']['width']}:{layout['canvas']['height']}[txt];"
-        f"[vwith][txt]overlay=0:0[vout]"
-    )
-
-    codec = _resolve_codec()
-    enc_args = _get_encoder_args(codec)
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(base_png),
-        "-i", str(fitted_clip),
-        "-i", str(text_overlay_png),
-        "-filter_complex", filter_complex,
-        "-map", "[vout]",
-        "-t", f"{duration:.3f}",
-        *enc_args,
-        "-r", "30",
-        "-an",
-        str(output_path),
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if result.returncode != 0:
-        logger.error("[layout] video_segment 생성 실패:\n%s", result.stderr[-1000:])
-        raise subprocess.CalledProcessError(result.returncode, cmd)
-
-    base_png.unlink(missing_ok=True)
-    resized_clip.unlink(missing_ok=True)
-    fitted_clip.unlink(missing_ok=True)
-    text_overlay_png.unlink(missing_ok=True)
-
-    logger.debug("[layout] video_segment 생성: %s (%.2fs)", output_path.name, duration)
-    return output_path
-
-
-def _render_static_segment(
-    frame_png: Path,
-    duration: float,
-    output_path: Path,
-) -> Path:
-    """정적 PNG 프레임을 duration 길이의 mp4 세그먼트로 변환."""
-    codec = _resolve_codec()
-    enc_args = _get_encoder_args(codec)
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-loop", "1",
-        "-i", str(frame_png),
-        "-t", f"{duration:.3f}",
-        *enc_args,
-        "-r", "30",
-        "-an",
-        str(output_path),
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, cmd)
-
-    return output_path
 
 
 def _get_scene_for_entry(
@@ -1132,20 +270,14 @@ def _get_scene_for_entry(
     sentences: list[dict],
     scenes_list: list | None,
 ) -> object | None:
-    """plan entry에 대응하는 SceneDecision을 찾는다.
-
-    1차: scene_idx 인덱스로 O(1) 직접 참조 (plan에 scene_idx가 있을 때)
-    2차: 텍스트 부분문자열 매칭 폴백 (하위 호환)
-    """
+    """plan entry에 대응하는 SceneDecision을 찾는다."""
     if scenes_list is None:
         return None
 
-    # 1차: scene_idx 인덱스 기반 조회
     scene_idx = entry.get("scene_idx")
     if scene_idx is not None and 0 <= scene_idx < len(scenes_list):
         return scenes_list[scene_idx]
 
-    # 2차: 텍스트 매칭 폴백
     sent_idx = entry.get("sent_idx")
     if sent_idx is None:
         return None
@@ -1186,12 +318,7 @@ def _render_pipeline(
     bgm_path: Path | None = None,
     scenes_list: list | None = None,
 ) -> Path:
-    """sentences / plan / images 를 받아 mp4를 생성한다.
-
-    Steps 2, 4–11 을 담당. _plan_sequence 단계는 호출자가 수행한다.
-    bgm_path: 우선 사용할 BGM 파일 경로. 없거나 파일이 존재하지 않으면 무시.
-    scenes_list: SceneDecision 리스트 (비디오 씬 렌더링용, None이면 정적 전용).
-    """
+    """sentences / plan / images 를 받아 mp4를 생성한다."""
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1201,7 +328,7 @@ def _render_pipeline(
         logger.info("[layout] 베이스 프레임 생성 완료 (제목 헤더 고정)")
 
         # ── Step 4: 이미지 사전 다운로드 ──────────────────────
-        image_cache: dict[int, Optional[Image.Image]] = {}
+        image_cache: dict[int, Optional["Image.Image"]] = {}
         for entry in plan:
             img_idx = entry.get("img_idx")
             if img_idx is not None and img_idx not in image_cache:
@@ -1220,11 +347,10 @@ def _render_pipeline(
                         post_id, len(durations), total_dur)
         else:
             logger.info("[layout] TTS 생성 시작")
-            # Fish Speech 재웜업 — LLM 처리 시간(수 분) 동안 모델이 언로드됐을 수 있음
             from ai_worker.tts.fish_client import _warmup_model
             _run_async(_warmup_model())
             t0 = time.time()
-            durations = _run_async(  # type: ignore[assignment]
+            durations = _run_async(
                 _generate_tts_chunks(plan, sentences, tmp_dir, voice, rate)
             )
             total_dur = sum(durations)
@@ -1251,7 +377,6 @@ def _render_pipeline(
 
         for sent in sentences:
             if "lines" in sent:
-                # 편집실에서 나눈 원본 줄바꿈 — 각 줄 내에서만 추가 줄바꿈
                 expanded: list[str] = []
                 for line in sent["lines"]:
                     expanded.extend(_wrap_korean(line, to_font, to_max_w))
@@ -1557,13 +682,7 @@ def _render_pipeline(
 # ---------------------------------------------------------------------------
 
 def render_layout_video(post, script, output_path: Path | None = None) -> Path:
-    """레이아웃 기반 쇼츠 영상 렌더링.
-
-    Args:
-        post:        Post 객체 (post.id, post.title, post.images 사용)
-        script:      ScriptData 객체 (hook / body / closer)
-        output_path: 최종 mp4 저장 경로
-    """
+    """레이아웃 기반 쇼츠 영상 렌더링."""
     from config import settings as s
     from config.settings import load_pipeline_config, VOICE_DEFAULT
 
@@ -1581,7 +700,6 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     if output_path is None:
         output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
-    # ── Step 1: 문장 구조화 ────────────────────────────────────
     sentences: list[dict] = []
     sentences.append({"text": script.hook, "section": "hook"})
     for body_item in script.body:
@@ -1614,7 +732,6 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     images: list[str] = post.images if isinstance(post.images, list) else []
     logger.info("[layout] post_id=%d 문장=%d 이미지=%d", post.id, len(sentences), len(images))
 
-    # ── Step 3: 씬 배분 계획 (기존 알고리즘) ──────────────────
     plan = _plan_sequence(sentences, images, layout)
     logger.info("[layout] 씬 계획: %s", [p["type"] for p in plan])
 
@@ -1631,16 +748,7 @@ def render_layout_video_from_scenes(
     save_tts_cache: Path | None = None,
     tts_audio_cache: Path | None = None,
 ) -> Path:
-    """SceneDirector 출력(SceneDecision 목록)으로 직접 렌더링.
-
-    _plan_sequence 를 건너뛰고 사전에 계산된 씬 배분을 그대로 사용한다.
-    resource_analyzer → scene_director 파이프라인과 함께 사용.
-
-    Args:
-        post:        Post 객체 (post.id, post.title 사용)
-        scenes:      list[SceneDecision] — content_processor.process_content() 반환값
-        output_path: 최종 mp4 저장 경로
-    """
+    """SceneDirector 출력(SceneDecision 목록)으로 직접 렌더링."""
     from config import settings as s
     from config.settings import load_pipeline_config, VOICE_DEFAULT
 
@@ -1658,14 +766,12 @@ def render_layout_video_from_scenes(
     if output_path is None:
         output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
-    # SceneDecision → 내부 렌더러 형식 변환
     sentences, plan, images = _scenes_to_plan_and_sentences(scenes)
     logger.info(
         "[layout:scenes] post_id=%d 씬=%d 문장=%d 이미지=%d",
         post.id, len(scenes), len(sentences), len(images),
     )
 
-    # intro 씬에서 bgm_path 추출 (계약: bgm_path는 intro 씬에만 설정됨)
     bgm_path: Path | None = None
     for scene in scenes:
         if scene.type == "intro" and getattr(scene, "bgm_path", None):

@@ -1,0 +1,28 @@
+# ── 한국어 문장 추정 ──
+chars_per_sentence: 25
+
+# ── 전략 임계값 ──
+strategy_thresholds:
+  image_heavy: 0.7   # ratio >= 0.7 → image_heavy
+  balanced: 0.3       # 0.3 <= ratio < 0.7 → balanced
+
+# ── text_only 스택 크기 ──
+stack_size:
+  image_heavy: 1
+  balanced: 2
+  text_heavy: 3
+
+# ── body 항목 수 범위 ──
+body_items:
+  min: 6
+  max: 23
+
+# ── 강조 키워드 ──
+highlight_keywords:
+  - 반전
+  - 충격
+  - 결과
+  - 결론
+  - 사실
+  - 진짜
+  - 알고보니

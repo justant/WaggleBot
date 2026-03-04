@@ -1,0 +1,42 @@
+# ── 기능 스위치 ──
+enabled: false
+workflow_mode: full    # full | distilled
+
+# ── 해상도 ──
+resolution:
+  default: [1280, 720]
+  fallback: [768, 512]
+
+# ── 프레임 ──
+frames:
+  default: 97       # ~4초 @24fps (1+8k 규칙)
+  fallback: 65      # ~2.7초 @24fps
+
+# ── 샘플링 ──
+sampling:
+  fps: 24
+  steps_full: 20
+  steps_distilled: 8
+  cfg_full: 3.5
+  cfg_distilled: 1.0
+
+# ── I2V ──
+i2v:
+  threshold: 0.6
+  denoise_strength: 0.75
+
+# ── 타임아웃 ──
+timeout_sec: 300
+
+# ── 제한 ──
+limits:
+  max_clips_per_post: 8
+  max_retry: 4
+
+# ── ComfyUI ──
+comfyui:
+  vram_mode: lowvram
+  reserve_vram_gb: 2
+
+# ── 출력 ──
+output_subdir: tmp/videos

@@ -1,0 +1,25 @@
+# ── 기본 음성 ──
+default_voice: default
+
+# ── 출력 포맷 ──
+output_format: wav
+
+# ── 타임아웃 ──
+timeout_sec: 120
+temperature: 0.7
+repetition_penalty: 1.2
+
+# ── 후처리 ──
+post_process:
+  enabled: true
+  silence_remove: true
+  speed_factor: 1.2
+
+# ── 품질 검증 ──
+quality:
+  max_secs_per_char: 0.35
+  max_quality_retries: 2
+  max_tts_retries: 2
+
+# ── intro 숨고르기 ──
+intro_pause_sec: 0.5
