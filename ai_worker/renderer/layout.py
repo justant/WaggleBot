@@ -842,6 +842,10 @@ def _build_layout_sfx_filter(
     sfx_offset: float = -0.15,
 ) -> tuple[list[str], str]:
     """plan 씬 타입에 따른 효과음 amix 필터 구성."""
+    # ── 당분간 SFX 사용 금지 (2026-03-04) ──
+    tts_ref = f"[{tts_input_idx}:a]"
+    return [], f"{tts_ref}acopy[aout]"
+    # ── SFX 비활성화 끝 ──
     sfx_map: dict[str, str] = layout.get("layout_algorithm", {}).get("sfx", {
         "intro": "click.mp3",
         "img_text": "shutter.mp3",
@@ -1279,7 +1283,15 @@ def _render_pipeline(
             elif scene_type == "img_text":
                 img_pil = img_cache.get(img_idx) if img_idx is not None else None
                 text = sentences[sent_idx]["text"] if sent_idx is not None else ""
-                _render_img_text_frame(base_frame, img_pil, text, layout, font_dir, frame_path)
+                if img_pil is None:
+                    logger.warning("[layout] 프레임 %d: img_text→text_only 폴백 (이미지 없음)", frame_idx)
+                    lines = sentences[sent_idx].get("lines", [text]) if sent_idx is not None else [text]
+                    fallback_entry = {"lines": lines, "is_new": True,
+                                      "block_type": entry.get("block_type", "body"),
+                                      "author": entry.get("author")}
+                    _render_text_only_frame(base_frame, [fallback_entry], layout, font_dir, frame_path)
+                else:
+                    _render_img_text_frame(base_frame, img_pil, text, layout, font_dir, frame_path)
 
             elif scene_type == "text_only":
                 for prev in text_only_history:

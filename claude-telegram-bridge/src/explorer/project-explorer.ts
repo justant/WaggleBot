@@ -12,10 +12,12 @@ const IGNORED_DIRS = new Set([
   "dist", "build", ".cache", ".claude",
 ]);
 
+const PAGE_SIZE = 20;
+
 export class ProjectExplorer {
   constructor(private wrapper: TelegramBotWrapper) {}
 
-  async browse(chatId: number, subPath: string): Promise<void> {
+  async browse(chatId: number, subPath: string, page: number = 0): Promise<void> {
     const resolved = sanitizePath(subPath);
     if (!resolved) {
       await this.wrapper.bot.sendMessage(chatId, "⛔ 접근할 수 없는 경로입니다.");
@@ -36,7 +38,7 @@ export class ProjectExplorer {
       }
 
       const entries = fs.readdirSync(resolved, { withFileTypes: true })
-        .filter((e) => !IGNORED_DIRS.has(e.name) && !e.name.startsWith("."))
+        .filter((e) => !IGNORED_DIRS.has(e.name))
         .sort((a, b) => {
           // 디렉토리 먼저
           if (a.isDirectory() && !b.isDirectory()) return -1;
@@ -49,13 +51,27 @@ export class ProjectExplorer {
         return;
       }
 
-      const displayEntries = entries.slice(0, 20);
+      const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+      const safePage = Math.max(0, Math.min(page, totalPages - 1));
+      const start = safePage * PAGE_SIZE;
+      const displayEntries = entries.slice(start, start + PAGE_SIZE);
+
       const rows = displayEntries.map((e) => {
         const icon = e.isDirectory() ? "📁" : getFileIcon(e.name);
         const entryPath = path.join(resolved, e.name);
         const cbPrefix = e.isDirectory() ? "dir" : "file";
         return [button(`${icon} ${e.name}`, `${cbPrefix}:${entryPath}`)];
       });
+
+      // 페이지네이션 버튼
+      if (totalPages > 1) {
+        const navButtons = [
+          ...(safePage > 0 ? [button("◀ 이전", `dirpage:${safePage - 1}:${resolved}`)] : []),
+          button(`${safePage + 1}/${totalPages}`, "noop"),
+          ...(safePage < totalPages - 1 ? [button("다음 ▶", `dirpage:${safePage + 1}:${resolved}`)] : []),
+        ];
+        rows.push(navButtons);
+      }
 
       // 상위 디렉토리 버튼
       const parent = path.dirname(resolved);
@@ -64,12 +80,9 @@ export class ProjectExplorer {
         rows.push([button("📁 ..", `dir:${parentSafe}`)]);
       }
 
-      const remaining = entries.length - displayEntries.length;
-      const suffix = remaining > 0 ? `\n(+${remaining}개 항목 생략)` : "";
-
       await this.wrapper.bot.sendMessage(
         chatId,
-        `📂 ${this.relPath(resolved)} (${entries.length}개)${suffix}`,
+        `📂 ${this.relPath(resolved)} (${entries.length}개)`,
         { reply_markup: buildKeyboard(rows) },
       );
     } catch (err) {
@@ -81,7 +94,10 @@ export class ProjectExplorer {
   private async previewFile(chatId: number, filePath: string): Promise<void> {
     const stat = fs.statSync(filePath);
     const ext = path.extname(filePath).toLowerCase();
-    const isText = [".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".py", ".ts", ".js", ".sh", ".cfg", ".ini"].includes(ext);
+    const baseName = path.basename(filePath).toLowerCase();
+    const TEXT_EXTS = [".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".py", ".ts", ".js", ".sh", ".cfg", ".ini", ".env"];
+    const TEXT_DOTFILES = [".env", ".env.local", ".env.production", ".gitignore", ".dockerignore", ".editorconfig"];
+    const isText = TEXT_EXTS.includes(ext) || TEXT_DOTFILES.includes(baseName);
 
     let preview = `📄 ${this.relPath(filePath)}\n📦 ${formatFileSize(stat.size)}\n`;
 

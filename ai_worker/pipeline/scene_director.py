@@ -6,9 +6,15 @@ intro / body(img_text|text_only|img_only) / outro 씬을 순서대로 배분한�
 씬 흐름:
     intro(hook) → [img_text | text_only | img_only] × N → outro(closer + mood 아웃트로 이미지)
 
-- 이미지 있으면 → img_text 우선 (균등 분배)
-- 이미지 소진 후 → text_only
-- 이미지가 텍스트보다 많으면 → img_only
+씬 유형 균형 배분:
+- 이미지 있을 때 (1:1:1): 비디오+텍스트(t2v) : 정적텍스트(static) : 이미지+텍스트(static)
+- 이미지 없을 때 (1:1): 비디오+텍스트(t2v) : 정적텍스트(static)
+
+video_mode 값:
+- "t2v": ComfyUI 비디오 생성 대상 (Phase 6/7 처리)
+- "i2v": 이미지 기반 비디오 생성 (intro img_text에서 I2V 평가 통과 시)
+- "static": 정적 프레임 (Phase 6/7 스킵, 렌더러에서 이미지/텍스트만 표시)
+
 - intro/outro 이미지: policy의 mood 폴더에서 랜덤 선택
 """
 import logging
@@ -147,9 +153,12 @@ def assign_video_modes(
     image_cache_dir: Path,
     i2v_threshold: float = 0.6,
 ) -> list:
-    """각 씬에 video_mode ("t2v" | "i2v" | None)를 할당한다.
+    """각 씬에 video_mode ("t2v" | "i2v" | "static")를 할당한다.
 
-    할당 규칙:
+    distribute_images()에서 사전 할당된 본문 씬(video_mode != None)은 스킵.
+    intro/outro 등 미할당 씬만 처리한다.
+
+    할당 규칙 (미할당 씬):
     1. text_only → "t2v"
     2. img_text / img_only → image_filter 평가, score >= threshold → "i2v", 아니면 "t2v"
     3. intro / outro → "t2v"
@@ -157,6 +166,10 @@ def assign_video_modes(
     from ai_worker.video.image_filter import evaluate_image
 
     for i, scene in enumerate(scenes):
+        # distribute_images()에서 사전 할당된 씬 스킵
+        if scene.video_mode is not None:
+            continue
+
         if scene.type == "text_only":
             scene.video_mode = "t2v"
 
@@ -202,9 +215,10 @@ def assign_video_modes(
 
     t2v_count = sum(1 for s in scenes if s.video_mode == "t2v")
     i2v_count = sum(1 for s in scenes if s.video_mode == "i2v")
+    static_count = sum(1 for s in scenes if s.video_mode == "static")
     logger.info(
-        "[scene] video_mode 할당 완료: 총 %d씬 (T2V=%d, I2V=%d)",
-        len(scenes), t2v_count, i2v_count,
+        "[scene] video_mode 할당 완료: 총 %d씬 (T2V=%d, I2V=%d, 정적=%d)",
+        len(scenes), t2v_count, i2v_count, static_count,
     )
     return scenes
 
@@ -225,7 +239,15 @@ def distribute_images(
     tts_emotion: str = "",
     mood: str = "daily",
 ) -> list[SceneDecision]:
-    """본문 아이템에 이미지를 균등 분배하여 SceneDecision 리스트 생성.
+    """본문 아이템에 이미지를 균등 분배 + 씬 유형 균형 배분.
+
+    씬 유형 균형:
+    - 이미지 있을 때 (1:1:1): 비디오+텍스트 : 정적텍스트 : 이미지+텍스트
+    - 이미지 없을 때 (1:1): 비디오+텍스트 : 정적텍스트
+
+    video_mode 사전 할당:
+    - 비디오 씬: video_mode="t2v" (Phase 6/7에서 프롬프트+비디오 생성)
+    - 정적/이미지 씬: video_mode="static" (Phase 6/7 자동 스킵)
 
     Args:
         body_items: (text, voice_override, block_type, author, pre_split_lines) 튜플 리스트
@@ -240,8 +262,9 @@ def distribute_images(
         type_: str, text: str, image: str | None = None,
         voice: str | None = None, block_type: str = "body", author: str | None = None,
         pre_split_lines: list[str] | None = None,
+        video_mode: str | None = None,
     ) -> SceneDecision:
-        return SceneDecision(
+        sd = SceneDecision(
             type=type_,
             text_lines=[text],
             image_url=image,
@@ -252,37 +275,114 @@ def distribute_images(
             author=author,
             pre_split_lines=pre_split_lines,
         )
+        sd.video_mode = video_mode
+        return sd
 
-    # Case 5: 텍스트 없이 이미지만
+    # Case: 텍스트 없이 이미지만
     if not body_items and remaining_imgs:
-        return [_make("img_only", "", img) for img in remaining_imgs]
+        return [_make("img_only", "", img, video_mode="static") for img in remaining_imgs]
 
-    # Case 4: 이미지 없음
-    if not remaining_imgs:
-        return [_make("text_only", text, voice=voice, block_type=bt, author=au, pre_split_lines=psl) for text, voice, bt, au, psl in body_items]
+    if not body_items:
+        return []
 
     total = len(body_items)
-    n_imgs = len(remaining_imgs)
+    has_images = bool(remaining_imgs)
 
-    # Case 3: 이미지 ≥ 텍스트 — 매 줄 img_text
-    if n_imgs >= total:
-        return [
-            _make("img_text", text, remaining_imgs[i] if i < n_imgs else None, voice, bt, au, psl)
-            for i, (text, voice, bt, au, psl) in enumerate(body_items)
-        ]
+    if has_images:
+        # ── 이미지 있음: 1:1:1 (비디오 : 정적텍스트 : 이미지+텍스트) ──
+        n_available = len(remaining_imgs)
+        base = total // 3
+        remainder = total % 3
+        n_video = base + (1 if remainder >= 1 else 0)
+        n_img_text = min(base + (1 if remainder >= 2 else 0), n_available)
+        n_static = total - n_video - n_img_text
 
-    # Case 1, 2: 균등 분배
-    interval = total / (n_imgs + 1)
-    img_positions = {round(interval * (i + 1)) - 1 for i in range(n_imgs)}
-    img_idx = 0
-    scenes: list[SceneDecision] = []
-
-    for line_idx, (text, voice, bt, au, psl) in enumerate(body_items):
-        if line_idx in img_positions and img_idx < n_imgs:
-            scenes.append(_make("img_text", text, remaining_imgs[img_idx], voice, bt, au, psl))
-            img_idx += 1
+        # img_text 위치: 균등 분배 (기존 interval 로직)
+        if n_img_text > 0:
+            interval = total / (n_img_text + 1)
+            img_positions = sorted(
+                {round(interval * (k + 1)) - 1 for k in range(n_img_text)}
+            )
         else:
-            scenes.append(_make("text_only", text, voice=voice, block_type=bt, author=au, pre_split_lines=psl))
+            img_positions = []
+        img_pos_set = set(img_positions)
+
+        # 나머지 위치에서 비디오/정적 교대 배치
+        non_img_indices = [i for i in range(total) if i not in img_pos_set]
+        video_positions: set[int] = set()
+        place_video = True
+        v_placed = 0
+        s_placed = 0
+        for idx in non_img_indices:
+            if place_video and v_placed < n_video:
+                video_positions.add(idx)
+                v_placed += 1
+                place_video = False
+            elif s_placed < n_static:
+                s_placed += 1
+                place_video = True
+            else:
+                video_positions.add(idx)
+                v_placed += 1
+
+        # 씬 생성
+        img_idx = 0
+        scenes: list[SceneDecision] = []
+        for line_idx, (text, voice, bt, au, psl) in enumerate(body_items):
+            if line_idx in img_pos_set and img_idx < n_img_text:
+                scenes.append(_make(
+                    "img_text", text, remaining_imgs[img_idx],
+                    voice, bt, au, psl, video_mode="static",
+                ))
+                img_idx += 1
+            elif line_idx in video_positions:
+                scenes.append(_make(
+                    "text_only", text, voice=voice, block_type=bt,
+                    author=au, pre_split_lines=psl, video_mode="t2v",
+                ))
+            else:
+                scenes.append(_make(
+                    "text_only", text, voice=voice, block_type=bt,
+                    author=au, pre_split_lines=psl, video_mode="static",
+                ))
+    else:
+        # ── 이미지 없음: 1:1 (비디오 : 정적텍스트) ──
+        n_video = (total + 1) // 2
+        n_static = total - n_video
+
+        scenes = []
+        place_video = True
+        v_placed = 0
+        s_placed = 0
+        for text, voice, bt, au, psl in body_items:
+            if place_video and v_placed < n_video:
+                scenes.append(_make(
+                    "text_only", text, voice=voice, block_type=bt,
+                    author=au, pre_split_lines=psl, video_mode="t2v",
+                ))
+                v_placed += 1
+                place_video = False
+            elif s_placed < n_static:
+                scenes.append(_make(
+                    "text_only", text, voice=voice, block_type=bt,
+                    author=au, pre_split_lines=psl, video_mode="static",
+                ))
+                s_placed += 1
+                place_video = True
+            else:
+                scenes.append(_make(
+                    "text_only", text, voice=voice, block_type=bt,
+                    author=au, pre_split_lines=psl, video_mode="t2v",
+                ))
+                v_placed += 1
+
+    n_v = sum(1 for s in scenes if s.video_mode == "t2v")
+    n_s = sum(1 for s in scenes if s.video_mode == "static" and s.type == "text_only")
+    n_i = sum(1 for s in scenes if s.type == "img_text")
+    logger.info(
+        "[scene] 본문 씬 배분: 총 %d씬 (비디오=%d, 정적=%d, 이미지=%d)",
+        len(scenes), n_v, n_s, n_i,
+    )
     return scenes
 
 

@@ -115,6 +115,13 @@ export class CommandHandler {
       case "dir":
         await this.explorer.browse(chatId, value);
         break;
+      case "dirpage": {
+        const sep = value.indexOf(":");
+        const dirPage = parseInt(value.substring(0, sep), 10) || 0;
+        const dirPath = value.substring(sep + 1);
+        await this.explorer.browse(chatId, dirPath, dirPage);
+        break;
+      }
       case "reqpage":
         await this.fileHandler.listRequestFiles(chatId, parseInt(value, 10) || 0);
         break;

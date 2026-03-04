@@ -496,8 +496,10 @@ banner("Phase 5", "TTS 합성 (Fish Speech)")
 # TTS 모델 워밍업 — Fish Speech lazy-load 중 voice cloning 미적용 방지
 try:
     from ai_worker.tts.fish_client import _warmup_model as tts_warmup
-    logger.info("Fish Speech 모델 웜업 시작...")
-    asyncio.run(tts_warmup())
+    logger.info("Fish Speech 모델 웜업 시작 (3회 반복)...")
+    for warmup_round in range(3):
+        asyncio.run(tts_warmup())
+        logger.info("Fish Speech 웜업 %d/3 완료", warmup_round + 1)
 except Exception as e:
     logger.warning("TTS 워밍업 실패 (계속 진행): %s", e)
 

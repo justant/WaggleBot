@@ -2,7 +2,6 @@ import path from "path";
 import { config } from "../config.js";
 
 const BLOCKED_PATTERNS = [
-  /\.env$/i,
   /credentials\.json$/i,
   /token\.json$/i,
   /secrets\//i,

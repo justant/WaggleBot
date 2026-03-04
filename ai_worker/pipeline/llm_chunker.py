@@ -50,7 +50,7 @@ def create_chunking_prompt(
     extended_fields = (
         f'  "title_suggestion": "YouTube 쇼츠 제목 (50자 이내, 이모지 포함)",\n'
         f'  "tags": ["태그1", "태그2", "태그3"],\n'
-        f'  "mood": "funny | serious | shocking | heartwarming 중 하나"\n'
+        f'  "mood": "humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나"\n'
         if extended else ""
     )
 

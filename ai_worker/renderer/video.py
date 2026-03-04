@@ -636,6 +636,9 @@ def _build_sfx_parts(
 
     assets/sfx/comment_ding.mp3 가 없으면 ([], []) 반환한다.
     """
+    # ── 당분간 SFX 사용 금지 (2026-03-04) ──
+    return [], []
+    # ── SFX 비활성화 끝 ──
     sfx_path = ASSETS_DIR / "sfx" / "comment_ding.mp3"
     if not sfx_path.exists() or not comment_timings:
         return [], []
