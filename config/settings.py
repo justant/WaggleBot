@@ -73,8 +73,32 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 
 def get_ollama_host() -> str:
-    """Ollama 호스트를 호출 시점의 환경변수에서 읽는다 (컨테이너 재시작 없이도 반영)."""
-    return os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    """Ollama 호스트를 호출 시점의 환경변수에서 읽는다 (컨테이너 재시작 없이도 반영).
+
+    OLLAMA_HOST 환경변수는 Ollama 서버의 바인드 주소로도 사용되므로
+    스킴·포트가 빠져 있을 수 있다. 클라이언트용으로 보정:
+    - "0.0.0.0"       → "http://localhost:11434"
+    - "0.0.0.0:11434" → "http://localhost:11434"
+    - "myhost"        → "http://myhost:11434"
+    """
+    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    if not host:
+        return "http://localhost:11434"
+
+    # 스킴이 없으면 추가
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+
+    # 0.0.0.0 바인드 주소 → localhost로 변환 (클라이언트 접속용)
+    host = host.replace("://0.0.0.0", "://localhost")
+
+    # 포트가 없으면 기본 포트 추가
+    from urllib.parse import urlparse
+    parsed = urlparse(host)
+    if not parsed.port:
+        host = f"{parsed.scheme}://{parsed.hostname}:11434"
+
+    return host
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
 ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
@@ -311,6 +335,12 @@ EMOTION_TAGS: dict[str, str] = {
     "text_only": "",
     "outro":     "",
 }
+
+# Fish Speech 생성 파라미터 — 한국어 안정성 튜닝 (2026-03-04)
+# temperature: 0.7(기본) → 0.5 — 중국어/일본어 회귀 감소, 자연스러운 억양 유지
+# repetition_penalty: 1.2(기본) → 1.3 — 반복 패턴 억제, 억양 왜곡 없는 수준
+FISH_SPEECH_TEMPERATURE: float = 0.5
+FISH_SPEECH_REPETITION_PENALTY: float = 1.3
 
 # 오디오 출력 설정
 TTS_OUTPUT_FORMAT = "wav"

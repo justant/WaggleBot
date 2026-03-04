@@ -20,7 +20,8 @@ import httpx
 _FISH_SPEECH_LOCK = threading.Lock()
 
 from config.settings import (
-    EMOTION_TAGS,
+    FISH_SPEECH_REPETITION_PENALTY,
+    FISH_SPEECH_TEMPERATURE,
     FISH_SPEECH_TIMEOUT,
     FISH_SPEECH_URL,
     TTS_OUTPUT_FORMAT,
@@ -361,9 +362,17 @@ def _normalize_for_tts(text: str) -> str:
     return text
 
 
-def _post_process_audio(path: Path) -> None:
-    """FFmpeg 후처리: 무음 단축 + 1.2배속 (피치 보존).
+# Fish Speech 첫 음절 garbling 방지용 프라이머 — 비활성화 (2026-03-04).
+# warmup 9회(3라운드×3회)로 모델이 충분히 안정화되어 primer 불필요.
+# primer를 사용하면 atrim이 실제 음성 시작부를 잘라먹는 부작용이 있었음.
+_TTS_PRIMER = ""
+_TTS_PRIMER_TRIM_SECS = 0.0
 
+
+def _post_process_audio(path: Path) -> None:
+    """FFmpeg 후처리: (선택) 프라이머 트림 + 무음 단축 + 1.2배속 (피치 보존).
+
+    0. atrim        — 프라이머 활성 시에만 해당 구간 제거 (비활성이면 건너뜀)
     1. silenceremove — 단어 사이 200ms 이상 무음 구간 제거
     2. atempo=1.2   — WSOLA 알고리즘으로 피치 변화 없이 배속만 1.2배
                       (목소리 톤·음색 유지, 발화 속도만 빨라짐)
@@ -371,11 +380,17 @@ def _post_process_audio(path: Path) -> None:
     ffmpeg 미설치 환경은 조용히 건너뜀.
     """
     tmp = path.with_name(path.stem + "_proc.wav")
+    filters: list[str] = []
+    if _TTS_PRIMER_TRIM_SECS > 0:
+        filters.append(f"atrim=start={_TTS_PRIMER_TRIM_SECS},asetpts=PTS-STARTPTS")
+    filters.append("silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB")
+    filters.append("atempo=1.2")
+    af_chain = ",".join(filters)
     try:
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", str(path),
-                "-af", "silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB,atempo=1.2",
+                "-af", af_chain,
                 str(tmp),
             ],
             capture_output=True,
@@ -410,7 +425,7 @@ async def synthesize(
 
     Args:
         text:        읽을 텍스트
-        scene_type:  씬 타입 (감정 태그 자동 결정 — EMOTION_TAGS 참조)
+        scene_type:  씬 타입 (로깅용)
         voice_key:   VOICE_PRESETS 키
         output_path: 저장 경로 (None이면 /tmp 임시파일)
         emotion:     TTS 감정 톤 키 (예: "gentle", "cheerful"). API가 지원하지 않으면 무시.
@@ -421,11 +436,24 @@ async def synthesize(
     Raises:
         httpx.HTTPStatusError: Fish Speech 서버 오류 (5xx)
     """
+    # synthesize() 첫 호출 시 자동 warmup
+    global _warmup_done
+    if not _warmup_done:
+        logger.info("synthesize() 첫 호출 — 자동 웜업 실행")
+        await _warmup_model()
+
     # 텍스트 전처리: 슬랭/이모티콘 제거
     normalized = _normalize_for_tts(text)
-    # 감정 태그 prefix: emotion 파라미터 우선, 없으면 EMOTION_TAGS scene_type 폴백
-    emotion_tag = emotion or EMOTION_TAGS.get(scene_type, "")
-    final_text = f"{emotion_tag} {normalized}".strip() if emotion_tag else normalized
+
+    # 정규화 후 빈 텍스트 가드 — 자음만('ㅂㅁㄱ') 등 정규화 시 전부 제거되는 경우
+    stripped = normalized.strip().rstrip(".")
+    if not stripped:
+        logger.warning("TTS 스킵: 정규화 후 빈 텍스트 (원문: '%s')", text[:50])
+        raise ValueError(f"TTS 입력 텍스트가 정규화 후 비어있음 (원문: '{text[:50]}')")
+
+    # primer 비활성화 상태: warmup으로 첫 토큰 안정화 완료.
+    # primer가 설정되어 있으면 _post_process_audio()의 atrim이 해당 구간 제거.
+    final_text = (_TTS_PRIMER + normalized) if _TTS_PRIMER else normalized
 
     # 참조 오디오 경로
     ref_filename = VOICE_PRESETS.get(voice_key, VOICE_PRESETS[VOICE_DEFAULT])
@@ -455,50 +483,89 @@ async def synthesize(
     # render_stage(스레드 풀)와 llm_tts_stage(메인 루프)가 동시에 fish-speech에
     # 요청을 보내면 ClientDisconnect가 발생한다. run_in_executor로 블로킹 락
     # 획득을 이벤트 루프 밖으로 위임해 직렬화한다.
+    # 한국어 발화 속도 기준: ~3~6자/초 → 1자당 최대 0.35초
+    # 이보다 현저히 길면 중국어/일본어 혼입으로 판단
+    _MAX_SECS_PER_CHAR = 0.35
+    _MAX_QUALITY_RETRIES = 2  # 품질 검증 실패 시 추가 재시도
+
     _loop = asyncio.get_running_loop()
     await _loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
     _MAX_TTS_RETRIES = 2
+    _best_audio: bytes | None = None
+    _best_ratio: float = float("inf")
     try:
-        for _attempt in range(_MAX_TTS_RETRIES + 1):
-            try:
-                async with httpx.AsyncClient(timeout=_timeout) as client:
-                    payload: dict = {
-                        "text": final_text,
-                        "format": TTS_OUTPUT_FORMAT,
-                        "references": references,
-                    }
-                    # emotion 파라미터를 Fish Speech API에 전달 시도 (graceful degradation)
-                    if emotion:
-                        try:
-                            payload["emotion"] = emotion
-                        except Exception as _e:
-                            logger.warning("Fish Speech emotion 파라미터 설정 실패 (무시): %s", _e)
-                    resp = await client.post(
-                        f"{FISH_SPEECH_URL}/v1/tts",
-                        json=payload,
-                    )
-                    resp.raise_for_status()
-                    output_path.write_bytes(resp.content)
-                break  # 성공 시 재시도 루프 탈출
-            except httpx.ReadTimeout:
-                if _attempt < _MAX_TTS_RETRIES:
+        for _quality_attempt in range(_MAX_QUALITY_RETRIES + 1):
+            for _attempt in range(_MAX_TTS_RETRIES + 1):
+                try:
+                    async with httpx.AsyncClient(timeout=_timeout) as client:
+                        payload: dict = {
+                            "text": final_text,
+                            "format": TTS_OUTPUT_FORMAT,
+                            "references": references,
+                            "temperature": FISH_SPEECH_TEMPERATURE,
+                            "repetition_penalty": FISH_SPEECH_REPETITION_PENALTY,
+                        }
+                        resp = await client.post(
+                            f"{FISH_SPEECH_URL}/v1/tts",
+                            json=payload,
+                        )
+                        resp.raise_for_status()
+                    break  # HTTP 성공 시 재시도 루프 탈출
+                except httpx.ReadTimeout:
+                    if _attempt < _MAX_TTS_RETRIES:
+                        logger.warning(
+                            "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
+                            _attempt + 1, _MAX_TTS_RETRIES + 1,
+                        )
+                    else:
+                        logger.error("Fish Speech ReadTimeout — 최대 재시도 횟수(%d) 초과", _MAX_TTS_RETRIES + 1)
+                        raise
+
+            # 오디오 길이 검증 — 중국어/일본어 혼입 감지
+            # WAV 헤더(44바이트) 이후 PCM 데이터, 44100Hz 16bit mono 기준
+            audio_bytes = len(resp.content) - 44
+            audio_secs = audio_bytes / (44100 * 2) if audio_bytes > 0 else 0.0
+            text_len = max(len(final_text), 1)
+            secs_per_char = audio_secs / text_len
+
+            if secs_per_char <= _MAX_SECS_PER_CHAR or _quality_attempt == _MAX_QUALITY_RETRIES:
+                # 정상 범위이거나 최종 시도 → 채택
+                if secs_per_char > _MAX_SECS_PER_CHAR and _best_audio is not None:
+                    # 최종 시도도 실패했지만 이전에 더 나은 결과가 있으면 사용
+                    resp_content = _best_audio
                     logger.warning(
-                        "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
-                        _attempt + 1, _MAX_TTS_RETRIES + 1,
+                        "TTS 품질 검증 최종 실패 — 이전 최적 결과 사용 (%.2f초/자)",
+                        _best_ratio,
                     )
                 else:
-                    logger.error("Fish Speech ReadTimeout — 최대 재시도 횟수(%d) 초과", _MAX_TTS_RETRIES + 1)
-                    raise
+                    resp_content = resp.content
+                output_path.write_bytes(resp_content)
+                break
+
+            # 현재 결과가 이전보다 나으면 보관
+            if secs_per_char < _best_ratio:
+                _best_ratio = secs_per_char
+                _best_audio = resp.content
+
+            logger.warning(
+                "TTS 품질 의심: %.1f초/%.0f자 = %.2f초/자 (임계값 %.2f) — 재생성 %d/%d",
+                audio_secs, text_len, secs_per_char, _MAX_SECS_PER_CHAR,
+                _quality_attempt + 1, _MAX_QUALITY_RETRIES,
+            )
     finally:
         _FISH_SPEECH_LOCK.release()
 
     _post_process_audio(output_path)
 
     logger.info(
-        "TTS 생성 완료: scene=%s emotion=%s text=%d자→%d자 → %s (%dKB)",
-        scene_type, emotion or "—", len(text), len(final_text), output_path.name, len(resp.content) // 1024,
+        "TTS 생성 완료: scene=%s emotion=%s text=%d자→%d자 → %s (%dKB, %.2f초/자)",
+        scene_type, emotion or "—", len(text), len(final_text),
+        output_path.name, output_path.stat().st_size // 1024, secs_per_char,
     )
     return output_path
+
+
+_warmup_done: bool = False
 
 
 async def _warmup_model() -> None:
@@ -527,19 +594,32 @@ async def _warmup_model() -> None:
     _loop = asyncio.get_running_loop()
     await _loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
     try:
+        _warmup_payload = {
+            "format": TTS_OUTPUT_FORMAT,
+            "references": references,
+            "temperature": FISH_SPEECH_TEMPERATURE,
+            "repetition_penalty": FISH_SPEECH_REPETITION_PENALTY,
+        }
         async with httpx.AsyncClient(timeout=_timeout) as client:
             try:
-                # 첫 번째: 모델 로드 트리거
+                # 1회: 모델 로드 트리거 (중국어 출력 흡수)
                 await client.post(
                     f"{FISH_SPEECH_URL}/v1/tts",
-                    json={"text": "안녕하세요.", "format": TTS_OUTPUT_FORMAT, "references": references},
+                    json={**_warmup_payload, "text": "안녕하세요."},
                 )
-                # 두 번째: voice cloning 안정화 확인
+                # 2회: voice cloning 안정화
                 await client.post(
                     f"{FISH_SPEECH_URL}/v1/tts",
-                    json={"text": "테스트 문장입니다.", "format": TTS_OUTPUT_FORMAT, "references": references},
+                    json={**_warmup_payload, "text": "테스트 문장입니다."},
                 )
-                logger.info("Fish Speech 모델 웜업 완료 (2회)")
+                # 3회: 한국어 컨디셔닝 강화
+                await client.post(
+                    f"{FISH_SPEECH_URL}/v1/tts",
+                    json={**_warmup_payload, "text": "오늘도 좋은 하루 되세요."},
+                )
+                global _warmup_done
+                _warmup_done = True
+                logger.info("Fish Speech 모델 웜업 완료 (3회)")
             except Exception as exc:
                 logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
     finally:
