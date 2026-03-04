@@ -1,12 +1,16 @@
-"""Phase 5: 전체 통합 진입점 (Content Processor)
+"""ai_worker/pipeline/content_processor.py — Phase 1~7 오케스트레이션
 
-Phase 1 ~ 5를 순서대로 실행해 SceneDecision 목록을 반환한다.
+각 Phase의 실제 로직은 해당 도메인 모듈에 위치한다.
+이 파일은 Phase 실행 순서와 VRAM 전환만 담당한다.
 
-    [Phase 1] analyze_resources  - ResourceProfile
-    [Phase 2] chunk_with_llm     - raw script dict
-    [Phase 3] validate_and_fix   - validated script dict
-    [Phase 4] SceneDirector      - list[SceneDecision]
-    [Phase 5] TTS 사전 생성      - scene.text_lines[j] = {"text": str, "audio": str|None}
+Phase 1: scene.analyzer.analyze_resources()
+Phase 2: script.chunker.chunk_with_llm()
+Phase 3: scene.validator.validate_and_fix()
+Phase 4: scene.director.SceneDirector.direct()
+Phase 4.5: scene.director.assign_video_modes()
+Phase 5: tts.fish_client.synthesize()
+Phase 6: video.prompt_engine.VideoPromptEngine.generate_batch()
+Phase 7: video.manager.VideoManager.generate_all_clips()
 """
 import collections
 import json as _json

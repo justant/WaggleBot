@@ -32,22 +32,10 @@ from config.settings import (
     VOICE_REFERENCE_TEXTS,
 )
 
-# edge_tts가 호스트에 없을 수 있으므로 fish_client를 직접 import하지 않고
-# _normalize_for_tts만 단독 로드
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location(
-    "fish_client",
-    PROJECT_ROOT / "ai_worker" / "tts" / "fish_client.py",
-    submodule_search_locations=[],
-)
-_mod = _ilu.module_from_spec(_spec)
-# config.settings는 이미 import됨 — fish_client가 필요로 하는 모듈 주입
-sys.modules.setdefault("config.settings", sys.modules["config.settings"])
 try:
-    _spec.loader.exec_module(_mod)
-    _normalize_for_tts = _mod._normalize_for_tts
+    from ai_worker.tts.normalizer import normalize_for_tts as _normalize_for_tts
 except Exception as _e:
-    logger.warning("fish_client 로드 실패 (%s), 정규화 없이 진행", _e)
+    logger.warning("tts.normalizer 로드 실패 (%s), 정규화 없이 진행", _e)
     _normalize_for_tts = lambda text: text  # noqa: E731
 
 # ── 설정 ──

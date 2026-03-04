@@ -1,0 +1,22 @@
+# ── 코덱 (RTX 3090 전용) ──
+codec: h264_nvenc
+
+# ── 품질 ──
+quality:
+  cq: 23
+  preset: medium
+
+# ── FPS ──
+fps: 30
+
+# ── 오디오 ──
+audio:
+  bitrate: 192k
+  bgm_volume: 0.15
+
+# ── 썸네일 ──
+thumbnail:
+  width: 1280
+  height: 720
+  font_size: 72
+  jpeg_quality: 90

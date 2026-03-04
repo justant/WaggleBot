@@ -1,6 +1,4 @@
-import json
 import logging
-import re
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -8,6 +6,8 @@ from urllib3.util.retry import Retry
 
 from config.settings import get_ollama_host, OLLAMA_MODEL
 from db.models import ScriptData  # re-export — 기존 import 경로 호환
+from ai_worker.script.parser import parse_script_json
+from ai_worker.script.normalizer import ensure_comments
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ _SCRIPT_PROMPT_V2 = """\
 ## 규칙
 1. 블록 타입 분리 (필수): 본문 내용은 `"type": "body"`로 작성하고, 베스트 댓글은 화면 연출이 달라지므로 반드시 `"type": "comment"`로 작성하세요.
 2. 댓글 분리 규정: `type`이 `comment`일 경우, 작성자의 닉네임은 `"author"` 필드에 분리해 넣고, `"lines"` 배열에는 닉네임을 제외한 순수 '댓글 내용'만 넣으세요.
-3. 자막 분할 및 가독성: 
+3. 자막 분할 및 가독성:
    - lines 배열의 1개 문자열은 절대 20자를 넘지 않도록 짧게 치세요.
    - (X) 잘못된 예: ["길거리에서 스쳐 지나가는 사람들 얼굴을 비교해대느라"] (28자)
    - (O) 올바른 예: ["길거리에서 스쳐 지나가는", "사람들 얼굴을 비교해대느라"] (각각 13자, 14자)
@@ -108,258 +108,6 @@ def _call_ollama(prompt: str, model: str, num_predict: int = 400, timeout: int =
         raise TimeoutError(f"Ollama 응답 타임아웃 ({timeout}초 초과)")
     except requests.RequestException as e:
         raise ConnectionError(f"Ollama 연결 오류: {e}") from e
-
-
-def _fix_control_chars(s: str) -> str:
-    """JSON 문자열 리터럴 내부의 제어 문자를 이스케이프 시퀀스로 변환."""
-    result: list[str] = []
-    in_string = False
-    i = 0
-    while i < len(s):
-        c = s[i]
-        if c == "\\" and in_string:
-            result.append(c)
-            i += 1
-            if i < len(s):
-                result.append(s[i])
-            i += 1
-            continue
-        if c == '"':
-            in_string = not in_string
-            result.append(c)
-        elif in_string and c == "\n":
-            result.append("\\n")
-        elif in_string and c == "\r":
-            result.append("\\r")
-        elif in_string and c == "\t":
-            result.append("\\t")
-        elif in_string and ord(c) < 0x20:
-            result.append(f"\\u{ord(c):04x}")
-        else:
-            result.append(c)
-        i += 1
-    return "".join(result)
-
-
-def _repair_json(s: str) -> str:
-    """LLM이 자주 생성하는 JSON 오류를 보정한다."""
-    # "value"}}, → "value"]},  (lines 배열을 ] 없이 }} 로 닫은 LLM 오류)
-    s = re.sub(r'"(\s*)\}\}(\s*[,\n\r])', r'"\1]}\2', s)
-    # ]] → ]} (body 항목 lines 배열 닫기 오류)
-    s = re.sub(r"\]\]\s*([,\n\r])", r"]}\1", s)
-    s = re.sub(r"\]\]\s*\}", r"]}\n}", s)
-    # trailing comma before } or ]
-    s = re.sub(r",\s*([}\]])", r"\1", s)
-    # leading comma inside array: [, "text"] → ["text"]
-    s = re.sub(r"\[\s*,", "[", s)
-    # missing value before comma or closing brace/bracket: ": ," → ": ""," / ": }" → ": ""}"
-    s = re.sub(r":\s*(?=[,}\]])", ': ""', s)
-    return s
-
-
-def _extract_fields_regex(raw: str) -> ScriptData | None:
-    """JSON 파싱 완전 실패 시 regex로 개별 필드를 추출한다 (마지막 폴백)."""
-    try:
-        def _get_str(key: str) -> str:
-            m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
-            return m.group(1) if m else ""
-
-        hook  = _get_str("hook")
-        closer = _get_str("closer")
-        title  = _get_str("title_suggestion")
-        mood   = _get_str("mood") or "daily"
-
-        tags_m = re.search(r'"tags"\s*:\s*\[(.*?)\]', raw, re.DOTALL)
-        tags: list[str] = re.findall(r'"((?:[^"\\]|\\.)*)"', tags_m.group(1)) if tags_m else []
-
-        body: list[dict] = []
-        # "closer" 를 앵커로 탐욕적 매칭 → 비탐욕 fallback
-        body_m = (
-            re.search(r'"body"\s*:\s*\[(.*)\]\s*,\s*"closer"', raw, re.DOTALL)
-            or re.search(r'"body"\s*:\s*\[(.+?)\]\s*[,}]', raw, re.DOTALL)
-        )
-        if body_m:
-            for item_m in re.finditer(r'\{[^{}]+\}', body_m.group(1)):
-                lines_m = re.search(r'"lines"\s*:\s*\[(.*?)\]', item_m.group(0), re.DOTALL)
-                if not lines_m:
-                    # ] 없이 끝난 lines 배열 (}} 오류 등) — 열기부터 끝까지 문자열 직접 추출
-                    lines_m = re.search(r'"lines"\s*:\s*\[(.+)', item_m.group(0), re.DOTALL)
-                if lines_m:
-                    item_lines = re.findall(r'"((?:[^"\\]|\\.)*)"', lines_m.group(1))
-                    if item_lines:
-                        # type / author 추출 (하위 호환: 없으면 "body")
-                        type_m = re.search(r'"type"\s*:\s*"((?:[^"\\]|\\.)*)"', item_m.group(0))
-                        author_m = re.search(r'"author"\s*:\s*"((?:[^"\\]|\\.)*)"', item_m.group(0))
-                        entry: dict = {
-                            "type": type_m.group(1) if type_m else "body",
-                            "line_count": len(item_lines),
-                            "lines": item_lines,
-                        }
-                        if author_m:
-                            entry["author"] = author_m.group(1)
-                        body.append(entry)
-
-        if hook:
-            logger.info("regex 필드 추출 성공: hook=%.20s...", hook)
-            return ScriptData(hook=hook, body=body, closer=closer,
-                              title_suggestion=title, tags=tags, mood=mood)
-    except Exception as _e:
-        logger.debug("regex 추출 실패: %s", _e)
-    return None
-
-
-def _parse_script_json(raw: str) -> ScriptData:
-    """LLM 응답에서 JSON 파싱.
-
-    1차: 직접 파싱 → 2차: _repair_json 후 재파싱 → 3차: regex 필드 추출
-    모두 실패 시 ValueError 발생.
-    """
-    # ```json ... ``` 블록 제거
-    cleaned = re.sub(r"```json\s*", "", raw)
-    cleaned = re.sub(r"```\s*", "", cleaned)
-    cleaned = cleaned.strip()
-
-    # 첫 { ... } 블록 추출
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if match:
-        cleaned = match.group(0)
-
-    # JSON 문자열 내 제어 문자 정규화
-    cleaned = _fix_control_chars(cleaned)
-
-    d: dict | None = None
-    try:
-        d = json.loads(cleaned)
-    except json.JSONDecodeError:
-        # 2차 시도: 공통 LLM JSON 오류 보정 후 재파싱
-        repaired = _repair_json(cleaned)
-        try:
-            d = json.loads(repaired)
-            logger.info("JSON 보정 후 파싱 성공")
-        except json.JSONDecodeError as e2:
-            # 3차 시도: regex 개별 필드 추출
-            fallback = _extract_fields_regex(raw)
-            if fallback is not None:
-                return fallback
-            raise ValueError(
-                f"LLM이 유효하지 않은 JSON을 반환했습니다 ({e2}). "
-                "다시 시도하거나 모델을 확인하세요."
-            ) from e2
-
-    try:
-        # body 정규화: str 항목 → dict 변환 (하위 호환)
-        body_raw = list(d.get("body", []))
-        body: list[dict] = []
-        for item in body_raw:
-            if isinstance(item, str):
-                body.append({"type": "body", "line_count": 1, "lines": [item]})
-            elif isinstance(item, dict):
-                lines = item.get("lines", [])
-                block_type = item.get("type", "body")  # 하위 호환: 없으면 "body"
-                author = item.get("author")             # comment일 때만 존재
-                entry = {
-                    "type": block_type,
-                    "line_count": len(lines),
-                    "lines": lines,
-                }
-                if author:
-                    entry["author"] = author
-                body.append(entry)
-        return ScriptData(
-            hook=str(d.get("hook", "")),
-            body=body,
-            closer=str(d.get("closer", "")),
-            title_suggestion=str(d.get("title_suggestion", "")),
-            tags=list(d.get("tags", [])),
-            mood=str(d.get("mood", "daily")),
-        )
-    except (KeyError, TypeError) as e:
-        raise ValueError(f"ScriptData 필드 매핑 실패: {e}") from e
-
-
-# ---------------------------------------------------------------------------
-# 댓글 후처리
-# ---------------------------------------------------------------------------
-
-_MAX_LINE_CHARS = 20
-
-
-def _split_comment_lines(text: str) -> list[str]:
-    """댓글 텍스트를 자막 줄 단위(20자)로 어절 분할."""
-    if len(text) <= _MAX_LINE_CHARS:
-        return [text]
-    words = text.split()
-    lines: list[str] = []
-    current = ""
-    for word in words:
-        candidate = f"{current} {word}".strip() if current else word
-        if len(candidate) <= _MAX_LINE_CHARS:
-            current = candidate
-        else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines if lines else [text[:_MAX_LINE_CHARS]]
-
-
-def _ensure_comments(
-    script: ScriptData,
-    input_comments: list[str],
-    min_comments: int = 3,
-) -> ScriptData:
-    """LLM이 댓글을 누락했을 때 입력 댓글을 body 끝에 자동 추가."""
-    if not input_comments:
-        return script
-
-    existing_count = sum(
-        1 for item in script.body if item.get("type") == "comment"
-    )
-    target = min(min_comments, len(input_comments))
-    if existing_count >= target:
-        return script
-
-    # 이미 포함된 댓글 내용 (중복 방지)
-    existing_texts: set[str] = set()
-    for item in script.body:
-        if item.get("type") == "comment":
-            existing_texts.add(" ".join(item.get("lines", [])))
-
-    needed = target - existing_count
-    for comment_str in input_comments:
-        if needed <= 0:
-            break
-        # "author: content" 형식 파싱
-        parts = comment_str.split(":", 1)
-        if len(parts) == 2:
-            author = parts[0].strip()
-            content = parts[1].strip()
-        else:
-            author = ""
-            content = comment_str.strip()
-
-        if not content or content in existing_texts:
-            continue
-
-        lines = _split_comment_lines(content)
-        script.body.append({
-            "type": "comment",
-            "author": author,
-            "line_count": len(lines),
-            "lines": lines,
-        })
-        existing_texts.add(content)
-        needed -= 1
-        logger.debug("댓글 자동 추가: author=%s lines=%d", author, len(lines))
-
-    if existing_count == 0 and target > 0:
-        logger.warning(
-            "LLM이 댓글을 전혀 생성하지 않음 — %d개 자동 주입",
-            target - needed,
-        )
-
-    return script
 
 
 # ---------------------------------------------------------------------------
@@ -429,8 +177,8 @@ def generate_script(
 
     logger.info("Ollama 응답 수신: %d자 (%dms)", len(raw), timer.elapsed_ms)
 
-    script = _parse_script_json(raw)
-    script = _ensure_comments(script, comments)
+    script = parse_script_json(raw)
+    script = ensure_comments(script, comments)
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])
     return script
 

@@ -396,3 +396,45 @@ def load_video_styles() -> dict:
     _path = Path(__file__).parent / "video_styles.json"
     with open(_path, encoding="utf-8") as _vf:
         return json.load(_vf)
+
+
+# ---------------------------------------------------------------------------
+# 도메인별 settings.yaml 로더
+# ---------------------------------------------------------------------------
+
+import yaml
+from functools import lru_cache
+
+_WORKER_ROOT = Path(__file__).resolve().parent.parent / "ai_worker"
+
+
+@lru_cache(maxsize=None)
+def _load_domain_settings(domain: str) -> dict:
+    """도메인별 settings.yaml 로드. 캐시됨.
+
+    Args:
+        domain: 도메인 이름 (core, script, scene, tts, video, renderer)
+    Returns:
+        YAML 파싱된 dict. 파일 없으면 빈 dict.
+    """
+    path = _WORKER_ROOT / domain / "settings.yaml"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def get_domain_setting(domain: str, *keys, default=None):
+    """도메인 settings.yaml에서 중첩 키를 안전하게 조회.
+
+    Example:
+        get_domain_setting("core", "retry", "max_attempts", default=3)
+        → core/settings.yaml의 retry.max_attempts 값, 없으면 3
+    """
+    cfg = _load_domain_settings(domain)
+    for key in keys:
+        if isinstance(cfg, dict):
+            cfg = cfg.get(key)
+        else:
+            return default
+    return cfg if cfg is not None else default

@@ -1,0 +1,24 @@
+# ── 폴링 간격 ──
+poll_interval_sec: 10
+
+# ── CUDA 동시 처리 ──
+cuda_concurrency: 1
+
+# ── 재시도 정책 ──
+retry:
+  max_attempts: 3
+  backoff_factor: 2.0
+  initial_delay_sec: 5.0
+
+# ── GPU 메모리 관리 ──
+gpu:
+  max_coexist_vram_gb: 20.0
+  safety_margin_gb: 2.0
+  vram_requirements:
+    llm: 14.0
+    tts: 5.0
+    video: 12.0
+    other: 2.0
+
+# ── 실패 로그 ──
+failure_log: logs/failures.log
