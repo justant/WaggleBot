@@ -1,0 +1,29 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4A90D9'}}}%%
+
+flowchart LR
+    subgraph ACT1["1막 — LLM (qwen2.5:14b ~14GB)"]
+        direction TB
+        P1["Phase 1<br/>analyze_resources<br/>scene/analyzer.py"]
+        P2["Phase 2<br/>chunk_with_llm<br/>script/chunker.py"]
+        P3["Phase 3<br/>validate_and_fix<br/>scene/validator.py"]
+        P4["Phase 4<br/>SceneDirector<br/>scene/director.py"]
+        P1 --> P2 --> P3 --> P4
+    end
+
+    VRAM_SWITCH["🔄 VRAM 전환<br/>LLM 해제<br/>torch.cuda.empty_cache()"]
+
+    subgraph ACT2["2막 — Media (Fish ~5GB + LTX ~12.7GB)"]
+        direction TB
+        P45["Phase 4.5<br/>assign_video_modes<br/>scene/director.py"]
+        P5["Phase 5<br/>TTS 생성<br/>tts/fish_client.py"]
+        P6["Phase 6<br/>video_prompt 생성<br/>video/prompt_engine.py"]
+        P7["Phase 7<br/>video_clip 생성<br/>video/manager.py<br/>+ comfy_client.py"]
+        P8["Phase 8<br/>FFmpeg 렌더링<br/>renderer/layout.py"]
+        P45 --> P5 --> P6 --> P7 --> P8
+    end
+
+    ACT1 --> VRAM_SWITCH --> ACT2
+
+    style ACT1 fill:#FFF3CD,stroke:#F5A623,stroke-width:2px
+    style ACT2 fill:#D4EDDA,stroke:#28A745,stroke-width:2px
+    style VRAM_SWITCH fill:#F8D7DA,stroke:#DC3545,stroke-width:2px,color:#721c24

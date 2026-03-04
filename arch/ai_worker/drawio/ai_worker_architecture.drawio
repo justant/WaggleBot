@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-03-05" agent="WaggleBot" type="device">
+  <diagram id="ai_worker_arch" name="Module Overview">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- CORE package -->
+        <mxCell id="core_pkg" value="core" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="340" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="main" value="main.py&#xa;진입점 · 폴링 루프" style="rounded=1;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="proc" value="processor.py&#xa;RobustProcessor" style="rounded=1;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="220" y="80" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="gpu" value="gpu_manager.py&#xa;GPUMemoryManager" style="rounded=1;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="150" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="shut" value="shutdown.py&#xa;Graceful Shutdown" style="rounded=1;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="220" y="150" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- PIPELINE package -->
+        <mxCell id="pipe_pkg" value="pipeline" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="440" y="40" width="200" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="cp" value="content_processor.py&#xa;Phase 1~8 통합" style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="80" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- SCRIPT package -->
+        <mxCell id="script_pkg" value="script (LLM)" style="shape=folder;fontStyle=1;tabWidth=100;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#fffde7;strokeColor=#c4b615;" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="340" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="sclient" value="client.py&#xa;Ollama HTTP" style="rounded=1;whiteSpace=wrap;fillColor=#fffde7;strokeColor=#c4b615;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="340" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="chunk" value="chunker.py&#xa;의미 단위 청킹" style="rounded=1;whiteSpace=wrap;fillColor=#fffde7;strokeColor=#c4b615;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="220" y="340" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="sparser" value="parser.py&#xa;JSON 파싱/복구" style="rounded=1;whiteSpace=wrap;fillColor=#fffde7;strokeColor=#c4b615;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="410" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="snorm" value="normalizer.py&#xa;댓글 정규화" style="rounded=1;whiteSpace=wrap;fillColor=#fffde7;strokeColor=#c4b615;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="170" y="410" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="slog" value="logger.py&#xa;LLM 로깅" style="rounded=1;whiteSpace=wrap;fillColor=#fffde7;strokeColor=#c4b615;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="280" y="410" width="100" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- SCENE package -->
+        <mxCell id="scene_pkg" value="scene" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="440" y="300" width="340" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="anal" value="analyzer.py&#xa;ResourceProfile" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="340" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="dir" value="director.py&#xa;SceneDirector" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="620" y="340" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="strat" value="strategy.py&#xa;SceneMix" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="410" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="val" value="validator.py&#xa;max_chars 검증" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="620" y="410" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- TTS package -->
+        <mxCell id="tts_pkg" value="tts" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="560" width="340" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="fish" value="fish_client.py&#xa;Fish Speech 1.5" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="600" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="tnorm" value="normalizer.py&#xa;한국어 정규화" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="220" y="600" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="numr" value="number_reader.py&#xa;숫자 읽기" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="140" y="660" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- VIDEO package -->
+        <mxCell id="video_pkg" value="video" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="440" y="560" width="340" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="vmgr" value="manager.py&#xa;VideoManager" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="600" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="comfy" value="comfy_client.py&#xa;ComfyUI 통신" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="620" y="600" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="peng" value="prompt_engine.py&#xa;한→영 프롬프트" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="460" y="670" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="imgf" value="image_filter.py&#xa;I2V 적합성" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="620" y="670" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- RENDERER package -->
+        <mxCell id="rend_pkg" value="renderer" style="shape=folder;fontStyle=1;tabWidth=80;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#e3f2fd;strokeColor=#2980b9;" vertex="1" parent="1">
+          <mxGeometry x="840" y="300" width="340" height="280" as="geometry"/>
+        </mxCell>
+        <mxCell id="lay" value="layout.py&#xa;하이브리드 합성" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="340" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="comp" value="composer.py&#xa;컴포저" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="340" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="fr" value="_frames.py&#xa;프레임 렌더" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="410" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="rtts" value="_tts.py&#xa;TTS 청크" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="970" y="410" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="enc" value="_encode.py&#xa;FFmpeg 인코딩" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="410" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub" value="subtitle.py&#xa;ASS 자막" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="480" width="120" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="thumb" value="thumbnail.py&#xa;썸네일" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="480" width="120" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- EXTERNAL -->
+        <mxCell id="ext_pkg" value="External Modules" style="shape=folder;fontStyle=1;tabWidth=120;tabHeight=20;tabPosition=left;fontSize=14;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="840" y="40" width="340" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="db" value="db.models&#xa;ScriptData·Post·Content" style="rounded=1;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="80" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="cfg" value="config.settings&#xa;설정 허브" style="rounded=1;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="80" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="anl" value="analytics&#xa;feedback·ab_test" style="rounded=1;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="860" y="150" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="upl" value="uploaders&#xa;YouTube 업로드" style="rounded=1;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="150" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- EDGES: Core -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2E6AB0;" edge="1" parent="1" source="main" target="proc"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2E6AB0;" edge="1" parent="1" source="main" target="shut"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#d6b656;strokeWidth=2;" edge="1" parent="1" source="proc" target="cp"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#6c8ebf;" edge="1" parent="1" source="proc" target="gpu"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: Pipeline → Submodules -->
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#c4b615;" edge="1" parent="1" source="cp" target="chunk"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;" edge="1" parent="1" source="cp" target="anal"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;" edge="1" parent="1" source="cp" target="dir"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#82b366;" edge="1" parent="1" source="cp" target="val"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#9673a6;" edge="1" parent="1" source="cp" target="fish"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#b85450;" edge="1" parent="1" source="cp" target="peng"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#b85450;" edge="1" parent="1" source="cp" target="vmgr"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: Script internal -->
+        <mxCell id="e20" style="strokeColor=#c4b615;" edge="1" parent="1" source="sclient" target="sparser"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e21" style="strokeColor=#c4b615;" edge="1" parent="1" source="sclient" target="snorm"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22" style="strokeColor=#c4b615;" edge="1" parent="1" source="sclient" target="slog"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e23" style="strokeColor=#c4b615;" edge="1" parent="1" source="chunk" target="anal"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e24" style="strokeColor=#9673a6;dashed=1;" edge="1" parent="1" source="snorm" target="numr"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: Scene internal -->
+        <mxCell id="e30" style="strokeColor=#82b366;" edge="1" parent="1" source="dir" target="anal"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e31" style="strokeColor=#82b366;" edge="1" parent="1" source="dir" target="strat"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e32" style="strokeColor=#b85450;dashed=1;" edge="1" parent="1" source="dir" target="imgf"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: TTS internal -->
+        <mxCell id="e40" style="strokeColor=#9673a6;" edge="1" parent="1" source="fish" target="tnorm"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e41" style="strokeColor=#9673a6;" edge="1" parent="1" source="tnorm" target="numr"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: Video internal -->
+        <mxCell id="e50" style="strokeColor=#b85450;" edge="1" parent="1" source="vmgr" target="comfy"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e51" style="strokeColor=#b85450;" edge="1" parent="1" source="vmgr" target="peng"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e52" style="strokeColor=#c4b615;dashed=1;" edge="1" parent="1" source="peng" target="sclient"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: Renderer internal -->
+        <mxCell id="e60" style="strokeColor=#2980b9;" edge="1" parent="1" source="comp" target="lay"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e61" style="strokeColor=#2980b9;" edge="1" parent="1" source="comp" target="thumb"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e62" style="strokeColor=#2980b9;" edge="1" parent="1" source="lay" target="fr"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e63" style="strokeColor=#2980b9;" edge="1" parent="1" source="lay" target="rtts"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e64" style="strokeColor=#2980b9;" edge="1" parent="1" source="lay" target="enc"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- EDGES: To external -->
+        <mxCell id="e70" style="strokeColor=#666666;dashed=1;" edge="1" parent="1" source="proc" target="db"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e71" style="strokeColor=#666666;dashed=1;" edge="1" parent="1" source="proc" target="cfg"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e72" style="strokeColor=#666666;dashed=1;" edge="1" parent="1" source="proc" target="anl"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e73" style="strokeColor=#666666;dashed=1;" edge="1" parent="1" source="main" target="upl"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- VRAM Note -->
+        <mxCell id="note1" value="⚠️ VRAM 2막 구조 (RTX 3090 24GB)&#xa;1막: LLM qwen2.5:14b (~14GB)&#xa;2막: Fish (~5GB) + LTX-2 GGUF Q4 (~12.7GB)&#xa;&#xa;❌ video ↛ tts (독립 파이프라인)" style="shape=note;size=14;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;align=left;verticalAlign=top;spacingLeft=5;spacingTop=5;" vertex="1" parent="1">
+          <mxGeometry x="840" y="620" width="340" height="100" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram id="pipeline_flow" name="Pipeline Flow">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="600" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Act 1 -->
+        <mxCell id="act1" value="1막: LLM (qwen2.5:14b ~14GB)" style="swimlane;startSize=30;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="560" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1" value="Phase 1&#xa;analyze_resources&#xa;scene/analyzer.py" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act1">
+          <mxGeometry x="20" y="50" width="120" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2" value="Phase 2&#xa;chunk_with_llm&#xa;script/chunker.py" style="rounded=1;fillColor=#fffde7;strokeColor=#c4b615;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act1">
+          <mxGeometry x="160" y="50" width="120" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3" value="Phase 3&#xa;validate_and_fix&#xa;scene/validator.py" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act1">
+          <mxGeometry x="300" y="50" width="120" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4" value="Phase 4&#xa;SceneDirector&#xa;scene/director.py" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act1">
+          <mxGeometry x="300" y="120" width="120" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="ep1" style="" edge="1" parent="act1" source="p1" target="p2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ep2" style="" edge="1" parent="act1" source="p2" target="p3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ep3" style="" edge="1" parent="act1" source="p3" target="p4"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- VRAM Switch -->
+        <mxCell id="vswitch" value="🔄 VRAM 전환&#xa;LLM 해제&#xa;torch.cuda.empty_cache()&#xa;gc.collect()" style="rhombus;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="660" y="70" width="160" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- Act 2 -->
+        <mxCell id="act2" value="2막: Media (Fish ~5GB + LTX-2 ~12.7GB)" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="280" width="780" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="p45" value="Phase 4.5&#xa;assign_video_modes&#xa;scene/director.py" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act2">
+          <mxGeometry x="20" y="50" width="130" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5" value="Phase 5&#xa;TTS 생성&#xa;tts/fish_client.py" style="rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act2">
+          <mxGeometry x="170" y="50" width="120" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p6" value="Phase 6&#xa;video_prompt&#xa;video/prompt_engine.py" style="rounded=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act2">
+          <mxGeometry x="310" y="50" width="130" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p7" value="Phase 7&#xa;video_clip 생성&#xa;video/manager.py&#xa;+ comfy_client.py" style="rounded=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act2">
+          <mxGeometry x="460" y="50" width="140" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p8" value="Phase 8&#xa;FFmpeg 렌더링&#xa;renderer/layout.py" style="rounded=1;fillColor=#e3f2fd;strokeColor=#2980b9;fontSize=10;whiteSpace=wrap;" vertex="1" parent="act2">
+          <mxGeometry x="620" y="50" width="130" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="ep45" style="" edge="1" parent="act2" source="p45" target="p5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ep5" style="" edge="1" parent="act2" source="p5" target="p6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ep6" style="" edge="1" parent="act2" source="p6" target="p7"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ep7" style="" edge="1" parent="act2" source="p7" target="p8"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Connect acts -->
+        <mxCell id="ea1" style="strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="p4" target="vswitch"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ea2" style="strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="vswitch" target="p45"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,79 @@
+@startuml ai_worker_pipeline_sequence
+!theme cerulean
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+title 8-Phase Pipeline Sequence
+
+actor "RobustProcessor" as RP #4A90D9
+participant "ContentProcessor\npipeline/" as CP #F5A623
+participant "scene/analyzer" as ANA #7ED321
+participant "script/chunker" as CHK #F8E71C
+participant "scene/validator" as VAL #7ED321
+participant "SceneDirector\nscene/director" as SD #7ED321
+participant "GPUManager\ncore/" as GPU #95A5A6
+participant "fish_client\ntts/" as TTS #9B59B6
+participant "PromptEngine\nvideo/" as PE #E74C3C
+participant "VideoManager\nvideo/" as VM #E74C3C
+participant "LayoutRenderer\nrenderer/" as LR #3498DB
+
+== 1막: LLM (qwen2.5:14b ~14GB) ==
+
+RP -> CP : process_content(content)
+activate CP
+
+CP -> ANA : Phase 1: analyze_resources()
+activate ANA
+return ResourceProfile
+
+CP -> CHK : Phase 2: chunk_with_llm(content, profile)
+activate CHK
+CHK -> CHK : Ollama LLM 호출
+return raw script dict
+
+CP -> VAL : Phase 3: validate_and_fix(script)
+activate VAL
+return validated script
+
+CP -> SD : Phase 4: distribute(script_data)
+activate SD
+SD -> SD : 씬 배분 + 감정 태그
+return list[SceneDecision]
+
+== VRAM 전환: LLM 해제 ==
+
+CP -> GPU : cleanup(LLM)
+activate GPU
+GPU -> GPU : torch.cuda.empty_cache()\ngc.collect()
+return OK
+
+== 2막: Media (Fish ~5GB + LTX ~12.7GB) ==
+
+CP -> SD : Phase 4.5: assign_video_modes(scenes)
+activate SD
+SD -> SD : t2v/i2v 결정
+return scenes (video_mode set)
+
+CP -> TTS : Phase 5: synthesize(scenes)
+activate TTS
+TTS -> TTS : Fish Speech TTS
+return scene.text_lines + audio
+
+CP -> PE : Phase 6: generate_prompt(scenes)
+activate PE
+PE -> PE : 한→영 변환 (Ollama)
+return scene.video_prompt
+
+CP -> VM : Phase 7: generate_clips(scenes)
+activate VM
+VM -> VM : ComfyUI LTX-2\n4단계 폴백 재시도
+return scene.video_clip_path
+
+CP -> LR : Phase 8: render(scenes)
+activate LR
+LR -> LR : FFmpeg h264_nvenc\n9:16 합성 + 자막 + 썸네일
+return final_video_path
+
+return ScriptData
+
+@enduml

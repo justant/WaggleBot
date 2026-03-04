@@ -1,0 +1,140 @@
+@startuml ai_worker_module_overview
+!theme cerulean
+skinparam linetype ortho
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultFontSize 11
+
+title ai_worker 모듈 의존성 다이어그램
+
+package "core" as CORE #E8F4FD {
+    [main.py\n진입점·폴링 루프] as main
+    [processor.py\nRobustProcessor] as proc
+    [gpu_manager.py\nGPUMemoryManager] as gpu
+    [shutdown.py\nGraceful Shutdown] as shut
+}
+
+package "pipeline" as PIPE #FFF3CD {
+    [content_processor.py\nPhase 1~8 통합] as cp
+}
+
+package "script" as SCRIPT #FFFDE7 {
+    [client.py\nOllama HTTP] as sclient
+    [chunker.py\n의미 단위 청킹] as chunk
+    [parser.py\nJSON 파싱/복구] as sparser
+    [normalizer.py\n댓글 정규화] as snorm
+    [logger.py\nLLM 로깅] as slog
+}
+
+package "scene" as SCENE #E8F5E9 {
+    [analyzer.py\nResourceProfile] as anal
+    [director.py\nSceneDirector] as dir
+    [strategy.py\nSceneMix] as strat
+    [validator.py\nmax_chars 검증] as val
+}
+
+package "tts" as TTS #F3E5F5 {
+    [fish_client.py\nFish Speech 1.5] as fish
+    [normalizer.py\n한국어 정규화] as tnorm
+    [number_reader.py\n숫자 읽기] as numr
+}
+
+package "video" as VIDEO #FFEBEE {
+    [manager.py\nVideoManager] as vmgr
+    [comfy_client.py\nComfyUI 통신] as comfy
+    [prompt_engine.py\n한→영 프롬프트] as peng
+    [image_filter.py\nI2V 적합성] as imgf
+    [video_utils.py\nFFmpeg 후처리] as vutil
+}
+
+package "renderer" as RENDER #E3F2FD {
+    [layout.py\n하이브리드 합성] as lay
+    [composer.py\n컴포저] as comp
+    [_frames.py\n프레임 렌더] as fr
+    [_tts.py\nTTS 청크] as rtts
+    [_encode.py\nFFmpeg 인코딩] as enc
+    [subtitle.py\nASS 자막] as sub
+    [thumbnail.py\n썸네일] as thumb
+}
+
+cloud "External" as EXT {
+    [db.models] as db
+    [config.settings] as cfg
+    [analytics] as anl
+    [uploaders] as upl
+}
+
+' Core flow
+main --> proc
+main --> shut
+proc --> cp
+proc --> gpu
+
+' Pipeline → submodules
+cp --> chunk : Phase 2
+cp --> anal : Phase 1
+cp --> dir : Phase 4
+cp --> val : Phase 3
+cp --> fish : Phase 5
+cp --> peng : Phase 6
+cp --> vmgr : Phase 7
+cp --> comfy
+cp --> gpu
+
+' Script internal
+sclient --> sparser
+sclient --> snorm
+sclient --> slog
+snorm --> numr
+chunk --> anal
+
+' Scene internal
+dir --> anal
+dir --> imgf
+dir --> strat
+
+' TTS internal
+fish --> tnorm
+tnorm --> numr
+
+' Video internal
+vmgr --> peng
+peng --> sclient : call_ollama_raw
+peng --> slog
+
+' Renderer internal
+lay --> fr
+lay --> rtts
+lay --> enc
+comp --> lay
+comp --> thumb
+
+' External deps
+proc --> db
+proc --> cfg
+proc --> anl
+proc --> upl
+main --> db
+main --> cfg
+slog --> db
+sclient --> cfg
+chunk --> cfg
+dir --> cfg
+val --> cfg
+fish --> cfg
+lay --> cfg
+thumb --> cfg
+
+note right of VIDEO
+  video 모듈은 tts를
+  절대 import 금지
+  (독립 파이프라인)
+end note
+
+note bottom of CORE
+  VRAM 2막 구조:
+  1막 LLM (~14GB)
+  2막 Media (Fish ~5GB + LTX ~12.7GB)
+end note
+
+@enduml

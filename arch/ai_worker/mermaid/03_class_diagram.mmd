@@ -1,0 +1,104 @@
+classDiagram
+    direction TB
+
+    class RobustProcessor {
+        -gpu_manager: GPUMemoryManager
+        -shutdown_event: Event
+        +process_single(post_id) bool
+        +run_loop()
+    }
+
+    class GPUMemoryManager {
+        -_locks: dict
+        -_loaded_models: dict
+        +managed_inference(model_type, name) ContextManager
+        +cleanup()
+    }
+
+    class ContentProcessor {
+        +process_content(content, db) ScriptData
+        -_phase1_analyze(content) ResourceProfile
+        -_phase2_chunk(content, profile) dict
+        -_phase3_validate(script) dict
+        -_phase4_scene(script, profile) list~SceneDecision~
+        -_phase5_tts(scenes) None
+        -_phase6_prompt(scenes) None
+        -_phase7_video(scenes) None
+        -_phase8_render(scenes) Path
+    }
+
+    class SceneDirector {
+        -resource_profile: ResourceProfile
+        -pipeline_config: dict
+        +distribute(script_data) list~SceneDecision~
+    }
+
+    class SceneDecision {
+        +scene_type: str
+        +text_lines: list
+        +image_path: Optional~str~
+        +video_mode: Optional~str~
+        +mood: str
+        +video_prompt: Optional~str~
+        +video_clip_path: Optional~Path~
+    }
+
+    class ResourceProfile {
+        +total_images: int
+        +total_text_length: int
+        +image_text_ratio: float
+    }
+
+    class VideoManager {
+        -comfy_client: ComfyUIClient
+        -prompt_engine: VideoPromptEngine
+        +generate_clip(scene) Path
+        -_fallback_retry(scene) Path
+    }
+
+    class ComfyUIClient {
+        -server_url: str
+        +queue_prompt(workflow) dict
+        +wait_for_completion(prompt_id) dict
+        +get_output(prompt_id) Path
+    }
+
+    class VideoPromptEngine {
+        +generate_prompt(scene, mood) str
+        -_translate_to_english(text) str
+    }
+
+    class FishSpeechClient {
+        -url: str
+        -voice_preset: dict
+        +synthesize(text, voice) Path
+        +wait_for_fish_speech() bool
+    }
+
+    class LayoutRenderer {
+        +render_layout_video_from_scenes(scenes) Path
+        -_build_frame_sequence(scenes) list
+        -_encode_video(frames, audio) Path
+    }
+
+    class ThumbnailGenerator {
+        +generate_thumbnail(content) Path
+        +get_thumbnail_path(content_id) Path
+    }
+
+    class SubtitleGenerator {
+        +generate_ass(text_lines, style) str
+    }
+
+    RobustProcessor --> ContentProcessor : delegates
+    RobustProcessor --> GPUMemoryManager : manages VRAM
+    ContentProcessor --> SceneDirector : Phase 4
+    ContentProcessor --> VideoManager : Phase 7
+    ContentProcessor --> FishSpeechClient : Phase 5
+    ContentProcessor --> LayoutRenderer : Phase 8
+    SceneDirector --> ResourceProfile : uses
+    SceneDirector ..> SceneDecision : creates
+    VideoManager --> ComfyUIClient : ComfyUI 통신
+    VideoManager --> VideoPromptEngine : 프롬프트 생성
+    LayoutRenderer --> SubtitleGenerator : 자막
+    LayoutRenderer --> ThumbnailGenerator : 썸네일

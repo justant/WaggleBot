@@ -1,0 +1,162 @@
+@startuml ai_worker_class_diagram
+!theme cerulean
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+
+title ai_worker 주요 클래스 다이어그램
+
+package "core" #E8F4FD {
+    class RobustProcessor {
+        - gpu_manager: GPUMemoryManager
+        - shutdown_event: Event
+        + process_single(post_id: int): bool
+        + run_loop(): None
+    }
+
+    class GPUMemoryManager {
+        - _locks: dict[ModelType, Lock]
+        - _loaded_models: dict[str, Any]
+        + managed_inference(model_type, name): ContextManager
+        + cleanup(): None
+    }
+
+    enum ModelType {
+        LLM
+        TTS
+        VIDEO
+    }
+}
+
+package "pipeline" #FFF3CD {
+    class ContentProcessor <<module>> {
+        + process_content(content, db): ScriptData
+    }
+}
+
+package "scene" #E8F5E9 {
+    class SceneDirector {
+        - resource_profile: ResourceProfile
+        - pipeline_config: dict
+        + distribute(script_data): list[SceneDecision]
+    }
+
+    class SceneDecision <<dataclass>> {
+        + scene_type: str
+        + text_lines: list[dict]
+        + image_path: Optional[str]
+        + video_mode: Optional[str]
+        + mood: str
+        + video_prompt: Optional[str]
+        + video_clip_path: Optional[Path]
+    }
+
+    class ResourceProfile <<dataclass>> {
+        + total_images: int
+        + total_text_length: int
+        + image_text_ratio: float
+    }
+
+    class SceneMix <<dataclass>> {
+        + num_scenes: int
+        + scene_types: list[str]
+    }
+}
+
+package "script" #FFFDE7 {
+    class ScriptClient <<module>> {
+        + generate_script(content): ScriptData
+        + call_ollama_raw(prompt, model): str
+    }
+
+    class LLMChunker <<module>> {
+        + chunk_with_llm(content, profile): dict
+    }
+
+    class ScriptParser <<module>> {
+        + parse_script_json(raw: str): ScriptData
+    }
+}
+
+package "tts" #F3E5F5 {
+    class FishSpeechClient <<module>> {
+        + synthesize(text, voice): Path
+        + wait_for_fish_speech(): bool
+    }
+
+    class TTSNormalizer <<module>> {
+        + normalize_for_tts(text): str
+    }
+}
+
+package "video" #FFEBEE {
+    class VideoManager {
+        - comfy_client: ComfyUIClient
+        - prompt_engine: VideoPromptEngine
+        + generate_clip(scene): Path
+    }
+
+    class ComfyUIClient {
+        - server_url: str
+        + queue_prompt(workflow): dict
+        + wait_for_completion(id): dict
+        + get_output(id): Path
+    }
+
+    class VideoPromptEngine {
+        + generate_prompt(scene, mood): str
+    }
+
+    class ImageFilter <<module>> {
+        + evaluate_image(path): ImageSuitability
+    }
+}
+
+package "renderer" #E3F2FD {
+    class LayoutRenderer <<module>> {
+        + render_layout_video_from_scenes(scenes): Path
+    }
+
+    class VideoComposer <<module>> {
+        + compose_video(scenes): Path
+        + compose_thumbnail(content): Path
+    }
+
+    class SubtitleGenerator <<module>> {
+        + generate_ass(text_lines, style): str
+    }
+
+    class ThumbnailGenerator <<module>> {
+        + generate_thumbnail(content): Path
+    }
+}
+
+' Relationships
+RobustProcessor --> ContentProcessor : delegates
+RobustProcessor --> GPUMemoryManager : manages VRAM
+GPUMemoryManager --> ModelType : uses
+
+ContentProcessor --> SceneDirector : Phase 4
+ContentProcessor --> LLMChunker : Phase 2
+ContentProcessor --> FishSpeechClient : Phase 5
+ContentProcessor --> VideoManager : Phase 7
+ContentProcessor --> LayoutRenderer : Phase 8
+
+SceneDirector --> ResourceProfile : analyzes
+SceneDirector ..> SceneDecision : creates
+SceneDirector --> ImageFilter : I2V 판별
+SceneDirector --> SceneMix : 전략
+
+LLMChunker --> ScriptClient : LLM 호출
+ScriptClient --> ScriptParser : JSON 파싱
+
+VideoManager --> ComfyUIClient : ComfyUI
+VideoManager --> VideoPromptEngine : 프롬프트
+
+VideoPromptEngine --> ScriptClient : call_ollama_raw
+
+VideoComposer --> LayoutRenderer
+VideoComposer --> ThumbnailGenerator
+
+FishSpeechClient --> TTSNormalizer : 텍스트 정규화
+
+@enduml
