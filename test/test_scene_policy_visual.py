@@ -27,14 +27,14 @@ _ROOT = _HERE.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from ai_worker.pipeline.resource_analyzer import ResourceProfile
-from ai_worker.pipeline.scene_director import SceneDecision, SceneDirector
+from ai_worker.scene.analyzer import ResourceProfile
+from ai_worker.scene.director import SceneDecision, SceneDirector
 from ai_worker.renderer.layout import (
     _create_base_frame,
     _load_font,
     _load_layout,
-    _render_img_only_frame,
-    _render_img_text_frame,
+    _render_image_only_frame,
+    _render_image_text_frame,
     _render_intro_frame,
     _render_outro_frame,
     _render_text_only_frame,
@@ -153,12 +153,12 @@ def render_scene(
     if scene.type == "intro":
         _render_intro_frame(base_frame, out_path)
 
-    elif scene.type == "img_text":
+    elif scene.type == "image_text":
         text = scene.text_lines[0] if scene.text_lines else ""
-        _render_img_text_frame(base_frame, img_pil, text, layout, FONT_DIR, out_path)
+        _render_image_text_frame(base_frame, img_pil, text, layout, FONT_DIR, out_path)
 
-    elif scene.type == "img_only":
-        _render_img_only_frame(base_frame, img_pil, layout, out_path)
+    elif scene.type == "image_only":
+        _render_image_only_frame(base_frame, img_pil, layout, out_path)
 
     elif scene.type == "outro":
         # fixed_text는 TTS 전용 — 화면에는 표시하지 않음 (overlay_text="")

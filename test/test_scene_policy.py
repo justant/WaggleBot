@@ -85,7 +85,7 @@ def test_script_data_mood() -> None:
 # ---------------------------------------------------------------------------
 def test_pick_random_file() -> None:
     print("[3] pick_random_file 검증")
-    from ai_worker.pipeline.scene_director import pick_random_file
+    from ai_worker.scene.director import pick_random_file
 
     # 존재하지 않는 폴더
     r = pick_random_file("assets/image/nonexistent", [".jpg"])
@@ -108,34 +108,34 @@ def test_pick_random_file() -> None:
 # ---------------------------------------------------------------------------
 def test_distribute_images() -> None:
     print("[4] distribute_images 검증")
-    from ai_worker.pipeline.scene_director import distribute_images
+    from ai_worker.scene.director import distribute_images
 
     # Case 4: 이미지 없음 → text_only
     s = distribute_images([("줄1", None), ("줄2", None)], [], 8)
     assert all(x.type == "text_only" for x in s), f"Case4 실패: {[x.type for x in s]}"
     ok(f"Case4 (이미지 없음): {[x.type for x in s]}")
 
-    # Case 5: 텍스트 없음 → img_only
+    # Case 5: 텍스트 없음 → image_only
     s = distribute_images([], ["a.jpg", "b.jpg"], 8)
-    assert all(x.type == "img_only" for x in s), f"Case5 실패: {[x.type for x in s]}"
+    assert all(x.type == "image_only" for x in s), f"Case5 실패: {[x.type for x in s]}"
     ok(f"Case5 (텍스트 없음): {[x.type for x in s]}")
 
-    # Case 1: 10줄, 1이미지 → img_text 1개
+    # Case 1: 10줄, 1이미지 → image_text 1개
     items = [(f"줄{i}", None) for i in range(10)]
     s = distribute_images(items, ["img.jpg"], 8)
-    img_s = [x for x in s if x.type == "img_text"]
-    assert len(img_s) == 1, f"Case1 img_text 수 오류: {len(img_s)}"
-    ok(f"Case1 (10줄, 1이미지): 총{len(s)}씬, img_text={len(img_s)}")
+    img_s = [x for x in s if x.type == "image_text"]
+    assert len(img_s) == 1, f"Case1 image_text 수 오류: {len(img_s)}"
+    ok(f"Case1 (10줄, 1이미지): 총{len(s)}씬, image_text={len(img_s)}")
 
-    # Case 2: 10줄, 3이미지 → img_text 3개
+    # Case 2: 10줄, 3이미지 → image_text 3개
     s = distribute_images(items, ["a.jpg", "b.jpg", "c.jpg"], 8)
-    img_s = [x for x in s if x.type == "img_text"]
-    assert len(img_s) == 3, f"Case2 img_text 수 오류: {len(img_s)}"
-    ok(f"Case2 (10줄, 3이미지): 총{len(s)}씬, img_text={len(img_s)}")
+    img_s = [x for x in s if x.type == "image_text"]
+    assert len(img_s) == 3, f"Case2 image_text 수 오류: {len(img_s)}"
+    ok(f"Case2 (10줄, 3이미지): 총{len(s)}씬, image_text={len(img_s)}")
 
-    # Case 3: 이미지 >= 텍스트 → 모두 img_text
+    # Case 3: 이미지 >= 텍스트 → 모두 image_text
     s = distribute_images([("줄1", None), ("줄2", None)], ["a.jpg", "b.jpg", "c.jpg"], 8)
-    assert all(x.type == "img_text" for x in s), f"Case3 실패: {[x.type for x in s]}"
+    assert all(x.type == "image_text" for x in s), f"Case3 실패: {[x.type for x in s]}"
     ok(f"Case3 (이미지>=텍스트): {[x.type for x in s]}")
 
     # max_body_images 제한
@@ -154,8 +154,8 @@ def test_distribute_images() -> None:
 # ---------------------------------------------------------------------------
 def test_scene_director_direct() -> None:
     print("[5] SceneDirector.direct() 검증")
-    from ai_worker.pipeline.resource_analyzer import ResourceProfile
-    from ai_worker.pipeline.scene_director import SceneDirector
+    from ai_worker.scene.analyzer import ResourceProfile
+    from ai_worker.scene.director import SceneDirector
 
     script = {
         "hook": "충격적인 사연입니다",
@@ -169,7 +169,7 @@ def test_scene_director_direct() -> None:
 
     profile = ResourceProfile(image_count=0, text_length=100, estimated_sentences=3, ratio=0.0, strategy="balanced")
 
-    # 이미지 없는 경우 — img_only 또는 intro로 시작해야 함
+    # 이미지 없는 경우 — image_only 또는 intro로 시작해야 함
     director = SceneDirector(profile=profile, images=[], script=script, mood="humor")
     scenes = director.direct()
     assert len(scenes) >= 2, f"씬 수 오류: {len(scenes)}"
@@ -187,7 +187,7 @@ def test_scene_director_direct() -> None:
         mood="shock",
     )
     scenes2 = director2.direct()
-    assert scenes2[0].type == "img_text", f"이미지 있을 때 intro가 img_text여야 함: {scenes2[0].type}"
+    assert scenes2[0].type == "image_text", f"이미지 있을 때 intro가 image_text여야 함: {scenes2[0].type}"
     ok(f"이미지 있음: intro={scenes2[0].type}, image_url={scenes2[0].image_url is not None}")
 
     # tts_emotion이 SceneDecision에 전달됐는지 확인

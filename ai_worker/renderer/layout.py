@@ -2,9 +2,9 @@
 
 씬 타입:
   intro     - 제목만 (title_only.svg)   → 베이스 프레임 그대로 사용
-  img_text  - 이미지 + 텍스트 (img_text.svg)
+  image_text  - 이미지 + 텍스트 (image_text.svg)
   text_only - 텍스트만, 3슬롯 고정 Y (text_only.svg)
-  outro     - 이미지만 (img_only.svg)   → 이미지가 남을 때 마지막 1프레임
+  outro     - 이미지만 (image_only.svg)   → 이미지가 남을 때 마지막 1프레임
 
 핵심 설계:
   1. _create_base_frame() — base_layout.png + 제목을 헤더에 1회 합성
@@ -13,9 +13,9 @@
 
 배분 알고리즘:
   ratio = 이미지수 / 본문문장수
-  ratio >= 0.8 → img_heavy : 거의 모든 문장에 이미지 사용
+  ratio >= 0.8 → image_heavy : 거의 모든 문장에 이미지 사용
   ratio >= 0.3 → balanced  : 이미지 균등 분배
-  ratio <  0.3 → text_heavy: text_only 위주, 앞에서 일부만 img_text
+  ratio <  0.3 → text_heavy: text_only 위주, 앞에서 일부만 image_text
 """
 import hashlib
 import json
@@ -208,15 +208,12 @@ def _run_async(coro) -> object:
 
 
 def _resolve_codec() -> str:
-    """h264_nvenc 우선, 불가 시 libx264 폴백."""
-    from ai_worker.video.video_utils import _nvenc_available
-    return "h264_nvenc" if _nvenc_available() else "libx264"
+    """h264_nvenc 반환 (RTX 3090 필수 환경)."""
+    return "h264_nvenc"
 
 
 def _get_encoder_args(codec: str) -> list[str]:
-    if codec == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +431,7 @@ def _render_intro_frame(
     return out_path
 
 
-def _render_img_text_frame(
+def _render_image_text_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
     text: str,
@@ -442,8 +439,8 @@ def _render_img_text_frame(
     font_dir: Path,
     out_path: Path,
 ) -> Path:
-    """씬 2: img_text — 베이스 프레임 + 이미지(900×900) + 하단 텍스트."""
-    sc = layout["scenes"]["img_text"]
+    """씬 2: image_text — 베이스 프레임 + 이미지(900×900) + 하단 텍스트."""
+    sc = layout["scenes"]["image_text"]
     ia = sc["elements"]["image_area"]
     ta = sc["elements"]["text_area"]
     max_chars = sc.get("text_max_chars", 12)
@@ -552,14 +549,14 @@ def _render_text_only_frame(
     return out_path
 
 
-def _render_img_only_frame(
+def _render_image_only_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
     layout: dict,
     out_path: Path,
 ) -> Path:
-    """씬 img_only — 베이스 프레임 + 이미지 전체 화면 cover 렌더링. 텍스트 없음."""
-    sc = layout["scenes"]["img_only"]
+    """씬 image_only — 베이스 프레임 + 이미지 전체 화면 cover 렌더링. 텍스트 없음."""
+    sc = layout["scenes"]["image_only"]
     ia = sc["elements"]["image_area"]
 
     img = base_frame.copy()
@@ -652,8 +649,8 @@ def _plan_sequence(
         [{"type": scene_type, "sent_idx": int|None, "img_idx": int|None}, ...]
     """
     alg = layout.get("layout_algorithm", {})
-    heavy_thr = alg.get("img_heavy_threshold", 0.8)
-    mixed_thr = alg.get("img_mixed_threshold", 0.3)
+    heavy_thr = alg.get("image_heavy_threshold", 0.8)
+    mixed_thr = alg.get("image_mixed_threshold", 0.3)
 
     n_imgs = len(images)
     plan: list[dict] = []
@@ -689,7 +686,7 @@ def _plan_sequence(
     for local_i in range(n_body):
         sent_idx = local_i + 1
         if local_i in img_slots and img_idx < n_imgs:
-            plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx})
+            plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx})
             img_idx += 1
         else:
             plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None})
@@ -711,7 +708,7 @@ async def _tts_chunk_async(
     text: str,
     idx: int,
     output_dir: Path,
-    scene_type: str = "img_text",
+    scene_type: str = "image_text",
     pre_audio: str | None = None,
     voice_key: str = "default",
 ) -> float:
@@ -780,7 +777,7 @@ async def _generate_tts_chunks(
             sent = sentences[sent_idx]
             text = sent["text"]
             pre_audio = sent.get("audio")          # 사전 생성 경로 (없으면 None)
-            scene_type = entry.get("type", "img_text")
+            scene_type = entry.get("type", "image_text")
             chunk_voice = sent.get("voice_override") or voice
             dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice)
 
@@ -848,7 +845,7 @@ def _build_layout_sfx_filter(
     # ── SFX 비활성화 끝 ──
     sfx_map: dict[str, str] = layout.get("layout_algorithm", {}).get("sfx", {
         "intro": "click.mp3",
-        "img_text": "shutter.mp3",
+        "image_text": "shutter.mp3",
         "text_only": "pop.mp3",
         "outro": "ding.mp3",
     })
@@ -931,7 +928,7 @@ def _scenes_to_plan_and_sentences(
             sentences.append({"text": text, "section": "hook", "audio": audio, "voice_override": None})
             plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
-        elif scene.type == "img_text":
+        elif scene.type == "image_text":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
             sent_dict: dict = {
@@ -944,7 +941,7 @@ def _scenes_to_plan_and_sentences(
             if psl:
                 sent_dict["lines"] = psl
             sentences.append(sent_dict)
-            plan.append({"type": "img_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+            plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "text_only":
             # 여러 줄 → 각각 별도 plan 엔트리 → 렌더러가 누적 스태킹
@@ -963,13 +960,13 @@ def _scenes_to_plan_and_sentences(
                 sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
 
-        elif scene.type == "img_only":
+        elif scene.type == "image_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx: Optional[int] = None
             if text:
                 sent_idx = len(sentences)
                 sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
-            plan.append({"type": "img_only", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+            plan.append({"type": "image_only", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "outro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -1001,7 +998,7 @@ def _render_video_text_overlay(
 ) -> Path:
     """비디오 텍스트를 투명 PNG 오버레이로 PIL 렌더링한다.
 
-    _draw_centered_text()를 사용하여 img_text/text_only와 동일한
+    _draw_centered_text()를 사용하여 image_text/text_only와 동일한
     폰트 렌더링 엔진(PIL 내장 stroke)으로 텍스트를 그린다.
     """
     ta = layout["scenes"]["video_text"]["elements"]["text_area"]
@@ -1204,12 +1201,12 @@ def _render_pipeline(
         logger.info("[layout] 베이스 프레임 생성 완료 (제목 헤더 고정)")
 
         # ── Step 4: 이미지 사전 다운로드 ──────────────────────
-        img_cache: dict[int, Optional[Image.Image]] = {}
+        image_cache: dict[int, Optional[Image.Image]] = {}
         for entry in plan:
             img_idx = entry.get("img_idx")
-            if img_idx is not None and img_idx not in img_cache:
+            if img_idx is not None and img_idx not in image_cache:
                 url = images[img_idx] if img_idx < len(images) else None
-                img_cache[img_idx] = _load_image(url, tmp_dir) if url else None
+                image_cache[img_idx] = _load_image(url, tmp_dir) if url else None
 
         # ── Steps 5~6: TTS 생성 또는 캐시 로드 ───────────────────
         merged_tts = tmp_dir / "merged_tts.wav"
@@ -1280,18 +1277,18 @@ def _render_pipeline(
             if scene_type == "intro":
                 _render_intro_frame(base_frame, frame_path)
 
-            elif scene_type == "img_text":
-                img_pil = img_cache.get(img_idx) if img_idx is not None else None
+            elif scene_type == "image_text":
+                img_pil = image_cache.get(img_idx) if img_idx is not None else None
                 text = sentences[sent_idx]["text"] if sent_idx is not None else ""
                 if img_pil is None:
-                    logger.warning("[layout] 프레임 %d: img_text→text_only 폴백 (이미지 없음)", frame_idx)
+                    logger.warning("[layout] 프레임 %d: image_text→text_only 폴백 (이미지 없음)", frame_idx)
                     lines = sentences[sent_idx].get("lines", [text]) if sent_idx is not None else [text]
                     fallback_entry = {"lines": lines, "is_new": True,
                                       "block_type": entry.get("block_type", "body"),
                                       "author": entry.get("author")}
                     _render_text_only_frame(base_frame, [fallback_entry], layout, font_dir, frame_path)
                 else:
-                    _render_img_text_frame(base_frame, img_pil, text, layout, font_dir, frame_path)
+                    _render_image_text_frame(base_frame, img_pil, text, layout, font_dir, frame_path)
 
             elif scene_type == "text_only":
                 for prev in text_only_history:
@@ -1314,12 +1311,12 @@ def _render_pipeline(
                 })
                 _render_text_only_frame(base_frame, text_only_history, layout, font_dir, frame_path)
 
-            elif scene_type == "img_only":
-                img_pil = img_cache.get(img_idx) if img_idx is not None else None
-                _render_img_only_frame(base_frame, img_pil, layout, frame_path)
+            elif scene_type == "image_only":
+                img_pil = image_cache.get(img_idx) if img_idx is not None else None
+                _render_image_only_frame(base_frame, img_pil, layout, frame_path)
 
             elif scene_type == "outro":
-                img_pil = img_cache.get(img_idx) if img_idx is not None else None
+                img_pil = image_cache.get(img_idx) if img_idx is not None else None
                 _render_outro_frame(base_frame, img_pil, "", layout, font_dir, frame_path)
 
             frame_paths.append(frame_path)

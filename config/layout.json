@@ -13,9 +13,9 @@
     "body_sentence": {
       "max_chars": 45,
       "max_lines": 1,
-      "description": "본문 한 줄 (img_text, text_only 공통)"
+      "description": "본문 한 줄 (image_text, text_only 공통)"
     },
-    "img_text_caption": {
+    "image_text_caption": {
       "max_chars": 60,
       "max_lines": 2,
       "description": "이미지 하단 캡션"
@@ -50,8 +50,8 @@
       "description": "제목만 — title_only.svg (베이스 프레임 그대로 사용)",
       "title_max_chars": 18
     },
-    "img_text": {
-      "description": "이미지 + 텍스트 — img_text.svg",
+    "image_text": {
+      "description": "이미지 + 텍스트 — image_text.svg",
       "text_max_chars": 28,
       "elements": {
         "image_area": {
@@ -95,7 +95,7 @@
       }
     },
     "outro": {
-      "description": "이미지만 (남은 이미지 아웃트로) — img_only.svg",
+      "description": "이미지만 (남은 이미지 아웃트로) — image_only.svg",
       "elements": {
         "image_area": {
           "x": 90,
@@ -118,7 +118,7 @@
         }
       }
     },
-    "img_only": {
+    "image_only": {
       "description": "텍스트 없이 이미지만 전체 화면으로 표시 (인트로 배경 및 아웃트로)",
       "elements": {
         "image_area": {
@@ -158,8 +158,8 @@
     }
   },
   "layout_algorithm": {
-    "img_heavy_threshold": 0.8,
-    "img_mixed_threshold": 0.3,
+    "image_heavy_threshold": 0.8,
+    "image_mixed_threshold": 0.3,
     "sfx": {}
   }
 }

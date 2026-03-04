@@ -26,7 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from db.models import Comment, LLMLog, Post
 from db.session import SessionLocal
-from ai_worker.llm.client import generate_script, _SCRIPT_PROMPT_V2
+from ai_worker.script.client import generate_script, _SCRIPT_PROMPT_V2
 
 logging.basicConfig(
     level=logging.INFO,

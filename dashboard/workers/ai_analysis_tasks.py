@@ -31,7 +31,7 @@ def submit_analysis_task(post_id: int, title: str, content: str, model: str) -> 
 
     def _run() -> None:
         try:
-            from ai_worker.llm.client import call_ollama_raw
+            from ai_worker.script.client import call_ollama_raw
             prompt = (
                 "다음 게시글의 YouTube 쇼츠 영상 적합도를 분석하세요.\n\n"
                 f"제목: {title}\n"

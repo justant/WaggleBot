@@ -124,7 +124,7 @@ def _find_dc_image_urls(max_posts: int = 10) -> list[str]:
 
 def test_scene_director_download() -> bool:
     """scene_director._download_and_cache_image를 사용한 DC 이미지 다운로드 테스트."""
-    from ai_worker.pipeline.scene_director import _download_and_cache_image
+    from ai_worker.scene.director import _download_and_cache_image
 
     log.info("[Test 1] scene_director._download_and_cache_image DC 이미지 다운로드")
 
@@ -179,7 +179,7 @@ def test_scene_director_download() -> bool:
 
 def test_dc_session_warmup() -> bool:
     """DC 세션 워밍업이 정상 동작하는지 테스트."""
-    from ai_worker.pipeline.scene_director import _get_dc_session
+    from ai_worker.scene.director import _get_dc_session
 
     log.info("[Test 2] DC 세션 워밍업")
     sess = _get_dc_session()
@@ -200,7 +200,7 @@ def test_dc_session_warmup() -> bool:
 
 def test_is_dc_url() -> bool:
     """_is_dc_url 함수 검증."""
-    from ai_worker.pipeline.scene_director import _is_dc_url
+    from ai_worker.scene.director import _is_dc_url
 
     log.info("[Test 3] _is_dc_url 판별")
 
@@ -227,7 +227,7 @@ def test_is_dc_url() -> bool:
 
 def test_cache_hit() -> bool:
     """캐시된 이미지는 재다운로드하지 않는지 테스트."""
-    from ai_worker.pipeline.scene_director import _download_and_cache_image
+    from ai_worker.scene.director import _download_and_cache_image
 
     log.info("[Test 4] 캐시 히트 테스트")
 
@@ -252,7 +252,7 @@ def test_cache_hit() -> bool:
 
 def test_non_dc_download() -> bool:
     """DC 외 일반 이미지 다운로드도 정상인지 확인."""
-    from ai_worker.pipeline.scene_director import _download_and_cache_image
+    from ai_worker.scene.director import _download_and_cache_image
 
     log.info("[Test 5] 비-DC 이미지 다운로드")
 

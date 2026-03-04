@@ -118,7 +118,7 @@ def submit_llm_task(
 
     def _run() -> None:
         try:
-            from ai_worker.llm.client import generate_script
+            from ai_worker.script.client import generate_script
             result = generate_script(
                 title=title,
                 body=body,
@@ -179,10 +179,9 @@ def submit_tts_task(
     def _run() -> None:
         try:
             import asyncio
-            from ai_worker.tts import get_tts_engine
+            from ai_worker.tts.fish_client import synthesize
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            tts_engine = get_tts_engine(engine_name)
-            asyncio.run(tts_engine.synthesize(text, voice, output_path))
+            asyncio.run(synthesize(text=text, voice_key=voice, output_path=output_path))
             _tts_tasks[post_id] = {"status": "done", "path": str(output_path)}
             log.info("TTS 미리듣기 완료: post_id=%d", post_id)
         except Exception as exc:

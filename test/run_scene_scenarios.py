@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ai_worker.pipeline.resource_analyzer import ResourceProfile
-from ai_worker.pipeline.scene_director import SceneDecision, SceneDirector
+from ai_worker.scene.analyzer import ResourceProfile
+from ai_worker.scene.director import SceneDecision, SceneDirector
 from db.models import ScriptData
 
 
@@ -56,9 +56,9 @@ def print_scenes(scenes: list[SceneDecision], title: str) -> None:
         # 씬 타입별 아이콘
         icon = {
             "intro":     "🎬",
-            "img_text":  "🖼️ ",
+            "image_text":  "🖼️ ",
             "text_only": "📝",
-            "img_only":  "🌄",
+            "image_only":  "🌄",
             "outro":     "🎤",
         }.get(s.type, "❓")
 
@@ -114,9 +114,9 @@ def case_a_no_image_long_text() -> None:
     print_scenes(scenes, "Case A 결과")
 
     # 검증
-    assert scenes[0].type in ("img_only", "intro"), f"intro 타입 오류: {scenes[0].type}"
+    assert scenes[0].type in ("image_only", "intro"), f"intro 타입 오류: {scenes[0].type}"
     assert scenes[-1].type == "outro"
-    if scenes[0].type == "img_only":
+    if scenes[0].type == "image_only":
         assert scenes[0].image_url is not None, "mood 폴더 이미지가 없어 None"
         assert "horror" in (scenes[0].image_url or ""), f"horror mood 이미지 아님: {scenes[0].image_url}"
         print("\n  ✅ 이미지 없는 글 → intro에 horror mood 폴더 이미지 자동 삽입 확인")
@@ -159,10 +159,10 @@ def case_b_three_images_medium_text() -> None:
     print_scenes(scenes, "Case B 결과")
 
     # 검증
-    assert scenes[0].type == "img_text", f"이미지 있으면 intro=img_text여야 함: {scenes[0].type}"
-    body_img_scenes = [s for s in scenes[1:-1] if s.type == "img_text"]
-    print(f"\n  ✅ 게시글 이미지 첫 장 → intro img_text 사용")
-    print(f"  ✅ 본문에 img_text {len(body_img_scenes)}개 균등 배치")
+    assert scenes[0].type == "image_text", f"이미지 있으면 intro=image_text여야 함: {scenes[0].type}"
+    body_img_scenes = [s for s in scenes[1:-1] if s.type == "image_text"]
+    print(f"\n  ✅ 게시글 이미지 첫 장 → intro image_text 사용")
+    print(f"  ✅ 본문에 image_text {len(body_img_scenes)}개 균등 배치")
     print(f"  ✅ tts_emotion='{scenes[0].tts_emotion}'")
 
 
@@ -184,7 +184,7 @@ def case_c_many_images_short_text() -> None:
 
     profile = ResourceProfile(
         image_count=10, text_length=20, estimated_sentences=1,
-        ratio=0.97, strategy="img_heavy",
+        ratio=0.97, strategy="image_heavy",
     )
     director = SceneDirector(
         profile=profile,

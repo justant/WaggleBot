@@ -8,7 +8,7 @@ from typing import Any as _Any
 import streamlit as st
 from sqlalchemy import func
 
-from ai_worker.llm.client import call_ollama_raw
+from ai_worker.script.client import call_ollama_raw
 from config.settings import load_pipeline_config, OLLAMA_MODEL
 from db.models import Post, PostStatus, Content
 from db.session import SessionLocal

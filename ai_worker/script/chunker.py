@@ -21,13 +21,13 @@ import logging
 
 import requests
 
-from ai_worker.pipeline.resource_analyzer import ResourceProfile
+from ai_worker.scene.analyzer import ResourceProfile
 from config.settings import OLLAMA_MODEL, MAX_BODY_CHARS, get_llm_constraints_prompt, get_ollama_host
 
 logger = logging.getLogger(__name__)
 
 _STRATEGY_GUIDE: dict[str, str] = {
-    "img_heavy":  "각 문장 짧고 임팩트 있게. 이미지마다 한 문장.",
+    "image_heavy":  "각 문장 짧고 임팩트 있게. 이미지마다 한 문장.",
     "balanced":   "핵심 문장과 보조 문장을 구분해서 작성.",
     "text_heavy": "텍스트만으로 몰입되도록 자세히 작성.",
 }
@@ -128,7 +128,7 @@ async def chunk_with_llm(
         ValueError: 필수 키 누락
     """
     import asyncio
-    from ai_worker.llm.logger import LLMCallTimer, log_llm_call
+    from ai_worker.script.logger import LLMCallTimer, log_llm_call
 
     prompt = create_chunking_prompt(post_content, profile, extended=extended)
     logger.info("LLM 청킹 요청: 전략=%s, 본문=%d자, extended=%s", profile.strategy, len(post_content), extended)

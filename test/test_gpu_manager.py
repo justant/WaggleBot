@@ -7,7 +7,7 @@ GPU 메모리 관리 시스템 테스트
 import logging
 import time
 
-from ai_worker.gpu_manager import (
+from ai_worker.core.gpu_manager import (
     GPUMemoryManager,
     ModelType,
     get_gpu_manager

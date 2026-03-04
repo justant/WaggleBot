@@ -72,26 +72,26 @@
     "intro": {
       "description": "제목을 읽어주는 첫 화면",
       "with_image": {
-        "layout": "img_text",
+        "layout": "image_text",
         "image_source": "post_images[0]",
         "note": "글에 이미지가 1장 이상이면 첫 번째 이미지 사용"
       },
       "without_image": {
-        "layout": "img_only",
+        "layout": "image_only",
         "image_source": "intro_image_dir",
         "note": "글에 이미지가 0장이면 mood별 인트로 폴더에서 랜덤 선택"
       }
     },
     "body": {
       "description": "본문을 읽는 화면들",
-      "with_image": { "layout": "img_text" },
+      "with_image": { "layout": "image_text" },
       "without_image": { "layout": "text_only" },
       "image_distribution": "even_spread",
       "image_distribution_note": "공식: interval = total_lines / (remaining_images + 1)"
     },
     "outro": {
       "description": "마지막 화면 — 고정 멘트 + mood별 아웃트로 폴더에서 랜덤 이미지",
-      "layout": "img_only",
+      "layout": "image_only",
       "image_source": "outro_image_dir",
       "fixed_texts": [
         "여러분들의 생각은 어떤가요?",

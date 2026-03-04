@@ -1,6 +1,6 @@
 """렌더링 품질 스크린샷 테스트 — PIL 프레임 캡처.
 
-3가지 케이스(짧은/적당한/긴 텍스트)에 대해 base, img_text, text_only, video_text
+3가지 케이스(짧은/적당한/긴 텍스트)에 대해 base, image_text, text_only, video_text
 프레임을 PNG로 저장하여 글자 크기·제목 말줄임·폰트 통일 등을 시각적으로 검증한다.
 
 사용법:
@@ -20,7 +20,7 @@ from ai_worker.renderer.layout import (
     _create_base_frame,
     _draw_centered_text,
     _load_font,
-    _render_img_text_frame,
+    _render_image_text_frame,
     _render_text_only_frame,
     _wrap_korean,
 )
@@ -39,7 +39,7 @@ CASES = [
     {
         "name": "case1",
         "title": "맛집 추천",
-        "img_text": "정말 맛있어요",
+        "image_text": "정말 맛있어요",
         "text_only": [
             {"lines": ["추천합니다"], "is_new": True, "block_type": "body", "author": None},
         ],
@@ -47,7 +47,7 @@ CASES = [
     {
         "name": "case2",
         "title": "오늘 회사에서 있었던 일",
-        "img_text": "이런 일이 있었는데 여러분 어떻게 생각하세요?",
+        "image_text": "이런 일이 있었는데 여러분 어떻게 생각하세요?",
         "text_only": [
             {"lines": ["오늘 회사에서 진짜 어이없는"], "is_new": False, "block_type": "body", "author": None},
             {"lines": ["일이 있었는데 들어볼래요?"], "is_new": True, "block_type": "body", "author": None},
@@ -56,7 +56,7 @@ CASES = [
     {
         "name": "case3",
         "title": "탕수육을 이렇게 먹는게 정말 못배워먹은건가요 진짜 궁금합니다",
-        "img_text": "부먹이든 찍먹이든 맛있게 먹으면 그만이지 왜 그렇게 따지는건지 모르겠다",
+        "image_text": "부먹이든 찍먹이든 맛있게 먹으면 그만이지 왜 그렇게 따지는건지 모르겠다",
         "text_only": [
             {"lines": ["친구들이랑 탕수육 시켰는데 소스를 부어"], "is_new": False, "block_type": "body", "author": None},
             {"lines": ["먹냐 찍어먹냐 가지고 진짜 심하게 싸"], "is_new": False, "block_type": "body", "author": None},
@@ -130,12 +130,12 @@ def main() -> None:
         print(f"  [OK] {base_path.name}")
         total += 1
 
-        # 2. img_text (이미지 없이 회색 placeholder)
-        img_text_path = OUT_DIR / f"{name}_img_text.png"
-        _render_img_text_frame(
-            base, None, case["img_text"], layout, FONT_DIR, img_text_path,
+        # 2. image_text (이미지 없이 회색 placeholder)
+        image_text_path = OUT_DIR / f"{name}_image_text.png"
+        _render_image_text_frame(
+            base, None, case["image_text"], layout, FONT_DIR, image_text_path,
         )
-        print(f"  [OK] {img_text_path.name}")
+        print(f"  [OK] {image_text_path.name}")
         total += 1
 
         # 3. text_only
@@ -149,7 +149,7 @@ def main() -> None:
         # 4. video_text (PIL 렌더링 — 비디오 없이 placeholder)
         video_text_path = OUT_DIR / f"{name}_video_text.png"
         _render_video_text_frame(
-            base, case["img_text"], layout, FONT_DIR, video_text_path,
+            base, case["image_text"], layout, FONT_DIR, video_text_path,
         )
         print(f"  [OK] {video_text_path.name}")
         total += 1

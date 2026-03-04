@@ -17,11 +17,11 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ai_worker.gpu_manager import get_gpu_manager, ModelType
-from ai_worker.llm.client import ScriptData, generate_script, summarize
+from ai_worker.core.gpu_manager import get_gpu_manager, ModelType
+from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
-from ai_worker.tts import get_tts_engine
-from ai_worker.renderer.video import render_preview
+from ai_worker.tts.fish_client import synthesize as tts_synthesize
+from db.models import ScriptData
 from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
 from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
@@ -106,43 +106,39 @@ class RobustProcessor:
                     )
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
-                # ===== Step 3: 렌더링 (render_style에 따라 분기) =====
-                render_style = json.loads(script.to_json()).get("render_style", "layout")
-                logger.info("[Step 3/3] 렌더링 중 (style=%s)...", render_style)
-                if render_style == "layout":
-                    from ai_worker.renderer.layout import render_layout_video_from_scenes
-                    from ai_worker.pipeline.resource_analyzer import analyze_resources
-                    from ai_worker.pipeline.scene_director import SceneDirector
-                    from ai_worker.pipeline.text_validator import validate_and_fix
+                # ===== Step 3: 렌더링 =====
+                logger.info("[Step 3/3] 렌더링 중...")
+                from ai_worker.renderer.layout import render_layout_video_from_scenes
+                from ai_worker.scene.analyzer import analyze_resources
+                from ai_worker.scene.director import SceneDirector
+                from ai_worker.scene.validator import validate_and_fix
 
-                    _images: list[str] = post.images if isinstance(post.images, list) else []
+                _images: list[str] = post.images if isinstance(post.images, list) else []
 
-                    # Phase 1: 자원 분석
-                    _profile = analyze_resources(post, _images)
-                    logger.info(
-                        "[Step 3/3] 전략=%s 이미지=%d",
-                        _profile.strategy, _profile.image_count,
-                    )
+                # Phase 1: 자원 분석
+                _profile = analyze_resources(post, _images)
+                logger.info(
+                    "[Step 3/3] 전략=%s 이미지=%d",
+                    _profile.strategy, _profile.image_count,
+                )
 
-                    # Phase 3: 대본 검증/보정 (max_chars)
-                    _script_dict = validate_and_fix(
-                        {"hook": script.hook, "body": list(script.body), "closer": script.closer}
-                    )
+                # Phase 3: 대본 검증/보정 (max_chars)
+                _script_dict = validate_and_fix(
+                    {"hook": script.hook, "body": list(script.body), "closer": script.closer}
+                )
 
-                    # Phase 4: 씬 배분
-                    _director = SceneDirector(_profile, _images, _script_dict)
-                    _scenes = _director.direct()
-                    logger.info("[Step 3/3] 씬=%d개", len(_scenes))
+                # Phase 4: 씬 배분
+                _director = SceneDirector(_profile, _images, _script_dict)
+                _scenes = _director.direct()
+                logger.info("[Step 3/3] 씬=%d개", len(_scenes))
 
-                    # Phase 4.5-7: LTX-Video 클립 생성
-                    _scenes = await self._generate_video_clips(
-                        _scenes, script, post.title or "", post.id
-                    )
+                # Phase 4.5-7: LTX-Video 클립 생성
+                _scenes = await self._generate_video_clips(
+                    _scenes, script, post.title or "", post.id
+                )
 
-                    # Phase 5: 렌더링
-                    video_path = render_layout_video_from_scenes(post, _scenes)
-                else:
-                    video_path = self._safe_render_video(post, audio_path, script.to_json())
+                # Phase 5: 렌더링
+                video_path = render_layout_video_from_scenes(post, _scenes)
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
@@ -319,8 +315,7 @@ class RobustProcessor:
             Exception: TTS 에러
         """
         try:
-            tts_engine = get_tts_engine(self.cfg["tts_engine"])
-            voice_id = self.cfg["tts_voice"]
+            voice_id = self.cfg.get("tts_voice", "default")
 
             audio_dir = MEDIA_DIR / "audio" / site_code
             audio_dir.mkdir(parents=True, exist_ok=True)
@@ -335,8 +330,8 @@ class RobustProcessor:
                 shutil.copy2(cached_audio, audio_path)
                 logger.info("[TTS 캐시 히트] post_id=%d", post_id)
             else:
-                # TTS 생성
-                await tts_engine.synthesize(text, voice_id, audio_path)
+                # TTS 생성 (Fish Speech 직접 호출)
+                await tts_synthesize(text=text, voice_key=voice_id, output_path=audio_path)
                 shutil.copy2(audio_path, cached_audio)  # 캐시 저장
 
             # 파일 존재 확인
@@ -351,42 +346,6 @@ class RobustProcessor:
 
         except Exception as e:
             logger.exception("TTS 생성 실패")
-            raise
-
-    def _safe_render_video(
-        self, post: Post, audio_path: Path, summary_text: str
-    ) -> Path:
-        """
-        안전하게 프리뷰 영상 렌더링 (480×854, libx264 CPU)
-
-        Args:
-            post: 게시글
-            audio_path: 음성 파일 경로
-            summary_text: 요약 텍스트 JSON
-
-        Returns:
-            프리뷰 영상 파일 경로
-
-        Raises:
-            Exception: 렌더링 에러
-        """
-        try:
-            video_path = render_preview(post, audio_path, summary_text, self.cfg)
-
-            # 파일 존재 확인
-            if not video_path.exists():
-                raise FileNotFoundError(f"영상 파일 생성 실패: {video_path}")
-
-            # 파일 크기 확인 (최소 100KB)
-            if video_path.stat().st_size < 100 * 1024:
-                raise ValueError(
-                    f"영상 파일이 너무 작습니다: {video_path.stat().st_size / 1024:.1f}KB"
-                )
-
-            return video_path
-
-        except Exception as e:
-            logger.exception("영상 렌더링 실패")
             raise
 
     def _classify_error(self, error: Exception) -> FailureType:
@@ -543,11 +502,11 @@ class RobustProcessor:
 
         import gc
 
-        from ai_worker.pipeline.scene_director import assign_video_modes
+        from ai_worker.scene.director import assign_video_modes
         from config.settings import VIDEO_I2V_THRESHOLD
 
         # Phase 4.5: video_mode 할당
-        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_img_cache_{post_id}"
+        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_image_cache_{post_id}"
         image_cache_dir.mkdir(parents=True, exist_ok=True)
         scenes = assign_video_modes(scenes, image_cache_dir, VIDEO_I2V_THRESHOLD)
         logger.info(
@@ -761,8 +720,8 @@ class RobustProcessor:
 
             if use_cp:
                 # 5-Phase content_processor 파이프라인
-                from ai_worker.pipeline.llm_chunker import chunk_with_llm
-                from ai_worker.pipeline.resource_analyzer import analyze_resources
+                from ai_worker.script.chunker import chunk_with_llm
+                from ai_worker.scene.analyzer import analyze_resources
 
                 _images: list[str] = post.images if isinstance(post.images, list) else []
                 _profile = analyze_resources(post, _images)
@@ -812,10 +771,7 @@ class RobustProcessor:
     def render_stage(self, post_id: int, script: ScriptData, audio_path: Path) -> Path:
         """영상 렌더링 + 썸네일 생성 (CPU 단계).
 
-        render_style에 따라 렌더러를 선택한다:
-        - "layout" (기본): SceneDirector → render_layout_video_from_scenes()
-        - 기타: 레거시 render_preview()
-
+        SceneDirector → render_layout_video_from_scenes()로 렌더링.
         파이프라인 병렬화에서 독립적으로 호출되는 2단계.
         완료 시 post.status → PREVIEW_RENDERED.
         """
@@ -831,52 +787,39 @@ class RobustProcessor:
             if post is None:
                 raise ValueError(f"Post {post_id} 없음")
 
-            # render_style 확인: DB에 저장된 summary_text JSON에서 읽는다
-            render_style = "layout"
-            try:
-                existing = session.query(Content).filter_by(post_id=post_id).first()
-                if existing and existing.summary_text:
-                    _d = json.loads(existing.summary_text)
-                    render_style = _d.get("render_style", "layout")
-            except Exception:
-                logger.debug("render_style 파싱 실패 — layout 기본값 사용")
+            logger.info("[Pipeline Render] 시작: post_id=%d", post_id)
 
-            logger.info("[Pipeline Render] 시작: post_id=%d render_style=%s", post_id, render_style)
+            from ai_worker.renderer.layout import render_layout_video_from_scenes
+            from ai_worker.scene.analyzer import analyze_resources
+            from ai_worker.scene.director import SceneDirector
+            from ai_worker.scene.validator import validate_and_fix
 
-            if render_style == "layout":
-                from ai_worker.renderer.layout import render_layout_video_from_scenes
-                from ai_worker.pipeline.resource_analyzer import analyze_resources
-                from ai_worker.pipeline.scene_director import SceneDirector
-                from ai_worker.pipeline.text_validator import validate_and_fix
+            images: list[str] = post.images if isinstance(post.images, list) else []
 
-                images: list[str] = post.images if isinstance(post.images, list) else []
+            # Phase 1: 자원 분석
+            profile = analyze_resources(post, images)
+            logger.info(
+                "[Pipeline Render] 전략=%s 이미지=%d",
+                profile.strategy, profile.image_count,
+            )
 
-                # Phase 1: 자원 분석
-                profile = analyze_resources(post, images)
-                logger.info(
-                    "[Pipeline Render] 전략=%s 이미지=%d",
-                    profile.strategy, profile.image_count,
-                )
+            # Phase 3: 대본 검증/보정 (max_chars)
+            script_dict = validate_and_fix(
+                {"hook": script.hook, "body": list(script.body), "closer": script.closer}
+            )
 
-                # Phase 3: 대본 검증/보정 (max_chars)
-                script_dict = validate_and_fix(
-                    {"hook": script.hook, "body": list(script.body), "closer": script.closer}
-                )
+            # Phase 4: 씬 배분
+            director = SceneDirector(profile, images, script_dict)
+            scenes = director.direct()
+            logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
-                # Phase 4: 씬 배분
-                director = SceneDirector(profile, images, script_dict)
-                scenes = director.direct()
-                logger.info("[Pipeline Render] 씬=%d개", len(scenes))
+            # Phase 4.5-7: LTX-Video 클립 생성
+            scenes = self._generate_video_clips_sync(
+                scenes, script, post.title or "", post_id
+            )
 
-                # Phase 4.5-7: LTX-Video 클립 생성
-                scenes = self._generate_video_clips_sync(
-                    scenes, script, post.title or "", post_id
-                )
-
-                _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
-                video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
-            else:
-                video_path = self._safe_render_video(post, audio_path, script.to_json())
+            _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
+            video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
 
             # 렌더링 후 세션 갱신 (렌더링 중 다른 프로세스가 레코드 수정 가능)
             session.expire_all()

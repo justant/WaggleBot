@@ -416,7 +416,7 @@ def _post_process_audio(path: Path) -> None:
 
 async def synthesize(
     text: str,
-    scene_type: str = "img_text",
+    scene_type: str = "image_text",
     voice_key: str = VOICE_DEFAULT,
     output_path: Path | None = None,
     emotion: str = "",

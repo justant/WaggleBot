@@ -384,7 +384,7 @@ def generate_script(
         call_type:          LLM 로그 호출 유형 (기본 "generate_script",
                             대시보드 편집실은 "generate_script_editor").
     """
-    from ai_worker.llm.logger import LLMCallTimer, log_llm_call
+    from ai_worker.script.logger import LLMCallTimer, log_llm_call
 
     model = model or OLLAMA_MODEL
     prompt = _SCRIPT_PROMPT_V2.format(
@@ -434,17 +434,6 @@ def generate_script(
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])
     return script
 
-
-def summarize(
-    title: str,
-    body: str,
-    comments: list[str],
-    *,
-    model: str | None = None,
-) -> str:
-    """하위 호환: ScriptData.to_plain_text() 반환."""
-    script = generate_script(title, body, comments, model=model)
-    return script.to_plain_text()
 
 
 def call_ollama_raw(
