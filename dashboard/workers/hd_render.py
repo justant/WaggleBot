@@ -31,9 +31,9 @@ def _run_hd_render(post_id: int) -> None:
     """
     try:
         from ai_worker.renderer.layout import render_layout_video_from_scenes
-        from ai_worker.pipeline.resource_analyzer import analyze_resources
-        from ai_worker.pipeline.scene_director import SceneDirector
-        from ai_worker.pipeline.text_validator import validate_and_fix
+        from ai_worker.scene.analyzer import analyze_resources
+        from ai_worker.scene.director import SceneDirector
+        from ai_worker.scene.validator import validate_and_fix
         from config.settings import MEDIA_DIR as _MEDIA_DIR
 
         with SessionLocal() as _s:

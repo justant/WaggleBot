@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ai_worker.tts.edge_tts import EdgeTTS
-from ai_worker.pipeline.scene_director import SceneDecision
+from ai_worker.scene.director import SceneDecision
 
 # 프로덕션과 동일한 속도 (config/settings.py TTS_RATE 기본값)
 TTS_RATE = "+25%"
@@ -38,7 +38,7 @@ async def test_single_voice() -> None:
 
     test_cases = [
         ("intro",     "이거 진짜 충격적인 사건인데, 들어봐."),
-        ("img_text",  "그 날 오후 세 시, 편의점 앞에서 벌어진 일이야."),
+        ("image_text",  "그 날 오후 세 시, 편의점 앞에서 벌어진 일이야."),
         ("text_only", "근데 알고보니 그 사람이 바로 옆집 아저씨였던 거지."),
         ("outro",     "어때, 신기하지? 좋아요 눌러주면 더 가져올게."),
     ]

@@ -11,7 +11,7 @@ import asyncio
 import logging
 import signal
 
-from ai_worker.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
+from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
 from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
@@ -70,7 +70,7 @@ def _get_cuda_sem() -> asyncio.Semaphore:
 
 async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
     """APPROVED 게시글을 폴링해 LLM+TTS 처리 후 render_queue에 적재."""
-    from ai_worker.processor import RobustProcessor
+    from ai_worker.core.processor import RobustProcessor
     processor = RobustProcessor()
     cuda_sem = _get_cuda_sem()
     shutdown_event = get_shutdown_event()
@@ -112,8 +112,8 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
 
 
 async def _render_worker(render_queue: asyncio.Queue) -> None:
-    """render_queue에서 꺼내 프리뷰 렌더링 (CPU libx264, GPU 점유 없음)."""
-    from ai_worker.processor import RobustProcessor
+    """render_queue에서 꺼내 렌더링 (h264_nvenc GPU 인코딩)."""
+    from ai_worker.core.processor import RobustProcessor
     processor = RobustProcessor()
 
     while True:

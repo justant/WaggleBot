@@ -168,7 +168,7 @@ def test_script_data_to_plain_text_legacy():
 
 def test_scene_decision_new_fields():
     """수정 5: SceneDecision에 block_type/author 필드 존재 검증."""
-    from ai_worker.pipeline.scene_director import SceneDecision
+    from ai_worker.scene.director import SceneDecision
 
     # 기본값 검증
     scene = SceneDecision(type="text_only", text_lines=["테스트"], image_url=None)
@@ -191,7 +191,7 @@ def test_scene_decision_new_fields():
 
 def test_distribute_images_4_tuple():
     """수정 5: distribute_images()가 4-튜플을 올바르게 처리하는지."""
-    from ai_worker.pipeline.scene_director import distribute_images
+    from ai_worker.scene.director import distribute_images
 
     body_items = [
         ("본문 1", None, "body", None),
@@ -212,7 +212,7 @@ def test_distribute_images_4_tuple():
 
 def test_distribute_images_with_images():
     """수정 5: 이미지 있을 때도 block_type/author가 보존되는지."""
-    from ai_worker.pipeline.scene_director import distribute_images
+    from ai_worker.scene.director import distribute_images
 
     body_items = [
         ("본문 1", None, "body", None),
@@ -222,8 +222,8 @@ def test_distribute_images_with_images():
 
     scenes = distribute_images(body_items, ["img1.jpg"], max_images=1)
 
-    # 이미지가 1개이므로 1개만 img_text, 나머지 text_only
-    img_scenes = [s for s in scenes if s.type == "img_text"]
+    # 이미지가 1개이므로 1개만 image_text, 나머지 text_only
+    img_scenes = [s for s in scenes if s.type == "image_text"]
     text_scenes = [s for s in scenes if s.type == "text_only"]
     assert len(img_scenes) == 1
     assert len(text_scenes) == 2

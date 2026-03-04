@@ -13,10 +13,10 @@ import json as _json
 import logging
 from pathlib import Path
 
-from ai_worker.pipeline.llm_chunker import chunk_with_llm
-from ai_worker.pipeline.resource_analyzer import ResourceProfile, analyze_resources
-from ai_worker.pipeline.scene_director import SceneDecision, SceneDirector
-from ai_worker.pipeline.text_validator import validate_and_fix
+from ai_worker.script.chunker import chunk_with_llm
+from ai_worker.scene.analyzer import ResourceProfile, analyze_resources
+from ai_worker.scene.director import SceneDecision, SceneDirector
+from ai_worker.scene.validator import validate_and_fix
 from ai_worker.tts.fish_client import synthesize
 
 logger = logging.getLogger(__name__)
@@ -73,10 +73,10 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     from config.settings import VIDEO_GEN_ENABLED
 
     if VIDEO_GEN_ENABLED:
-        from ai_worker.pipeline.scene_director import assign_video_modes
+        from ai_worker.scene.director import assign_video_modes
         from config.settings import VIDEO_I2V_THRESHOLD, MEDIA_DIR
 
-        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_img_cache_{post.id}"
+        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_image_cache_{post.id}"
         image_cache_dir.mkdir(parents=True, exist_ok=True)
 
         scenes = assign_video_modes(
@@ -226,7 +226,7 @@ async def _clear_vram_for_video() -> None:
     """
     import gc
 
-    from ai_worker.gpu_manager import GPUMemoryManager, get_gpu_manager
+    from ai_worker.core.gpu_manager import GPUMemoryManager, get_gpu_manager
     from config.settings import get_ollama_host, OLLAMA_MODEL, FISH_SPEECH_URL
 
     logger.info("[VRAM] 2막 전환 시작: LLM/TTS VRAM 해제 시퀀스")

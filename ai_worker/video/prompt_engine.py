@@ -12,8 +12,8 @@ import json
 import logging
 from pathlib import Path
 
-from ai_worker.llm.client import call_ollama_raw
-from ai_worker.llm.logger import LLMCallTimer, log_llm_call
+from ai_worker.script.client import call_ollama_raw
+from ai_worker.script.logger import LLMCallTimer, log_llm_call
 
 logger = logging.getLogger(__name__)
 

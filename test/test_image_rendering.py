@@ -61,8 +61,8 @@ class TestSceneDirectorImageLimit:
 
     def test_max_body_images_default_is_20(self):
         """scene_policy.json 없을 때 기본값이 20인지 확인."""
-        from ai_worker.pipeline.scene_director import SceneDirector
-        from ai_worker.pipeline.resource_analyzer import ResourceProfile
+        from ai_worker.scene.director import SceneDirector
+        from ai_worker.scene.analyzer import ResourceProfile
 
         profile = ResourceProfile(
             image_count=15,
@@ -97,7 +97,7 @@ class TestSceneDirectorImageLimit:
 
     def test_distribute_images_uses_all(self):
         """15장 이미지가 10개 body 항목에 모두 배분되는지 확인."""
-        from ai_worker.pipeline.scene_director import distribute_images
+        from ai_worker.scene.director import distribute_images
 
         body_items = [(f"문장 {i}", None, "body", None) for i in range(10)]
         images = [f"https://example.com/img_{i}.jpg" for i in range(15)]
@@ -110,7 +110,7 @@ class TestSceneDirectorImageLimit:
 
     def test_distribute_images_old_limit_would_truncate(self):
         """기존 max_body_images=8이면 이미지가 잘리는 것을 검증."""
-        from ai_worker.pipeline.scene_director import distribute_images
+        from ai_worker.scene.director import distribute_images
 
         body_items = [(f"문장 {i}", None, "body", None) for i in range(12)]
         images = [f"https://example.com/img_{i}.jpg" for i in range(12)]
@@ -128,8 +128,8 @@ class TestSceneDirectorImageLimit:
 
     def test_intro_uses_first_image(self):
         """SceneDirector가 intro에 첫 번째 이미지를 사용하는지 확인."""
-        from ai_worker.pipeline.scene_director import SceneDirector
-        from ai_worker.pipeline.resource_analyzer import ResourceProfile
+        from ai_worker.scene.director import SceneDirector
+        from ai_worker.scene.analyzer import ResourceProfile
 
         profile = ResourceProfile(
             image_count=5, text_length=300,
@@ -374,8 +374,8 @@ class TestImageCountConsistency:
 
     def test_all_post_images_reach_scene_director(self, fake_post):
         """Post.images의 모든 이미지가 SceneDirector에 전달되는지 확인."""
-        from ai_worker.pipeline.resource_analyzer import ResourceProfile
-        from ai_worker.pipeline.scene_director import SceneDirector
+        from ai_worker.scene.analyzer import ResourceProfile
+        from ai_worker.scene.director import SceneDirector
 
         images = fake_post.images  # 12장
         profile = ResourceProfile(
@@ -404,7 +404,7 @@ class TestImageCountConsistency:
 
     def test_twelve_images_not_capped_to_eight(self):
         """12장 이미지가 기존 한도(8)에 의해 잘리지 않는지 확인."""
-        from ai_worker.pipeline.scene_director import distribute_images
+        from ai_worker.scene.director import distribute_images
 
         body_items = [(f"문장 {i}", None, "body", None) for i in range(12)]
         images = [f"img_{i}" for i in range(12)]
@@ -416,15 +416,15 @@ class TestImageCountConsistency:
 
     def test_scenes_to_plan_preserves_all_images(self):
         """_scenes_to_plan_and_sentences가 이미지를 누락하지 않는지 확인."""
-        from ai_worker.pipeline.scene_director import SceneDecision
+        from ai_worker.scene.director import SceneDecision
         from ai_worker.renderer.layout import _scenes_to_plan_and_sentences
 
         scenes = [
             SceneDecision(type="intro", text_lines=["후킹"], image_url="img_0"),
-            SceneDecision(type="img_text", text_lines=["본문1"], image_url="img_1"),
-            SceneDecision(type="img_text", text_lines=["본문2"], image_url="img_2"),
+            SceneDecision(type="image_text", text_lines=["본문1"], image_url="img_1"),
+            SceneDecision(type="image_text", text_lines=["본문2"], image_url="img_2"),
             SceneDecision(type="text_only", text_lines=["본문3"], image_url=None),
-            SceneDecision(type="img_text", text_lines=["본문4"], image_url="img_3"),
+            SceneDecision(type="image_text", text_lines=["본문4"], image_url="img_3"),
             SceneDecision(type="outro", text_lines=["마무리"], image_url="img_4"),
         ]
 

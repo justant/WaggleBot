@@ -31,7 +31,7 @@ from ai_worker.renderer.layout import (
     _paste_rounded,
     _create_base_frame,
     _render_text_only_frame,
-    _render_img_text_frame,
+    _render_image_text_frame,
     _render_intro_frame,
 )
 from config.settings import ASSETS_DIR, MEDIA_DIR
@@ -89,7 +89,7 @@ TEXT_ONLY_SCENARIOS = [
     },
 ]
 
-# img_text 씬 텍스트 시나리오
+# image_text 씬 텍스트 시나리오
 IMG_TEXT_SCENARIOS = [
     {"label": "IT01_short", "desc": "짧음 (10자)", "text": "필러 유행 중"},
     {"label": "IT02_at_limit", "desc": "20자 한도", "text": "인스타 필러 트렌드 변화"},
@@ -184,14 +184,14 @@ def render_text_only_test(
     return frames
 
 
-def render_img_text_test(
+def render_image_text_test(
     layout: dict,
     font_dir: Path,
     base_frame: Image.Image,
     scenario: dict,
     out_path: Path,
 ) -> Path:
-    """img_text 씬 테스트 — truncate 없이 텍스트 렌더링."""
+    """image_text 씬 테스트 — truncate 없이 텍스트 렌더링."""
     raw_text = scenario["text"]
     label = scenario["label"]
     desc = scenario["desc"]
@@ -199,7 +199,7 @@ def render_img_text_test(
     frame_path = out_path / f"{label}.png"
 
     # img_pil=None (이미지 없이 텍스트만 테스트)
-    _render_img_text_frame(base_frame, None, raw_text, layout, font_dir, frame_path)
+    _render_image_text_frame(base_frame, None, raw_text, layout, font_dir, frame_path)
 
     # 레이블 오버레이
     img = Image.open(frame_path)
@@ -244,10 +244,10 @@ def main() -> None:
         all_frames.extend(frames)
         print(f"  {scenario['label']}: {len(frames)}프레임")
 
-    # ── img_text 시나리오 ──────────────────────────────────────
-    print("\n[test_layout] img_text 시나리오 생성 중...")
+    # ── image_text 시나리오 ──────────────────────────────────────
+    print("\n[test_layout] image_text 시나리오 생성 중...")
     for scenario in IMG_TEXT_SCENARIOS:
-        frame = render_img_text_test(layout, font_dir, base_frame, scenario, out_dir)
+        frame = render_image_text_test(layout, font_dir, base_frame, scenario, out_dir)
         all_frames.append(frame)
         print(f"  {scenario['label']}: 1프레임")
 

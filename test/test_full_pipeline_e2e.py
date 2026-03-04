@@ -188,7 +188,7 @@ logger.info("Post 로드 완료: title=%s, images=%d, text=%d자, comments=%d",
 # ═══════════════════════════════════════════════════════════════════════
 banner("Phase 1", "analyze_resources → ResourceProfile")
 
-from ai_worker.pipeline.resource_analyzer import analyze_resources
+from ai_worker.scene.analyzer import analyze_resources
 
 t0 = time.time()
 profile = analyze_resources(post, images)
@@ -204,7 +204,7 @@ RESULTS["phase1"] = {
         "estimated_sentences": f"text_length({len(content_text)}) // 25 = {len(content_text) // 25}",
         "ratio_formula": f"image_count({len(images)}) / estimated_sentences({profile.estimated_sentences}) = {profile.ratio:.3f}",
         "strategy_thresholds": {
-            "img_heavy": "ratio >= 0.7",
+            "image_heavy": "ratio >= 0.7",
             "balanced": "0.3 <= ratio < 0.7",
             "text_heavy": "ratio < 0.3",
         },
@@ -221,7 +221,7 @@ logger.info("Phase 1 결과: strategy=%s, ratio=%.3f, estimated_sentences=%d",
 # ═══════════════════════════════════════════════════════════════════════
 banner("Phase 2", "chunk_with_llm → raw script dict (Ollama)")
 
-from ai_worker.pipeline.llm_chunker import chunk_with_llm, create_chunking_prompt
+from ai_worker.script.chunker import chunk_with_llm, create_chunking_prompt
 from config.settings import OLLAMA_MODEL
 
 prompt_text = create_chunking_prompt(content_text, profile, extended=True)
@@ -279,7 +279,7 @@ logger.info("hook=%s, body=%d항목, closer=%s, mood=%s",
 # ═══════════════════════════════════════════════════════════════════════
 banner("Phase 3", "validate_and_fix → max_chars 검증/수정")
 
-from ai_worker.pipeline.text_validator import validate_and_fix
+from ai_worker.scene.validator import validate_and_fix
 from config.settings import MAX_BODY_CHARS, MAX_HOOK_CHARS
 
 pre_fix = copy.deepcopy(llm_raw)
@@ -361,7 +361,7 @@ logger.info("Phase 3: %d건 변경, %d건 body 변경, 잔여 위반=%d",
 # ═══════════════════════════════════════════════════════════════════════
 banner("Phase 4", "SceneDirector → SceneDecision 목록")
 
-from ai_worker.pipeline.scene_director import SceneDirector
+from ai_worker.scene.director import SceneDirector
 
 mood = validated.get("mood", "daily")
 VALID_MOODS = ["humor", "touching", "anger", "sadness", "horror", "info", "controversy", "daily", "shock"]
@@ -418,7 +418,7 @@ RESULTS["phase4"] = {
     "logic": {
         "scene_policy": "config/scene_policy.json에서 mood별 프리셋 로드",
         "intro": "hook → intro 씬, BGM 할당",
-        "body_mapping": "strategy에 따라 img_text / text_only / img_only 분배",
+        "body_mapping": "strategy에 따라 image_text / text_only / image_only 분배",
         "comment_scenes": "상위 댓글 → text_only(block_type=comment) 삽입",
         "outro": "closer → outro 씬",
     },
@@ -432,7 +432,7 @@ logger.info("Phase 4: %d씬 — %s", len(scenes), type_counts)
 # ═══════════════════════════════════════════════════════════════════════
 banner("Phase 4.5", "assign_video_modes → t2v/i2v")
 
-from ai_worker.pipeline.scene_director import assign_video_modes
+from ai_worker.scene.director import assign_video_modes
 
 image_cache_dir = TMP_DIR / "image_cache"
 image_cache_dir.mkdir(parents=True, exist_ok=True)

@@ -84,7 +84,7 @@ def step0() -> dict:
     # 2. Ollama 연결
     logger.info("[2/5] Ollama 연결 확인...")
     try:
-        from ai_worker.llm.client import call_ollama_raw
+        from ai_worker.script.client import call_ollama_raw
         resp = call_ollama_raw("Hello, respond with 'OK' only.", max_tokens=10)
         logger.info("  Ollama 응답: %s", resp.strip()[:50])
         results["ollama"] = "OK"
@@ -226,7 +226,7 @@ def step2(raw_data: dict[int, dict] | None = None) -> dict[int, dict]:
     logger.info("Step 2: LLM 대본 생성")
     logger.info("=" * 60)
 
-    from ai_worker.llm.client import generate_script
+    from ai_worker.script.client import generate_script
 
     if raw_data is None:
         raw_data = {}
@@ -313,8 +313,8 @@ def step3(
     logger.info("Step 3: 씬 배분 + video_mode 할당")
     logger.info("=" * 60)
 
-    from ai_worker.pipeline.resource_analyzer import analyze_resources, ResourceProfile
-    from ai_worker.pipeline.scene_director import SceneDirector, assign_video_modes
+    from ai_worker.scene.analyzer import analyze_resources, ResourceProfile
+    from ai_worker.scene.director import SceneDirector, assign_video_modes
 
     if raw_data is None:
         raw_data = {}
@@ -535,7 +535,7 @@ def step4(
 
 def _try_load_scenes_from_json() -> dict[int, list] | None:
     """기존 Step 3/4 산출물에서 SceneDecision 객체를 복원. 하나라도 없으면 None 반환."""
-    from ai_worker.pipeline.scene_director import SceneDecision
+    from ai_worker.scene.director import SceneDecision
 
     all_scenes: dict[int, list] = {}
     for pid in POST_IDS:

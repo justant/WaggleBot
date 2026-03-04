@@ -1,7 +1,7 @@
 """Phase 1: 자원 분석 (Resource Analyzer)
 
 게시글 텍스트 길이와 이미지 수 비율을 분석해
-LLM 청킹 전략(img_heavy / balanced / text_heavy)을 결정한다.
+LLM 청킹 전략(image_heavy / balanced / text_heavy)을 결정한다.
 """
 import logging
 from dataclasses import dataclass
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # 한국어 평균 문장당 글자 수 (경험적 기준값)
 _KO_CHARS_PER_SENTENCE = 25
 
-Strategy = Literal["img_heavy", "balanced", "text_heavy"]
+Strategy = Literal["image_heavy", "balanced", "text_heavy"]
 
 
 @dataclass
@@ -32,7 +32,7 @@ def analyze_resources(post, images: list[str]) -> ResourceProfile:
         images: 이미지 URL/경로 목록
 
     Returns:
-        ResourceProfile (strategy: img_heavy | balanced | text_heavy)
+        ResourceProfile (strategy: image_heavy | balanced | text_heavy)
     """
     image_count = len(images)
     text_length = len(post.content or "")
@@ -40,7 +40,7 @@ def analyze_resources(post, images: list[str]) -> ResourceProfile:
     ratio = image_count / estimated_sentences if estimated_sentences > 0 else 0.0
 
     if ratio >= 0.7:
-        strategy: Strategy = "img_heavy"   # 거의 모든 문장에 이미지
+        strategy: Strategy = "image_heavy"   # 거의 모든 문장에 이미지
     elif ratio >= 0.3:
         strategy = "balanced"              # 중요 문장에만 이미지
     else:

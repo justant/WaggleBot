@@ -98,7 +98,7 @@ logger.info("Post loaded: id=%d, title=%s, images=%d, text=%d chars, comments=%d
 # ─────────────────────────────────────────────────────────────────────
 banner("Phase 1", "analyze_resources → ResourceProfile")
 
-from ai_worker.pipeline.resource_analyzer import analyze_resources
+from ai_worker.scene.analyzer import analyze_resources
 
 t0 = time.time()
 profile = analyze_resources(post, images)
@@ -118,7 +118,7 @@ RESULTS["phase1"] = {
     "analysis": {
         "chars_per_sentence_used": 25,
         "formula": "image_count / estimated_sentences",
-        "strategy_thresholds": {"img_heavy": "ratio >= 0.7", "balanced": "0.3 <= ratio < 0.7", "text_heavy": "ratio < 0.3"},
+        "strategy_thresholds": {"image_heavy": "ratio >= 0.7", "balanced": "0.3 <= ratio < 0.7", "text_heavy": "ratio < 0.3"},
     },
 }
 logger.info("Phase 1 결과: %s", json.dumps(RESULTS["phase1"]["output"], ensure_ascii=False))
@@ -129,7 +129,7 @@ logger.info("Phase 1 결과: %s", json.dumps(RESULTS["phase1"]["output"], ensure
 # ─────────────────────────────────────────────────────────────────────
 banner("Phase 2", "chunk_with_llm → raw script dict")
 
-from ai_worker.pipeline.llm_chunker import chunk_with_llm, create_chunking_prompt
+from ai_worker.script.chunker import chunk_with_llm, create_chunking_prompt
 from config.settings import OLLAMA_MODEL
 
 # 프롬프트 미리보기
@@ -195,7 +195,7 @@ logger.info("Phase 2 mood: %s, tags: %s", llm_raw.get("mood", ""), llm_raw.get("
 # ─────────────────────────────────────────────────────────────────────
 banner("Phase 3", "validate_and_fix → validated script dict")
 
-from ai_worker.pipeline.text_validator import validate_and_fix
+from ai_worker.scene.validator import validate_and_fix
 from config.settings import MAX_BODY_CHARS, MAX_HOOK_CHARS
 
 import copy
@@ -264,7 +264,7 @@ else:
 # ─────────────────────────────────────────────────────────────────────
 banner("Phase 4", "SceneDirector.direct() → list[SceneDecision]")
 
-from ai_worker.pipeline.scene_director import SceneDirector
+from ai_worker.scene.director import SceneDirector
 
 mood = validated.get("mood", "daily")
 # mood 보정 (LLM이 잘못된 mood를 줄 수 있음)
@@ -324,7 +324,7 @@ logger.info("Phase 4 결과: %d씬 — %s", len(scenes), type_counts)
 # ─────────────────────────────────────────────────────────────────────
 banner("Phase 4.5", "assign_video_modes → video_mode (t2v/i2v)")
 
-from ai_worker.pipeline.scene_director import assign_video_modes
+from ai_worker.scene.director import assign_video_modes
 
 image_cache_dir = TMP_DIR / "image_cache"
 image_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -383,7 +383,7 @@ try:
     from ai_worker.tts.fish_client import synthesize as fish_synthesize
 
     # 첫 2개 body 씬에 대해서만 TTS 테스트
-    test_scenes = [s for s in scenes if s.type in ("img_text", "text_only")][:2]
+    test_scenes = [s for s in scenes if s.type in ("image_text", "text_only")][:2]
     for i, scene in enumerate(test_scenes):
         text = scene.text_lines[0] if scene.text_lines else ""
         if not text:
@@ -442,7 +442,7 @@ try:
 
     engine = VideoPromptEngine()
     # 테스트용 씬 2개
-    test_prompt_scenes = [s for s in scenes if s.type in ("img_text", "text_only")][:2]
+    test_prompt_scenes = [s for s in scenes if s.type in ("image_text", "text_only")][:2]
 
     t0 = time.time()
     try:

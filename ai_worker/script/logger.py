@@ -65,7 +65,7 @@ def log_llm_call(
         prompt_text:    LLM에 전달한 전체 프롬프트
         raw_response:   Ollama 원시 응답
         parsed_result:  validate_and_fix 후 최종 dict (선택)
-        strategy:       자원 전략 (img_heavy|balanced|text_heavy, 선택)
+        strategy:       자원 전략 (image_heavy|balanced|text_heavy, 선택)
         image_count:    이미지 수
         content_length: 원문 글자 수
         success:        성공 여부

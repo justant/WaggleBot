@@ -8,7 +8,7 @@ import asyncio
 import logging
 from unittest.mock import Mock, patch
 
-from ai_worker.processor import (
+from ai_worker.core.processor import (
     RobustProcessor,
     RetryPolicy,
     FailureType

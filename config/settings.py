@@ -279,7 +279,7 @@ CONSTRAINTS: dict = _layout_cfg.get("constraints", {})
 MAX_TITLE_CHARS: int   = CONSTRAINTS.get("post_title",      {}).get("max_chars", 40)
 MAX_HOOK_CHARS: int    = CONSTRAINTS.get("hook_text",        {}).get("max_chars", 50)
 MAX_BODY_CHARS: int    = CONSTRAINTS.get("body_sentence",    {}).get("max_chars", 45)
-MAX_CAPTION_CHARS: int = CONSTRAINTS.get("img_text_caption", {}).get("max_chars", 60)
+MAX_CAPTION_CHARS: int = CONSTRAINTS.get("image_text_caption", {}).get("max_chars", 60)
 
 
 def get_llm_constraints_prompt() -> str:
@@ -331,7 +331,7 @@ VOICE_REFERENCE_TEXTS: dict[str, str] = {
 # 향후 지원 모델 전환 시 재활성화 예정
 EMOTION_TAGS: dict[str, str] = {
     "intro":     "",
-    "img_text":  "",
+    "image_text":  "",
     "text_only": "",
     "outro":     "",
 }
