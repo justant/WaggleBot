@@ -79,7 +79,7 @@ from ai_worker.video.video_utils import (
 [Phase 6] video_prompt 생성    → scene.video_prompt 설정 ★ video 모듈
 [Phase 7] video_clip 생성      → scene.video_clip_path 설정 ★ video 모듈
            ↓
-    FFmpeg 렌더링 (renderer/video.py, layout.py)
+    FFmpeg 렌더링 (renderer/layout.py)
 ```
 
 모든 Phase는 `VIDEO_GEN_ENABLED=true`일 때만 실행된다.
@@ -87,7 +87,7 @@ from ai_worker.video.video_utils import (
 
 ### SceneDecision 비디오 필드
 
-`ai_worker/pipeline/scene_director.py`의 `SceneDecision` 데이터클래스에는
+`ai_worker/scene/director.py`의 `SceneDecision` 데이터클래스에는
 비디오 관련 필드 5개가 존재한다:
 
 | 필드 | 타입 | 설명 |
@@ -102,7 +102,7 @@ from ai_worker.video.video_utils import (
 
 ## 3. Phase 4.5 — video_mode 할당
 
-**파일**: `ai_worker/pipeline/scene_director.py` → `assign_video_modes()`
+**파일**: `ai_worker/scene/director.py` → `assign_video_modes()`
 **호출**: `content_processor.py` 72~89행
 
 각 씬의 타입에 따라 비디오 생성 모드를 결정한다.
@@ -751,7 +751,7 @@ if _available < _video_vram * 0.5:
 이 모듈은 아래 규칙을 엄격하게 따른다:
 
 1. **`ai_worker.tts` 모듈을 절대 import하지 않는다** — TTS와 비디오는 독립 파이프라인
-2. LLM 호출은 `ai_worker.llm.client.call_ollama_raw()`만 사용 (prompt_engine 경유)
+2. LLM 호출은 `ai_worker.script.client.call_ollama_raw()`만 사용 (prompt_engine 경유)
 3. 설정은 `config/settings.py` 경유 — 로직 내 `os.getenv()` 금지
 4. 파일 경로는 `pathlib.Path` 사용 — `os.path` 금지
 5. 로깅은 `logging.getLogger(__name__)` — `print()` 금지
@@ -835,8 +835,8 @@ import httpx
 ```python
 import json, logging
 from pathlib import Path
-from ai_worker.llm.client import call_ollama_raw
-from ai_worker.llm.logger import LLMCallTimer, log_llm_call
+from ai_worker.script.client import call_ollama_raw
+from ai_worker.script.logger import LLMCallTimer, log_llm_call
 ```
 
 #### 모듈 레벨 상수/함수
@@ -930,9 +930,9 @@ from pathlib import Path
 
 | 파일 | import 대상 | 용도 |
 |------|-------------|------|
-| `ai_worker/processor.py` | `VideoPromptEngine`, `ComfyUIClient`, `VideoManager`, `VideoCheckpoint` | Phase 7 비디오 클립 생성 |
+| `ai_worker/core/processor.py` | `VideoPromptEngine`, `ComfyUIClient`, `VideoManager`, `VideoCheckpoint` | Phase 7 비디오 클립 생성 |
 | `ai_worker/pipeline/content_processor.py` | `VideoPromptEngine`, `VideoManager`, `ComfyUIClient` | Phase 6~7 통합 프롬프트+클립 생성 |
-| `ai_worker/pipeline/scene_director.py` | `evaluate_image` | Phase 4.5 이미지 I2V 적합성 평가 |
+| `ai_worker/scene/director.py` | `evaluate_image` | Phase 4.5 이미지 I2V 적합성 평가 |
 | `ai_worker/renderer/layout.py` | `_nvenc_available`, `resize_clip_to_layout`, `loop_or_trim_clip` | 렌더링 시 비디오 클립 후처리 + 코덱 감지 |
 
 ### 테스트

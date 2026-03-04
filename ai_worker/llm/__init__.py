@@ -1,9 +1,0 @@
-import warnings as _w
-_w.warn(
-    "ai_worker.llm is deprecated, use ai_worker.script instead",
-    DeprecationWarning,
-    stacklevel=2,
-)
-from ai_worker.script.client import generate_script, call_ollama_raw  # noqa: F401
-from ai_worker.script.logger import LLMCallTimer, log_llm_call  # noqa: F401
-from db.models import ScriptData  # noqa: F401
