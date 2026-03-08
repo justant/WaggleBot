@@ -128,7 +128,7 @@ class RobustProcessor:
                 )
 
                 # Phase 4: 씬 배분
-                _director = SceneDirector(_profile, _images, _script_dict)
+                _director = SceneDirector(_profile, _images, _script_dict, post_id=post.id)
                 _scenes = _director.direct()
                 logger.info("[Step 3/3] 씬=%d개", len(_scenes))
 
@@ -809,7 +809,7 @@ class RobustProcessor:
             )
 
             # Phase 4: 씬 배분
-            director = SceneDirector(profile, images, script_dict)
+            director = SceneDirector(profile, images, script_dict, post_id=post_id)
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 

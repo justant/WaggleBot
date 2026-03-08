@@ -134,6 +134,21 @@ def submit_llm_task(
         except Exception as exc:
             log.exception("LLM 대본 생성 실패: post_id=%d", post_id)
             _llm_tasks[post_id] = {"status": "error", "error": str(exc)}
+            # 실패 시에도 LLM 로그 기록 (generate_script 내부 로깅이 안 된 경우 대비)
+            try:
+                from ai_worker.script.logger import log_llm_call
+                log_llm_call(
+                    call_type=call_type,
+                    post_id=post_id,
+                    model_name=model,
+                    prompt_text=f"[편집실 실패 로그] title={title[:50]}",
+                    raw_response="",
+                    success=False,
+                    error_message=str(exc),
+                    content_length=len(body),
+                )
+            except Exception:
+                log.warning("실패 로그 기록도 실패: post_id=%d", post_id)
 
     threading.Thread(target=_run, daemon=True, name=f"llm-gen-{post_id}").start()
     return True

@@ -54,7 +54,7 @@ def _run_hd_render(post_id: int) -> None:
             # SD 렌더와 동일한 씬 배분
             _images = _post.images if isinstance(_post.images, list) else []
             _profile = analyze_resources(_post, _images)
-            _scenes = SceneDirector(_profile, _images, _script_dict).direct()
+            _scenes = SceneDirector(_profile, _images, _script_dict, post_id=post_id).direct()
 
             # FHD 출력 경로 명시
             _fhd_path = (

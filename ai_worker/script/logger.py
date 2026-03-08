@@ -99,7 +99,8 @@ def log_llm_call(
             )
     except Exception as exc:
         # DB 오류는 파이프라인을 멈추지 않음
-        logger.warning(
-            "LLM 로그 DB 저장 실패 (무시): %s | call_type=%s post_id=%s",
+        logger.error(
+            "LLM 로그 DB 저장 실패: %s | call_type=%s post_id=%s",
             exc, call_type, post_id,
+            exc_info=True,
         )

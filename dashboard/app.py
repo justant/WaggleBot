@@ -18,6 +18,13 @@ from pathlib import Path
 # 프로젝트 루트를 sys.path에 추가 (streamlit run dashboard/app.py 실행 시 config/ 모듈 인식)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# 대시보드 로깅 레벨 설정 — ai_worker/dashboard 모듈의 INFO 이상 표시
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+    stream=sys.stderr,
+)
+
 import streamlit as st
 
 from config.settings import load_pipeline_config, get_pipeline_defaults, OLLAMA_MODEL

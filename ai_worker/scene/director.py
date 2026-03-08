@@ -483,6 +483,7 @@ def _call_scene_director_llm(
         파싱된 LLM 출력 dict 또는 실패 시 None
     """
     from ai_worker.script.client import call_ollama_raw
+    from config.settings import OLLAMA_MODEL
 
     constraints = llm_input["constraints"]
     system_prompt = _SCENE_DIRECTOR_SYSTEM_PROMPT.format(
@@ -547,7 +548,7 @@ def _call_scene_director_llm(
     log_llm_call(
         call_type="scene_director",
         post_id=post_id,
-        model_name=None,
+        model_name=OLLAMA_MODEL,
         prompt_text=full_prompt,
         raw_response=raw,
         parsed_result=parsed_for_log,
@@ -1361,7 +1362,7 @@ class SceneDirector:
             "scene", sd_cfg_base, "itv_score_threshold", default=0.6,
         )
         llm_timeout = get_domain_setting(
-            "scene", sd_cfg_base, "llm_timeout_sec", default=60,
+            "scene", sd_cfg_base, "llm_timeout_sec", default=120,
         )
         fallback_on_fail = get_domain_setting(
             "scene", sd_cfg_base, "fallback_on_llm_fail", default=True,

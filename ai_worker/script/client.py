@@ -151,38 +151,50 @@ def generate_script(
     logger.info("Ollama 대본 생성 요청: model=%s (extra=%s)", model, bool(extra_instructions))
 
     raw = ""
-    success = True
-    error_msg: str | None = None
-    script: ScriptData | None = None
 
-    with LLMCallTimer() as timer:
-        try:
-            raw = _call_ollama(prompt, model, num_predict=2048)
-        except Exception as exc:
-            success = False
-            error_msg = str(exc)
-            logger.error("Ollama 호출 실패: %s", exc)
-            raise
-        finally:
-            # 성공/실패 모두 로그 기록
-            log_llm_call(
-                call_type=call_type,
-                post_id=post_id,
-                model_name=model,
-                prompt_text=prompt,
-                raw_response=raw,
-                parsed_result=None,   # 파싱 후 아래서 갱신 불가 — None 허용
-                image_count=0,
-                content_length=len(body),
-                success=success,
-                error_message=error_msg,
-                duration_ms=timer.elapsed_ms,
-            )
+    # ── LLM 호출 ──
+    # with 블록 밖에서 log_llm_call을 호출해야 timer.elapsed_ms가 정확함
+    try:
+        with LLMCallTimer() as timer:
+            raw = _call_ollama(prompt, model, num_predict=2048, timeout=300)
+    except Exception as exc:
+        # 실패 로그 기록 (timer.__exit__ 완료 후이므로 elapsed_ms 정확)
+        logger.error("Ollama 호출 실패: %s", exc)
+        log_llm_call(
+            call_type=call_type,
+            post_id=post_id,
+            model_name=model,
+            prompt_text=prompt,
+            raw_response=raw,
+            success=False,
+            error_message=str(exc),
+            content_length=len(body),
+            duration_ms=timer.elapsed_ms,
+        )
+        raise
 
     logger.info("Ollama 응답 수신: %d자 (%dms)", len(raw), timer.elapsed_ms)
 
+    # ── 파싱 ──
     script = parse_script_json(raw)
     script = ensure_comments(script, comments, post_id=post_id)
+
+    # ── 성공 로그 기록 (파싱 완료 후 — parsed_result + duration_ms 정확) ──
+    log_llm_call(
+        call_type=call_type,
+        post_id=post_id,
+        model_name=model,
+        prompt_text=prompt,
+        raw_response=raw,
+        parsed_result={"hook": script.hook, "body": script.body,
+                       "closer": script.closer, "mood": script.mood,
+                       "tags": script.tags},
+        image_count=0,
+        content_length=len(body),
+        success=True,
+        duration_ms=timer.elapsed_ms,
+    )
+
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])
     return script
 
