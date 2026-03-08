@@ -230,6 +230,25 @@ def _scenes_to_plan_and_sentences(
             sentences.append(sent_dict)
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
+        elif scene.type == "video_text":
+            # video_text: 비디오 클립 위에 자막 표시 (Phase 4 LLM Director)
+            # 각 text_line을 별도 plan entry로 생성 (TTS 타이밍 분리)
+            psl = getattr(scene, "pre_split_lines", None)
+            for line in scene.text_lines:
+                text, audio = _unpack_line(line)
+                sent_idx = len(sentences)
+                sent_dict = {
+                    "text": text, "section": "body", "audio": audio,
+                    "voice_override": scene.voice_override,
+                    "block_type": getattr(scene, "block_type", "body"),
+                    "author": getattr(scene, "author", None),
+                }
+                if psl:
+                    sent_dict["lines"] = psl
+                sentences.append(sent_dict)
+                # text_only와 동일한 렌더링이지만, scene_idx로 비디오 클립 연결
+                plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
+
         elif scene.type == "text_only":
             psl = getattr(scene, "pre_split_lines", None)
             for line in scene.text_lines:

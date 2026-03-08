@@ -61,6 +61,17 @@ class VideoGenerationResult:
     merged_into: int | None = None
 
 
+def calc_frames_from_duration(target_sec: float, fps: int = 24) -> int:
+    """목표 시간(초)에서 LTX-2 유효 프레임 수를 계산한다.
+
+    LTX-2 프레임 규칙 (1+8k)에 맞게 보정된 값을 반환한다.
+    """
+    from ai_worker.video.video_utils import validate_frame_count
+
+    raw_frames = int(target_sec * fps)
+    return validate_frame_count(raw_frames)
+
+
 class VideoManager:
     """비디오 생성 파이프라인 매니저."""
 
@@ -211,13 +222,27 @@ class VideoManager:
         simplified = getattr(scene, "video_prompt_simplified", None) or scene.video_prompt
         is_distilled = self._is_distilled_mode()
 
+        # estimated_tts_sec 기반 동적 프레임 수 결정
+        target_sec = getattr(scene, "estimated_tts_sec", 0.0)
+        fps = self.config.get("VIDEO_FPS", 24)
+        dynamic_frames = (
+            calc_frames_from_duration(target_sec, fps)
+            if target_sec > 0
+            else self.config["VIDEO_NUM_FRAMES"]
+        )
+        dynamic_frames_fallback = (
+            calc_frames_from_duration(min(target_sec, 3.0), fps)
+            if target_sec > 0
+            else self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+        )
+
         if attempt == 1:
             width, height = self.config["VIDEO_RESOLUTION"]
-            num_frames = self.config["VIDEO_NUM_FRAMES"]
+            num_frames = dynamic_frames
             prompt = scene.video_prompt
         elif attempt == 2:
             width, height = self.config["VIDEO_RESOLUTION"]
-            num_frames = self.config["VIDEO_NUM_FRAMES"]
+            num_frames = dynamic_frames
             prompt = simplified
             logger.warning(
                 "[video] post=%d 씬=%d 프롬프트 단순화 재시도 (attempt=%d)",
@@ -225,7 +250,7 @@ class VideoManager:
             )
         elif attempt == 3:
             width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
-            num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+            num_frames = dynamic_frames_fallback
             prompt = simplified
             logger.warning(
                 "[video] post=%d 씬=%d 해상도 다운그레이드 재시도 %dx%d (attempt=%d)",
@@ -233,7 +258,7 @@ class VideoManager:
             )
         else:
             width, height = self.config.get("VIDEO_RESOLUTION_FALLBACK", (768, 512))
-            num_frames = self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
+            num_frames = dynamic_frames_fallback
             prompt = simplified
 
         # Full 모드: 4차에만 distilled 전환 / Distilled 모드: 전 시도 distilled

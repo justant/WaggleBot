@@ -1,7 +1,9 @@
-"""Phase 1: 자원 분석 (Resource Analyzer)
+"""Phase 1: 자원 분석 (Resource Analyzer) + TTS 예상 시간 계산
 
 게시글 텍스트 길이와 이미지 수 비율을 분석해
 LLM 청킹 전략(image_heavy / balanced / text_heavy)을 결정한다.
+
+Phase 4-A에서 사용하는 TTS 예상 시간 계산 함수도 포함한다.
 """
 import logging
 from dataclasses import dataclass
@@ -11,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 # 한국어 평균 문장당 글자 수 (경험적 기준값)
 _KO_CHARS_PER_SENTENCE = 25
+
+# 한국어 평균 발화 속도 (TTS 1.2배속 후처리 포함)
+KOREAN_CHARS_PER_SEC = 4.0
 
 Strategy = Literal["image_heavy", "balanced", "text_heavy"]
 
@@ -58,3 +63,16 @@ def analyze_resources(post, images: list[str]) -> ResourceProfile:
         image_count, text_length, estimated_sentences, ratio, strategy,
     )
     return profile
+
+
+def estimate_tts_duration(text: str) -> float:
+    """씬 텍스트의 TTS 예상 시간(초)을 반환한다.
+
+    한국어 평균 발화 속도 약 4자/초 기준.
+    소수점 첫째 자리까지 반올림하여 LLM 프롬프트 가독성을 높인다.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return 0.0
+    char_count = len(clean_text)
+    return round(char_count / KOREAN_CHARS_PER_SEC, 1)

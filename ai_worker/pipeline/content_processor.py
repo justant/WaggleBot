@@ -64,7 +64,19 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     )
 
     # ── Phase 4: 씬 배분 ──────────────────────────────────────────
-    director = SceneDirector(profile, images, script, comment_voices=comment_voices)
+    from config.settings import VIDEO_GEN_ENABLED, MEDIA_DIR
+
+    # LLM Scene Director용 이미지 캐시 디렉터리 (Phase 4 + 4.5 공유)
+    image_cache_dir = MEDIA_DIR / "tmp" / f"vid_image_cache_{post.id}"
+    if VIDEO_GEN_ENABLED:
+        image_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    director = SceneDirector(
+        profile, images, script,
+        comment_voices=comment_voices,
+        post_id=post.id,
+        image_cache_dir=image_cache_dir if VIDEO_GEN_ENABLED else None,
+    )
     scenes: list[SceneDecision] = director.direct()
 
     counter = collections.Counter(s.type for s in scenes)
@@ -74,14 +86,10 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     )
 
     # ── Phase 4.5: video_mode 할당 ────────────────────────────────
-    from config.settings import VIDEO_GEN_ENABLED
-
+    # LLM Director가 이미 video_mode를 설정한 씬은 assign_video_modes()에서 스킵됨 (안전망).
     if VIDEO_GEN_ENABLED:
         from ai_worker.scene.director import assign_video_modes
-        from config.settings import VIDEO_I2V_THRESHOLD, MEDIA_DIR
-
-        image_cache_dir = MEDIA_DIR / "tmp" / f"vid_image_cache_{post.id}"
-        image_cache_dir.mkdir(parents=True, exist_ok=True)
+        from config.settings import VIDEO_I2V_THRESHOLD
 
         scenes = assign_video_modes(
             scenes=scenes,

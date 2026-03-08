@@ -110,8 +110,12 @@ def test_distribute_images() -> None:
     print("[4] distribute_images 검증")
     from ai_worker.scene.director import distribute_images
 
+    # body_items: (text, voice_override, block_type, author, pre_split_lines)
+    def _item(text: str) -> tuple:
+        return (text, None, "body", None, None)
+
     # Case 4: 이미지 없음 → text_only
-    s = distribute_images([("줄1", None), ("줄2", None)], [], 8)
+    s = distribute_images([_item("줄1"), _item("줄2")], [], 8)
     assert all(x.type == "text_only" for x in s), f"Case4 실패: {[x.type for x in s]}"
     ok(f"Case4 (이미지 없음): {[x.type for x in s]}")
 
@@ -121,7 +125,7 @@ def test_distribute_images() -> None:
     ok(f"Case5 (텍스트 없음): {[x.type for x in s]}")
 
     # Case 1: 10줄, 1이미지 → image_text 1개
-    items = [(f"줄{i}", None) for i in range(10)]
+    items = [_item(f"줄{i}") for i in range(10)]
     s = distribute_images(items, ["img.jpg"], 8)
     img_s = [x for x in s if x.type == "image_text"]
     assert len(img_s) == 1, f"Case1 image_text 수 오류: {len(img_s)}"
@@ -133,9 +137,10 @@ def test_distribute_images() -> None:
     assert len(img_s) == 3, f"Case2 image_text 수 오류: {len(img_s)}"
     ok(f"Case2 (10줄, 3이미지): 총{len(s)}씬, image_text={len(img_s)}")
 
-    # Case 3: 이미지 >= 텍스트 → 모두 image_text
-    s = distribute_images([("줄1", None), ("줄2", None)], ["a.jpg", "b.jpg", "c.jpg"], 8)
-    assert all(x.type == "image_text" for x in s), f"Case3 실패: {[x.type for x in s]}"
+    # Case 3: 이미지 >= 텍스트 → 1:1:1 비율에 따라 image_text 포함
+    s = distribute_images([_item("줄1"), _item("줄2")], ["a.jpg", "b.jpg", "c.jpg"], 8)
+    has_image = any(x.type == "image_text" for x in s)
+    assert has_image, f"Case3 실패: image_text 없음 {[x.type for x in s]}"
     ok(f"Case3 (이미지>=텍스트): {[x.type for x in s]}")
 
     # max_body_images 제한
@@ -144,7 +149,7 @@ def test_distribute_images() -> None:
     ok(f"max_body_images=8 제한: {len(s)}씬")
 
     # mood/tts_emotion 전달 확인
-    s = distribute_images([("줄1", None)], [], 8, tts_emotion="gentle", mood="touching")
+    s = distribute_images([_item("줄1")], [], 8, tts_emotion="gentle", mood="touching")
     assert s[0].mood == "touching" and s[0].tts_emotion == "gentle"
     ok("mood/tts_emotion 전달 정상")
 

@@ -224,11 +224,14 @@ def normalize_for_tts(text: str) -> str:
     text = re.sub(r'(\d+)\s*%', lambda m: sino_number(int(m.group(1))) + " 퍼센트", text)
     text = re.sub(r'\d+', convert_standalone_number, text)
 
-    # 3-1. 발음 교정 사전 적용 (Fish Speech G2P 보완)
-    for spelling, pron in sorted(
-        _PRONUNCIATION_MAP.items(), key=lambda x: -len(x[0])
-    ):
-        text = text.replace(spelling, pron)
+    # 3-1. 발음 교정 사전 — 비활성화 (2026-03-08)
+    # Fish Speech 1.5는 자체 G2P로 한국어 발음 규칙(경음화·비음화·ㅎ탈락 등)을 처리.
+    # "댓글"→"대끌", "좋아"→"조아" 등 phonetic 변환은 모델 학습 데이터에 없는
+    # 비표준 표기로, 오히려 중국어 회귀 및 발음 왜곡을 유발함.
+    # for spelling, pron in sorted(
+    #     _PRONUNCIATION_MAP.items(), key=lambda x: -len(x[0])
+    # ):
+    #     text = text.replace(spelling, pron)
 
     # 4. 특수문자 정리
     text = text.replace("。", ".").replace("、", ",")   # 중국어/일본어 구두점

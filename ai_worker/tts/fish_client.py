@@ -39,11 +39,19 @@ VOICES_DIR = Path(__file__).parent.parent.parent / "assets" / "voices"
 _TTS_PRIMER = ""
 _TTS_PRIMER_TRIM_SECS = 0.0
 
+# Fish Speech 짧은 텍스트 중국어 회귀 방지 — 한국어 패딩 (2026-03-08).
+# 비기본 음성 + 짧은 텍스트(<20자) 조합 시 한국어 컨텍스트 부족으로
+# 중국어 출력이 발생한다. 패딩 문장을 앞에 붙여 한국어 컨텍스트를 확보하고
+# 오디오에서 해당 구간을 ffmpeg atrim으로 제거한다.
+_MIN_SAFE_TEXT_LEN = 20
+_SHORT_TEXT_PREFIX = "다음은 한국어 내용입니다. "
+_SHORT_TEXT_PREFIX_LEN = len(_SHORT_TEXT_PREFIX)  # 패딩 문자수 (동적 트림 계산용)
 
-def _post_process_audio(path: Path) -> None:
-    """FFmpeg 후처리: (선택) 프라이머 트림 + 무음 단축 + 1.2배속 (피치 보존).
 
-    0. atrim        — 프라이머 활성 시에만 해당 구간 제거 (비활성이면 건너뜀)
+def _post_process_audio(path: Path, trim_prefix_secs: float = 0.0) -> None:
+    """FFmpeg 후처리: (선택) 프라이머/패딩 트림 + 무음 단축 + 1.2배속 (피치 보존).
+
+    0. atrim        — 프라이머 또는 짧은 텍스트 패딩 구간 제거
     1. silenceremove — 단어 사이 200ms 이상 무음 구간 제거
     2. atempo=1.2   — WSOLA 알고리즘으로 피치 변화 없이 배속만 1.2배
                       (목소리 톤·음색 유지, 발화 속도만 빨라짐)
@@ -52,8 +60,9 @@ def _post_process_audio(path: Path) -> None:
     """
     tmp = path.with_name(path.stem + "_proc.wav")
     filters: list[str] = []
-    if _TTS_PRIMER_TRIM_SECS > 0:
-        filters.append(f"atrim=start={_TTS_PRIMER_TRIM_SECS},asetpts=PTS-STARTPTS")
+    effective_trim = max(_TTS_PRIMER_TRIM_SECS, trim_prefix_secs)
+    if effective_trim > 0:
+        filters.append(f"atrim=start={effective_trim},asetpts=PTS-STARTPTS")
     filters.append("silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB")
     filters.append("atempo=1.2")
     af_chain = ",".join(filters)
@@ -126,6 +135,15 @@ async def synthesize(
     # primer가 설정되어 있으면 _post_process_audio()의 atrim이 해당 구간 제거.
     final_text = (_TTS_PRIMER + normalized) if _TTS_PRIMER else normalized
 
+    # 짧은 텍스트 패딩 — 모든 음성에서 짧은 텍스트 중국어 회귀 방지
+    _needs_padding = len(final_text) < _MIN_SAFE_TEXT_LEN
+    if _needs_padding:
+        logger.info(
+            "TTS 짧은 텍스트 패딩 적용: voice=%s text='%s' (%d자 < %d자)",
+            voice_key, final_text[:30], len(final_text), _MIN_SAFE_TEXT_LEN,
+        )
+        final_text = _SHORT_TEXT_PREFIX + final_text
+
     # 참조 오디오 경로
     ref_filename = VOICE_PRESETS.get(voice_key, VOICE_PRESETS[VOICE_DEFAULT])
     ref_audio = VOICES_DIR / ref_filename
@@ -175,6 +193,7 @@ async def synthesize(
                             "references": references,
                             "temperature": FISH_SPEECH_TEMPERATURE,
                             "repetition_penalty": FISH_SPEECH_REPETITION_PENALTY,
+                            "language": "ko",
                         }
                         resp = await client.post(
                             f"{FISH_SPEECH_URL}/v1/tts",
@@ -226,12 +245,15 @@ async def synthesize(
     finally:
         _FISH_SPEECH_LOCK.release()
 
-    _post_process_audio(output_path)
+    # 패딩 트림: 실제 발화 속도(secs_per_char)로 패딩 문장 길이만큼 동적 계산
+    _dynamic_trim = _SHORT_TEXT_PREFIX_LEN * secs_per_char if _needs_padding else 0.0
+    _post_process_audio(output_path, trim_prefix_secs=_dynamic_trim)
 
     logger.info(
-        "TTS 생성 완료: scene=%s emotion=%s text=%d자→%d자 → %s (%dKB, %.2f초/자)",
+        "TTS 생성 완료: scene=%s emotion=%s text=%d자→%d자 → %s (%dKB, %.2f초/자)%s",
         scene_type, emotion or "—", len(text), len(final_text),
         output_path.name, output_path.stat().st_size // 1024, secs_per_char,
+        " [패딩 적용]" if _needs_padding else "",
     )
     return output_path
 
@@ -270,6 +292,7 @@ async def _warmup_model() -> None:
             "references": references,
             "temperature": FISH_SPEECH_TEMPERATURE,
             "repetition_penalty": FISH_SPEECH_REPETITION_PENALTY,
+            "language": "ko",
         }
         async with httpx.AsyncClient(timeout=_timeout) as client:
             try:
@@ -288,9 +311,41 @@ async def _warmup_model() -> None:
                     f"{FISH_SPEECH_URL}/v1/tts",
                     json={**_warmup_payload, "text": "오늘도 좋은 하루 되세요."},
                 )
+                logger.info("Fish Speech 기본 음성 웜업 완료 (3회)")
+
+                # 비기본 음성 프리셋 웜업 (각 1회)
+                # 각 음성의 참조 오디오를 한 번 이상 처리해야 클로닝 안정화
+                _warmed_voices = 0
+                for _vk, _vf in VOICE_PRESETS.items():
+                    if _vk == VOICE_DEFAULT:
+                        continue
+                    _vpath = VOICES_DIR / _vf
+                    if not _vpath.exists():
+                        continue
+                    _vref_text = VOICE_REFERENCE_TEXTS.get(
+                        _vk, VOICE_REFERENCE_TEXTS.get(VOICE_DEFAULT, ""),
+                    )
+                    _vaudio_b64 = base64.b64encode(_vpath.read_bytes()).decode()
+                    _vpayload = {
+                        "text": "안녕하세요, 한국어 테스트 문장입니다.",
+                        "format": TTS_OUTPUT_FORMAT,
+                        "references": [{"audio": _vaudio_b64, "text": _vref_text}],
+                        "temperature": FISH_SPEECH_TEMPERATURE,
+                        "repetition_penalty": FISH_SPEECH_REPETITION_PENALTY,
+                        "language": "ko",
+                    }
+                    try:
+                        await client.post(
+                            f"{FISH_SPEECH_URL}/v1/tts",
+                            json=_vpayload,
+                        )
+                        _warmed_voices += 1
+                    except Exception as _vexc:
+                        logger.warning("음성 프리셋 웜업 실패 (%s): %s", _vk, _vexc)
+                logger.info("비기본 음성 프리셋 웜업 완료 (%d개)", _warmed_voices)
+
                 global _warmup_done
                 _warmup_done = True
-                logger.info("Fish Speech 모델 웜업 완료 (3회)")
             except Exception as exc:
                 logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
     finally:
