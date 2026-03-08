@@ -13,8 +13,8 @@ Ollama JSON 모드로 구어체 대본을 분절 생성한다.
         ],
         "closer": "..."
     }
-    body 항목의 lines 요소는 각 21자 이내.
-    21자 초과 시 어절 단위로 분리해 line_count 2로 설정.
+    body 항목의 lines 요소는 각 20자 이내.
+    20자 초과 시 어절 단위로 분리해 line_count 2로 설정.
 """
 import json
 import logging
@@ -48,7 +48,7 @@ def create_chunking_prompt(
     constraints = get_llm_constraints_prompt()
 
     extended_fields = (
-        f'  "title_suggestion": "YouTube 쇼츠 제목 (50자 이내, 이모지 포함)",\n'
+        f'  "title_suggestion": "YouTube 쇼츠 제목 (50자 이내)",\n'
         f'  "tags": ["태그1", "태그2", "태그3"],\n'
         f'  "mood": "humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나"\n'
         if extended else ""
@@ -67,8 +67,8 @@ def create_chunking_prompt(
         "{\n"
         f'  "hook": "첫 3초 후킹 문장 (최대 {MAX_BODY_CHARS}자)",\n'
         '  "body": [\n'
-        '    {"line_count": 2, "lines": ["21자 이하 줄 1", "21자 이하 줄 2"]},\n'
-        '    {"line_count": 1, "lines": ["21자 이하 단일 줄"]},\n'
+        '    {"line_count": 2, "lines": ["20자 이하 줄 1", "20자 이하 줄 2"]},\n'
+        '    {"line_count": 1, "lines": ["20자 이하 단일 줄"]},\n'
         '    {"line_count": 1, "lines": ["닉네임: 댓글 내용"], "type": "comment"}\n'
         '  ],\n'
         f'  "closer": "마무리 멘트 (최대 {MAX_BODY_CHARS}자)",\n'
@@ -78,8 +78,8 @@ def create_chunking_prompt(
         "1. 한 숨에 읽을 수 있는 호흡 단위로 끊기\n"
         "2. 반말 구어체 (~했어, ~인데, ~ㅋㅋ)\n"
         "3. 문장 중간 절대 끊지 말 것\n"
-        f"4. body 각 항목의 lines 요소는 21자 이내\n"
-        "5. 21자 초과 시 자연스러운 어절 단위로 분리해 line_count 2로 설정\n"
+        f"4. body 각 항목의 lines 요소는 20자 이내\n"
+        "5. 20자 초과 시 자연스러운 어절 단위로 분리해 line_count 2로 설정\n"
         "6. body는 최소 6개, 최대 23개 항목 (원문 분량에 비례하여 조절)\n"
         '7. 댓글을 직접 읽어주는 항목에는 "type": "comment" 추가\n'
         "8. 일반 본문 항목은 type 필드 생략\n"

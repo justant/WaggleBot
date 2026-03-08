@@ -75,8 +75,12 @@ _SCRIPT_PROMPT_V2 = """\
 1. 블록 타입 분리 (필수): 본문 내용은 `"type": "body"`로 작성하고, 베스트 댓글은 화면 연출이 달라지므로 반드시 `"type": "comment"`로 작성하세요.
 2. 댓글 분리 규정: `type`이 `comment`일 경우, 작성자의 닉네임은 `"author"` 필드에 분리해 넣고, `"lines"` 배열에는 닉네임을 제외한 순수 '댓글 내용'만 넣으세요.
 3. 자막 분할 및 가독성:
-   - lines 배열의 1개 문자열은 절대 20자를 넘지 않도록 짧게 치세요.
-   - (X) 잘못된 예: ["길거리에서 스쳐 지나가는 사람들 얼굴을 비교해대느라"] (28자)
+   - 본문(type=body)의 lines 배열: 1개 문자열은 절대 20자를 넘지 않도록 짧게 치세요.
+   - 댓글(type=comment)의 lines 배열: 1개 문자열은 20자까지 허용합니다.
+     댓글은 최대 3줄(lines 요소 3개)까지 사용 가능하며,
+     총 60자(20×3) 이내라면 원문을 생략 없이 그대로 보여주세요.
+     60자를 초과하는 경우에만 핵심을 유지하면서 55자 이내로 요약하세요.
+   - (X) 잘못된 예: ["길거리에서 스쳐 지나가는 사람들 얼굴을"] (20자 초과)
    - (O) 올바른 예: ["길거리에서 스쳐 지나가는", "사람들 얼굴을 비교해대느라"] (각각 13자, 14자)
    - 빈 문자열("")이나 중복된 키(key)를 생성하는 것을 절대 금지합니다.
 4. 본문 끝까지 작성 (생략/요약 절대 금지): 원문의 첫 문장부터 마지막 결말 부분까지 절대 중간에 자르거나 요약하지 마세요. 서사의 모든 내용을 끝까지 대본으로 풀어내세요.
@@ -178,7 +182,7 @@ def generate_script(
     logger.info("Ollama 응답 수신: %d자 (%dms)", len(raw), timer.elapsed_ms)
 
     script = parse_script_json(raw)
-    script = ensure_comments(script, comments)
+    script = ensure_comments(script, comments, post_id=post_id)
     logger.info("대본 생성 완료: hook=%s...", script.hook[:30])
     return script
 

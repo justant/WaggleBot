@@ -32,11 +32,11 @@ scene_director:
   mode: llm                    # "llm" | "rule_based" (폴백)
   max_video_clips: 5           # 콘텐츠당 최대 비디오 클립 수
   target_clip_duration:
-    min: 4.0                   # 비디오 클립 최소 길이 (초)
-    max: 6.0                   # 비디오 클립 최대 길이 (초)
+    min: 3.5                   # 비디오 클립 최소 길이 (초)
+    max: 5.0                   # 비디오 클립 최대 길이 (초)
   max_group_size: 5            # 한 그룹에 포함될 수 있는 최대 씬 수
   tts_chars_per_sec: 4.0       # TTS 예상 발화 속도 (자/초)
   itv_score_threshold: 0.6     # ITV 적합성 임계값
   llm_timeout_sec: 60          # LLM 호출 타임아웃
   fallback_on_llm_fail: true   # LLM 실패 시 rule_based 폴백
-  oversized_scene_video: true  # 6초 초과 단일 씬의 비디오 허용 여부
+  oversized_scene_video: true  # 5초 초과 단일 씬의 비디오 허용 여부

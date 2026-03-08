@@ -180,11 +180,13 @@ def _download_and_cache_image(url: str, cache_dir: Path) -> Path | None:
 
 def generate_merge_candidates(
     scenes: list[dict],
-    min_duration: float = 4.0,
-    max_duration: float = 6.0,
+    min_duration: float = 3.5,
+    max_duration: float = 5.0,
     max_group_size: int = 5,
 ) -> list[MergeCandidate]:
-    """4~6초 범위를 만족하는 모든 인접 씬 그룹 후보를 생성한다.
+    """3.5~5.0초 범위를 만족하는 모든 인접 씬 그룹 후보를 생성한다.
+
+    댓글 전용 그룹(모든 씬이 comment)은 비디오 후보에서 제외한다.
 
     Args:
         scenes: [{"index": int, "text": str, "estimated_tts_sec": float, "block_type": str}]
@@ -201,14 +203,22 @@ def generate_merge_candidates(
 
     for start in range(n):
         cumulative = 0.0
+        all_comment = True  # 그룹 내 모든 씬이 댓글인지 추적
         for end in range(start, min(start + max_group_size, n)):
             cumulative += scenes[end]["estimated_tts_sec"]
             cumulative_rounded = round(cumulative, 1)
+
+            if scenes[end]["block_type"] != "comment":
+                all_comment = False
 
             if cumulative_rounded > max_duration:
                 break  # 이후 더 길어지므로 중단
 
             if cumulative_rounded >= min_duration:
+                # 모든 씬이 댓글이면 비디오 후보에서 제외
+                if all_comment:
+                    continue
+
                 scene_indices = list(range(start, end + 1))
                 texts = " ".join(scenes[i]["text"] for i in scene_indices)
                 contains_comment = any(
@@ -231,11 +241,11 @@ def generate_merge_candidates(
 
 def generate_merge_candidates_with_oversized(
     scenes: list[dict],
-    min_duration: float = 4.0,
-    max_duration: float = 6.0,
+    min_duration: float = 3.5,
+    max_duration: float = 5.0,
     max_group_size: int = 5,
 ) -> tuple[list[MergeCandidate], list[int]]:
-    """병합 후보를 생성하되, 6초 초과 단일 씬도 별도로 반환한다.
+    """병합 후보를 생성하되, 5초 초과 단일 씬도 별도로 반환한다.
 
     Returns:
         (normal_candidates, oversized_scene_indices)
@@ -346,8 +356,10 @@ _SCENE_DIRECTOR_SYSTEM_PROMPT = """\
    (이미지가 남아있으면 image_text도 사용 가능)
 6. 비디오 클립과 정적 씬을 자연스럽게 섞어 배치합니다 (비디오만 연속 3개 이상 금지).
 7. 감정 전환이 큰 지점 (반전, 충격, 댓글 시작 등)에서 비디오 클립을 배치하면 효과적입니다.
-8. 댓글(type="comment") 씬이 포함된 그룹은 비디오 클립보다 text_only가 적합합니다.
-9. oversized_scenes에 표시된 씬은 단독으로 6초를 초과하는 씬입니다.
+8. 댓글 씬(type="comment")은 비디오 클립에 절대 포함하지 마세요.
+   댓글은 빠르게 여러 개를 보여주는 것이 효과적이므로 반드시 text_only로 배정합니다.
+   merge_groups 중 contains_comment=true인 그룹은 비디오로 선택하지 마세요.
+9. oversized_scenes에 표시된 씬은 단독으로 5초를 초과하는 씬입니다.
    이 씬을 비디오로 만들 경우, 해당 씬 인덱스만 단독으로 지정합니다 (그룹 ID 대신 직접 지정).
 
 ## 출력 형식 (JSON만 출력)
@@ -411,8 +423,8 @@ def _build_user_prompt(llm_input: dict) -> str:
     else:
         lines.append("(후보 없음 — 모든 씬을 정적으로 배분하세요)")
 
-    # 6초 초과 단일 씬
-    lines.append("\n## 6초 초과 단일 씬")
+    # 5초 초과 단일 씬
+    lines.append("\n## 5초 초과 단일 씬")
     if llm_input["oversized_scenes"]:
         lines.append(f'인덱스: {llm_input["oversized_scenes"]}')
     else:
@@ -650,6 +662,28 @@ def validate_llm_output(
                 )
                 clip["type"] = "ttv"
                 clip.pop("image_id", None)
+
+    # ── 5.5. 댓글 포함 비디오 클립 강제 제거 ──
+    comment_removed: list[dict] = []
+    for clip in validated_clips:
+        group_id = clip.get("group_id")
+        if group_id and group_id in group_map and group_map[group_id].contains_comment:
+            logger.warning(
+                "[validate] 검증 5.5: 댓글 포함 비디오 클립 강제 제거: group=%s, scenes=%s",
+                group_id, group_map[group_id].scene_indices,
+            )
+            comment_removed.append(clip)
+    if comment_removed:
+        validated_clips = [c for c in validated_clips if c not in comment_removed]
+        # used_scenes 재계산
+        used_scenes = set()
+        for clip in validated_clips:
+            group_id = clip.get("group_id")
+            scene_index = clip.get("scene_index")
+            if scene_index is not None and scene_index in oversized_set:
+                used_scenes.add(scene_index)
+            elif group_id and group_id in group_map:
+                used_scenes.update(group_map[group_id].scene_indices)
 
     # ── 6. 인접성 재확인 (static_scenes) ──
     validated_static: list[dict] = []
@@ -1315,10 +1349,10 @@ class SceneDirector:
             "scene", sd_cfg_base, "max_video_clips", default=5,
         )
         min_clip_dur = get_domain_setting(
-            "scene", sd_cfg_base, "target_clip_duration", "min", default=4.0,
+            "scene", sd_cfg_base, "target_clip_duration", "min", default=3.5,
         )
         max_clip_dur = get_domain_setting(
-            "scene", sd_cfg_base, "target_clip_duration", "max", default=6.0,
+            "scene", sd_cfg_base, "target_clip_duration", "max", default=5.0,
         )
         max_group_size = get_domain_setting(
             "scene", sd_cfg_base, "max_group_size", default=5,
@@ -1354,7 +1388,7 @@ class SceneDirector:
             max_group_size=max_group_size,
         )
         logger.info(
-            "[scene_director] Phase 4-A: 병합 그룹 %d개, 6초초과 씬 %d개",
+            "[scene_director] Phase 4-A: 병합 그룹 %d개, 5초초과 씬 %d개",
             len(merge_groups), len(oversized_indices),
         )
 

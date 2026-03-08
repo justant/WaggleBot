@@ -83,10 +83,13 @@ def _collect_scenes(pid: int, n: int, prefix: str = "bscene") -> list[str]:
         _nl = st.session_state.get(f"{prefix}_{pid}_{_i}_nlines", 1)
         _l0 = st.session_state.get(f"{prefix}_{pid}_{_i}_L0", "")
         _l1 = st.session_state.get(f"{prefix}_{pid}_{_i}_L1", "")
+        _l2 = st.session_state.get(f"{prefix}_{pid}_{_i}_L2", "")
+        parts = [_l0]
         if _nl >= 2 and _l1:
-            result.append(f"{_l0}\n{_l1}")
-        else:
-            result.append(_l0)
+            parts.append(_l1)
+        if _nl >= 3 and _l2:
+            parts.append(_l2)
+        result.append("\n".join(parts))
     return result
 
 
@@ -100,7 +103,7 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
     """씬 기반 본문/댓글 편집기.
 
     - 본문(body)과 댓글(comment)을 분리하여 각각 편집
-    - 줄당 st.text_input(max_chars=21) → 21자 초과 입력 자체 차단
+    - 줄당 st.text_input(max_chars=20) → 20자 초과 입력 자체 차단
     - 씬당 최대 2줄: 2줄일 때 "+ 줄 추가" 버튼 숨김
     - 씬 사이에 "+" 삽입 버튼 배치 (맨 위/사이/맨 아래)
     - 씬 추가/삭제/줄 추가/삭제 시 fragment만 재실행
@@ -123,6 +126,19 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
             [d["author"] for d in _comment_dicts] if _comment_dicts else []
         )
 
+    # ── layout.json에서 글자수 제한 로드 ────────────────────────────────────
+    import json as _json
+    _layout_path = Path("config/layout.json")
+    try:
+        _layout_data = _json.loads(_layout_path.read_text(encoding="utf-8"))
+        _layout_constraints = _layout_data.get("constraints", {})
+    except Exception:
+        _layout_constraints = {}
+    _BODY_MAX_CHARS: int = _layout_constraints.get("body_line", {}).get("max_chars", 21)
+    _BODY_MAX_LINES: int = _layout_constraints.get("body_line", {}).get("max_lines", 2)
+    _COMMENT_MAX_CHARS: int = _layout_constraints.get("comment_line", {}).get("max_chars", 20)
+    _COMMENT_MAX_LINES: int = _layout_constraints.get("comment_line", {}).get("max_lines", 3)
+
     # ── 공통 씬 리스트 렌더 함수 ─────────────────────────────────────────────
     def _render_scene_list(
         scenes_key: str,
@@ -131,6 +147,8 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
         show_author: bool,
     ) -> None:
         """body 또는 comment 한 섹션의 씬 리스트를 렌더링하고 액션을 처리."""
+        _max_chars = _COMMENT_MAX_CHARS if show_author else _BODY_MAX_CHARS
+        _max_lines = _COMMENT_MAX_LINES if show_author else _BODY_MAX_LINES
         _scenes: list[str] = st.session_state[scenes_key]
         _n = len(_scenes)
 
@@ -139,7 +157,7 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
             _nk = f"{prefix}_{pid}_{_i}_nlines"
             if _nk not in st.session_state:
                 _parts = [l for l in _st_txt.split("\n") if l]
-                _nl = min(len(_parts), 2) if _parts else 1
+                _nl = min(len(_parts), _max_lines) if _parts else 1
                 st.session_state[_nk] = _nl
                 st.session_state[f"{prefix}_{pid}_{_i}_L0"] = (
                     _parts[0] if len(_parts) > 0 else ""
@@ -147,13 +165,17 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
                 st.session_state[f"{prefix}_{pid}_{_i}_L1"] = (
                     _parts[1] if len(_parts) > 1 else ""
                 )
+                if _max_lines >= 3:
+                    st.session_state[f"{prefix}_{pid}_{_i}_L2"] = (
+                        _parts[2] if len(_parts) > 2 else ""
+                    )
             if show_author and f"{prefix}_{pid}_{_i}_author" not in st.session_state:
                 _authors = st.session_state.get(_cak, [])
                 st.session_state[f"{prefix}_{pid}_{_i}_author"] = (
                     _authors[_i] if _i < len(_authors) else ""
                 )
 
-        st.markdown(f"**{label}** — 씬 단위 편집 (줄당 21자, 씬당 최대 2줄)")
+        st.markdown(f"**{label}** — 씬 단위 편집 (줄당 {_max_chars}자, 씬당 최대 {_max_lines}줄)")
 
         _del_idx: int | None = None
         _add_line_idx: int | None = None
@@ -170,6 +192,7 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
             _nk = f"{prefix}_{pid}_{_si}_nlines"
             _l0k = f"{prefix}_{pid}_{_si}_L0"
             _l1k = f"{prefix}_{pid}_{_si}_L1"
+            _l2k = f"{prefix}_{pid}_{_si}_L2"
             _nl = st.session_state.get(_nk, 1)
 
             with st.container(border=True):
@@ -191,9 +214,9 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
                     _lc, _bc = st.columns([9, 1])
                     with _lc:
                         st.text_input(
-                            "줄 1", key=_l0k, max_chars=21,
+                            "줄 1", key=_l0k, max_chars=_max_chars,
                             label_visibility="collapsed",
-                            placeholder="줄 1 (최대 21자)",
+                            placeholder=f"줄 1 (최대 {_max_chars}자)",
                         )
                     with _bc:
                         if st.button(
@@ -203,22 +226,45 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
                             _add_line_idx = _si
                 else:
                     st.text_input(
-                        "줄 1", key=_l0k, max_chars=21,
+                        "줄 1", key=_l0k, max_chars=_max_chars,
                         label_visibility="collapsed",
-                        placeholder="줄 1 (최대 21자)",
+                        placeholder=f"줄 1 (최대 {_max_chars}자)",
                     )
 
                 if _nl >= 2:
+                    _show_add_btn = _nl < _max_lines
                     _l2c, _dlc = st.columns([9, 1])
                     with _l2c:
                         st.text_input(
-                            "줄 2", key=_l1k, max_chars=21,
+                            "줄 2", key=_l1k, max_chars=_max_chars,
                             label_visibility="collapsed",
-                            placeholder="줄 2 (최대 21자)",
+                            placeholder=f"줄 2 (최대 {_max_chars}자)",
                         )
                     with _dlc:
+                        if _show_add_btn:
+                            if st.button(
+                                "＋", key=f"aln2_{prefix}_{pid}_{_si}",
+                                help="줄 추가",
+                            ):
+                                _add_line_idx = _si
+                        else:
+                            if st.button(
+                                "✕", key=f"dln_{prefix}_{pid}_{_si}",
+                                help="줄 삭제",
+                            ):
+                                _del_line_idx = _si
+
+                if _nl >= 3:
+                    _l3c, _dl3c = st.columns([9, 1])
+                    with _l3c:
+                        st.text_input(
+                            "줄 3", key=_l2k, max_chars=_max_chars,
+                            label_visibility="collapsed",
+                            placeholder=f"줄 3 (최대 {_max_chars}자)",
+                        )
+                    with _dl3c:
                         if st.button(
-                            "✕", key=f"dln_{prefix}_{pid}_{_si}",
+                            "✕", key=f"dln3_{prefix}_{pid}_{_si}",
                             help="줄 삭제",
                         ):
                             _del_line_idx = _si
@@ -241,7 +287,7 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
             st.session_state[scenes_key] = cur
             for _ri, _rt in enumerate(cur):
                 _parts = [l for l in _rt.split("\n") if l]
-                _nl2 = min(len(_parts), 2) if _parts else 1
+                _nl2 = min(len(_parts), _max_lines) if _parts else 1
                 st.session_state[f"{prefix}_{pid}_{_ri}_nlines"] = _nl2
                 st.session_state[f"{prefix}_{pid}_{_ri}_L0"] = (
                     _parts[0] if _parts else ""
@@ -249,6 +295,10 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
                 st.session_state[f"{prefix}_{pid}_{_ri}_L1"] = (
                     _parts[1] if len(_parts) > 1 else ""
                 )
+                if _max_lines >= 3:
+                    st.session_state[f"{prefix}_{pid}_{_ri}_L2"] = (
+                        _parts[2] if len(_parts) > 2 else ""
+                    )
             if show_author and authors is not None:
                 st.session_state[_cak] = authors
                 for _ri, _a in enumerate(authors):
@@ -265,13 +315,18 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
             st.rerun(scope="fragment")
         elif _add_line_idx is not None:
             st.session_state[scenes_key] = _collect_scenes(pid, _n, prefix)
-            st.session_state[f"{prefix}_{pid}_{_add_line_idx}_nlines"] = 2
+            _cur_nl = st.session_state.get(f"{prefix}_{pid}_{_add_line_idx}_nlines", 1)
+            _new_nl = min(_cur_nl + 1, _max_lines)
+            st.session_state[f"{prefix}_{pid}_{_add_line_idx}_nlines"] = _new_nl
             st.rerun(scope="fragment")
         elif _del_line_idx is not None:
             _cur = _collect_scenes(pid, _n, prefix)
-            # 해당 씬의 첫 줄만 유지 (2줄→1줄)
+            # 마지막 줄 제거
             _txt = _cur[_del_line_idx]
-            _cur[_del_line_idx] = _txt.split("\n")[0] if _txt else ""
+            _parts = _txt.split("\n") if _txt else [""]
+            if len(_parts) > 1:
+                _parts.pop()
+            _cur[_del_line_idx] = "\n".join(_parts)
             _au = None
             if show_author:
                 _au = _collect_authors(pid, _n, prefix)
