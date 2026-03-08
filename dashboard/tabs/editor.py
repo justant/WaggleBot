@@ -268,9 +268,14 @@ def _scene_editor_frag(pid: int, init_body: list) -> None:
             st.session_state[f"{prefix}_{pid}_{_add_line_idx}_nlines"] = 2
             st.rerun(scope="fragment")
         elif _del_line_idx is not None:
-            st.session_state[scenes_key] = _collect_scenes(pid, _n, prefix)
-            st.session_state[f"{prefix}_{pid}_{_del_line_idx}_nlines"] = 1
-            st.session_state[f"{prefix}_{pid}_{_del_line_idx}_L1"] = ""
+            _cur = _collect_scenes(pid, _n, prefix)
+            # 해당 씬의 첫 줄만 유지 (2줄→1줄)
+            _txt = _cur[_del_line_idx]
+            _cur[_del_line_idx] = _txt.split("\n")[0] if _txt else ""
+            _au = None
+            if show_author:
+                _au = _collect_authors(pid, _n, prefix)
+            _rebuild_keys(_cur, _au)
             st.rerun(scope="fragment")
         elif _del_idx is not None:
             _cur = _collect_scenes(pid, _n, prefix)
