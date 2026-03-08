@@ -164,7 +164,14 @@ class VideoPromptEngine:
                 error_msg = str(exc)
                 raise
             finally:
-                _scene_meta = {"scene_index": scene_index, "video_mode": video_mode}
+                _scene_meta = {
+                    "scene_index": scene_index,
+                    "video_mode": video_mode,
+                    "korean_text": korean_text,
+                    "mood": mood,
+                    "style_hint": style_hint if not has_init_image else None,
+                    "korean_translation": None,
+                }
                 log_llm_call(
                     call_type=call_type,
                     post_id=post_id,

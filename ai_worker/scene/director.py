@@ -481,54 +481,78 @@ def _call_scene_director_llm(
     user_prompt = _build_user_prompt(llm_input)
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
 
+    from ai_worker.script.logger import LLMCallTimer, log_llm_call
+
     raw = ""
     success = True
     error_msg: str | None = None
+    result: dict | None = None
 
     try:
-        from ai_worker.script.logger import LLMCallTimer, log_llm_call
-
         with LLMCallTimer() as timer:
-            try:
-                raw = call_ollama_raw(
-                    prompt=full_prompt,
-                    max_tokens=2048,
-                    timeout=timeout,
-                )
-            except Exception as exc:
-                success = False
-                error_msg = str(exc)
-                raise
-            finally:
-                log_llm_call(
-                    call_type="scene_director",
-                    post_id=post_id,
-                    model_name=None,
-                    prompt_text=full_prompt[:3000],
-                    raw_response=raw[:2000] if raw else "",
-                    parsed_result=None,
-                    image_count=len(llm_input.get("itv_images", [])),
-                    content_length=len(user_prompt),
-                    success=success,
-                    error_message=error_msg,
-                    duration_ms=timer.elapsed_ms,
-                )
+            raw = call_ollama_raw(
+                prompt=full_prompt,
+                max_tokens=2048,
+                timeout=timeout,
+            )
+    except Exception as exc:
+        success = False
+        error_msg = str(exc)
+        logger.error("[scene_director] LLM 호출 실패: %s", exc)
 
+    # JSON 파싱 (성공 시에만)
+    parsed_for_log: dict | None = None
+    if raw and success:
+        result = _extract_json_from_response(raw)
+        if result is not None:
+            video_clips = result.get("video_clips", [])
+            static_scenes = result.get("static_scenes", [])
+            parsed_for_log = {
+                "total_scenes": llm_input["total_scenes"],
+                "video_clip_count": len(video_clips),
+                "itv_count": sum(1 for c in video_clips if c.get("type") == "itv"),
+                "ttv_count": sum(1 for c in video_clips if c.get("type") == "ttv"),
+                "text_only_count": sum(
+                    1 for s in static_scenes if s.get("type") == "text_only"
+                ),
+                "video_clips": video_clips,
+                "static_scenes": static_scenes,
+                "merge_groups_used": [c.get("group_id") for c in video_clips],
+                "merge_groups_map": {
+                    mg["id"]: mg["scenes"]
+                    for mg in llm_input.get("merge_groups", [])
+                },
+                "scenes_input": [
+                    {"index": s["index"], "text": s["text"], "tts_sec": s["tts_sec"], "type": s["type"]}
+                    for s in llm_input.get("scenes", [])
+                ],
+                "oversized_scenes": llm_input.get("oversized_scenes", []),
+            }
+        else:
+            logger.error("[scene_director] LLM 응답 JSON 파싱 실패: %s", raw[:500])
+
+    # 항상 로깅
+    log_llm_call(
+        call_type="scene_director",
+        post_id=post_id,
+        model_name=None,
+        prompt_text=full_prompt,
+        raw_response=raw,
+        parsed_result=parsed_for_log,
+        image_count=len(llm_input.get("itv_images", [])),
+        content_length=len(user_prompt),
+        success=success and result is not None,
+        error_message=error_msg,
+        duration_ms=timer.elapsed_ms,
+    )
+
+    if raw and success:
         logger.info(
             "[scene_director] LLM 응답 수신: %d자 (%dms)",
             len(raw), timer.elapsed_ms,
         )
 
-        result = _extract_json_from_response(raw)
-        if result is None:
-            logger.error("[scene_director] LLM 응답 JSON 파싱 실패: %s", raw[:500])
-            return None
-
-        return result
-
-    except Exception as exc:
-        logger.error("[scene_director] LLM 호출 실패: %s", exc)
-        return None
+    return result
 
 
 # =====================================================================
