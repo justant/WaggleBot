@@ -2,10 +2,11 @@
 
 구조:
   _llm_tts_worker  : APPROVED 폴링 → LLM+TTS (CUDA) → render_queue에 적재
-  _render_worker   : render_queue 소비 → 프리뷰 렌더링 (CPU) → PREVIEW_RENDERED
+  _render_worker   : render_queue 소비 → 렌더링 (Phase 7 LTX-2 + CPU) → PREVIEW_RENDERED
 
-두 워커가 asyncio.gather로 동시 실행되므로
-Post A가 CPU로 렌더링되는 동안 Post B는 GPU로 LLM+TTS를 처리할 수 있다.
+두 워커가 asyncio.gather로 동시 실행되지만, _gpu_stage_lock으로
+GPU 작업(LLM+TTS vs Phase 7 LTX-2)을 직렬화하여 VRAM 충돌을 방지한다.
+Fish Speech(~5GB)와 LTX-2(~12.7GB)는 RTX 3090 24GB에 동시 로드 불가.
 """
 import asyncio
 import logging
@@ -64,6 +65,19 @@ def _get_cuda_sem() -> asyncio.Semaphore:
     return _cuda_sem
 
 
+# GPU 단계 락 — LLM+TTS(Fish Speech)와 렌더(Phase 7 LTX-2) 간 VRAM 충돌 방지.
+# Fish Speech(~5GB)와 LTX-2(~12.7GB)는 RTX 3090 24GB에 동시 로드 불가.
+# 이 락으로 두 워커의 GPU 작업을 직렬화한다.
+_gpu_stage_lock: asyncio.Lock | None = None
+
+
+def _get_gpu_stage_lock() -> asyncio.Lock:
+    global _gpu_stage_lock
+    if _gpu_stage_lock is None:
+        _gpu_stage_lock = asyncio.Lock()
+    return _gpu_stage_lock
+
+
 # ---------------------------------------------------------------------------
 # 파이프라인 워커
 # ---------------------------------------------------------------------------
@@ -73,6 +87,7 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
     from ai_worker.core.processor import RobustProcessor
     processor = RobustProcessor()
     cuda_sem = _get_cuda_sem()
+    gpu_lock = _get_gpu_stage_lock()
     shutdown_event = get_shutdown_event()
 
     while not is_shutting_down():
@@ -97,24 +112,39 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
                 pass
             continue
 
-        async with cuda_sem:
-            try:
-                script, audio_path = await processor.llm_tts_stage(post_id)
-                await render_queue.put((post_id, script, audio_path))
-                logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
-                            post_id, render_queue.qsize())
-            except Exception:
-                logger.exception("LLM+TTS 실패: post_id=%d", post_id)
-                _mark_post_failed(post_id)
-                await asyncio.sleep(5)
+        # GPU 작업: LLM + TTS (gpu_lock으로 렌더 Phase 7과 직렬화)
+        result = None
+        if gpu_lock.locked():
+            logger.info(
+                "⏳ GPU 사용 중 (렌더링/비디오 생성) — LLM+TTS 대기: post_id=%d", post_id
+            )
+        async with gpu_lock:
+            async with cuda_sem:
+                try:
+                    script, audio_path = await processor.llm_tts_stage(post_id)
+                    result = (post_id, script, audio_path)
+                except Exception:
+                    logger.exception("LLM+TTS 실패: post_id=%d", post_id)
+                    _mark_post_failed(post_id)
+                    await asyncio.sleep(5)
+
+        # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
+        if result is not None:
+            await render_queue.put(result)
+            logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
+                        post_id, render_queue.qsize())
 
     logger.info("🛑 _llm_tts_worker 종료")
 
 
 async def _render_worker(render_queue: asyncio.Queue) -> None:
-    """render_queue에서 꺼내 렌더링 (h264_nvenc GPU 인코딩)."""
+    """render_queue에서 꺼내 렌더링 (h264_nvenc GPU 인코딩).
+
+    Phase 7(LTX-2 비디오 생성) 포함 시 gpu_lock으로 LLM+TTS와 직렬화.
+    """
     from ai_worker.core.processor import RobustProcessor
     processor = RobustProcessor()
+    gpu_lock = _get_gpu_stage_lock()
 
     while True:
         try:
@@ -127,11 +157,16 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
             continue
 
         try:
-            # render_stage는 동기 CPU 작업 — event loop를 블록하지 않도록 executor 사용
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None, processor.render_stage, post_id, script, audio_path
-            )
+            if gpu_lock.locked():
+                logger.info(
+                    "⏳ GPU 사용 중 (LLM+TTS) — 렌더링 대기: post_id=%d", post_id
+                )
+            async with gpu_lock:
+                # render_stage는 동기 작업 — executor 사용. Phase 7 LTX-2 포함.
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None, processor.render_stage, post_id, script, audio_path
+                )
         except Exception:
             logger.exception("렌더링 실패: post_id=%d", post_id)
             _mark_post_failed(post_id)
