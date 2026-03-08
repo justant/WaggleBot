@@ -153,6 +153,7 @@ class LLMLog(Base):
     call_type:
         'generate_script'        — llm.generate_script() (ScriptData 생성)
         'chunk'                  — llm_chunker.chunk_with_llm() (청킹 전용)
+        'generate_script_auto'   — 수신함→편집실 자동 대본 생성
         'generate_script_editor' — 대시보드 편집기에서 재생성
         'video_prompt_t2v'       — T2V 비디오 프롬프트 생성
         'video_prompt_i2v'       — I2V 비디오 프롬프트 생성

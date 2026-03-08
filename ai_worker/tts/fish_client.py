@@ -201,6 +201,17 @@ async def synthesize(
                         )
                         resp.raise_for_status()
                     break  # HTTP 성공 시 재시도 루프 탈출
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code >= 500 and _attempt < _MAX_TTS_RETRIES:
+                        _wait = 30 * (_attempt + 1)
+                        logger.warning(
+                            "Fish Speech %d (attempt %d/%d) — %d초 후 재시도",
+                            e.response.status_code, _attempt + 1,
+                            _MAX_TTS_RETRIES + 1, _wait,
+                        )
+                        await asyncio.sleep(_wait)
+                    else:
+                        raise
                 except httpx.ReadTimeout:
                     if _attempt < _MAX_TTS_RETRIES:
                         logger.warning(

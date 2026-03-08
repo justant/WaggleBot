@@ -821,8 +821,11 @@ class RobustProcessor:
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
             video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
 
-            # 렌더링 후 세션 갱신 (렌더링 중 다른 프로세스가 레코드 수정 가능)
-            session.expire_all()
+            # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가
+            # contents 레코드를 수정하면 REPEATABLE READ 스냅샷이 오래되어
+            # flush 시 MariaDB errno 1020 발생. rollback으로 오래된 트랜잭션을
+            # 종료하고 최신 데이터로 새 트랜잭션 시작. (렌더링 전 DB 쓰기 없음)
+            session.rollback()
             post = session.query(Post).filter_by(id=post_id).first()
 
             self._save_content(post, session, script, audio_path, video_path)

@@ -21,7 +21,7 @@ from db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 # ── 카테고리 정의 ────────────────────────────────────
-_SCRIPT_TYPES = ("chunk", "generate_script", "generate_script_editor")
+_SCRIPT_TYPES = ("chunk", "generate_script", "generate_script_editor", "generate_script_auto")
 _SCENE_TYPES = ("scene_director",)
 _VIDEO_TYPES = ("video_prompt_t2v", "video_prompt_i2v", "video_prompt_simplify")
 _ALL_TYPES = _SCRIPT_TYPES + _SCENE_TYPES + _VIDEO_TYPES
@@ -29,6 +29,7 @@ _ALL_TYPES = _SCRIPT_TYPES + _SCENE_TYPES + _VIDEO_TYPES
 _CALL_TYPE_LABELS = {
     "generate_script": "생성",
     "generate_script_editor": "편집실",
+    "generate_script_auto": "자동생성",
     "chunk": "청킹",
     "scene_director": "씬 디렉팅",
     "video_prompt_t2v": "T2V",
